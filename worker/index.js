@@ -17,7 +17,7 @@ const parseJsonBody = async (request) => {
   });
 };
 
-const googleSheetCsvUrl = (inputUrl) => {
+const googleSheetCsvUrls = (inputUrl) => {
   let url;
   try {
     url = new URL(inputUrl);
@@ -33,7 +33,7 @@ const googleSheetCsvUrl = (inputUrl) => {
   }
 
   if (url.pathname.includes('/spreadsheets/') && (url.searchParams.get('output') === 'csv' || url.searchParams.get('format') === 'csv')) {
-    return url.toString();
+    return [url.toString()];
   }
 
   const publishedMatch = url.pathname.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/e\/([^/]+)/);
@@ -46,9 +46,45 @@ const googleSheetCsvUrl = (inputUrl) => {
   const hashParams = new URLSearchParams(String(url.hash || '').replace(/^#/, ''));
   const gid = url.searchParams.get('gid') || hashParams.get('gid') || '0';
   if (publishedMatch) {
-    return `https://docs.google.com/spreadsheets/d/e/${publishedMatch[1]}/pub?output=csv&gid=${encodeURIComponent(gid)}`;
+    const id = publishedMatch[1];
+    return [
+      `https://docs.google.com/spreadsheets/d/e/${id}/pub?output=csv&gid=${encodeURIComponent(gid)}`,
+      `https://docs.google.com/spreadsheets/d/e/${id}/pub?gid=${encodeURIComponent(gid)}&single=true&output=csv`
+    ];
   }
-  return `https://docs.google.com/spreadsheets/d/${regularMatch[1]}/export?format=csv&gid=${encodeURIComponent(gid)}`;
+  const id = regularMatch[1];
+  return [
+    `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid)}`,
+    `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${encodeURIComponent(gid)}`,
+    `https://docs.google.com/spreadsheets/d/${id}/pub?output=csv&gid=${encodeURIComponent(gid)}`
+  ];
+};
+
+const fetchGoogleSheetCsvText = async (inputUrl, { signal } = {}) => {
+  const headers = {
+    'Accept': 'text/csv,text/plain,*/*',
+    'User-Agent': 'Mozilla/5.0 MarketingHub/1.0'
+  };
+  let lastStatus = 0;
+  let lastText = '';
+  for (const csvUrl of googleSheetCsvUrls(inputUrl)) {
+    const response = await fetch(csvUrl, { headers, signal });
+    const text = await response.text();
+    lastStatus = response.status;
+    lastText = text;
+    const contentType = response.headers.get('content-type') || '';
+    const looksLikeHtml = /^\s*<!doctype html|^\s*<html[\s>]/i.test(text);
+    if (response.ok && text.trim() && !looksLikeHtml && !contentType.includes('text/html')) {
+      return text;
+    }
+  }
+  const error = new Error(
+    lastText && /^\s*<!doctype html|^\s*<html[\s>]/i.test(lastText)
+      ? 'Google trả về trang HTML thay vì CSV. Hãy dùng File > Share > Publish to web hoặc tải CSV lên trực tiếp.'
+      : 'Không thể đọc Google Sheets. Hãy kiểm tra quyền chia sẻ hoặc publish sheet.'
+  );
+  error.status = lastStatus || 400;
+  throw error;
 };
 
 const processScheduledPosts = async (repo, meta) => {
@@ -221,13 +257,7 @@ const handleRequest = async (request, env, context) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(googleSheetCsvUrl(body.url || ''), { signal: controller.signal });
-      const text = await response.text();
-      if (!response.ok) {
-        const error = new Error('Không thể đọc Google Sheets. Hãy kiểm tra quyền chia sẻ hoặc publish sheet.');
-        error.status = response.status;
-        throw error;
-      }
+      const text = await fetchGoogleSheetCsvText(body.url || '', { signal: controller.signal });
       if (text.length > 2 * 1024 * 1024) {
         const error = new Error('File Google Sheets quá lớn. Vui lòng giới hạn dưới 2MB CSV.');
         error.status = 413;

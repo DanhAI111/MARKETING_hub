@@ -841,7 +841,7 @@ const ContentPage = (() => {
               <span>Đọc link</span>
             </button>
           </div>
-          <div class="form-hint">Sheet cần chia sẻ quyền xem cho bất kỳ ai có link hoặc dùng link Publish to web. Nếu link vẫn bị chặn, hãy tải CSV rồi import file.</div>
+          <div class="form-hint">Ưu tiên link Publish to web của Google Sheets. Link chia sẻ “anyone can view” cũng được thử tự động; nếu Google chặn xuất CSV, hãy publish hoặc tải CSV rồi import file.</div>
         </div>
 
         <div class="form-group">
