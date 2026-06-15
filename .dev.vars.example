@@ -8,4 +8,4 @@ ALLOWED_EMAIL_DOMAINS=example.com
 ALLOWED_EMAILS=
 META_APP_ID=
 META_APP_SECRET=
-META_SCOPES=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish
+META_SCOPES=pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,instagram_basic,instagram_content_publish

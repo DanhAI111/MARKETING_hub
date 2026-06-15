@@ -102,4 +102,5 @@ On first login, the frontend imports existing Marketing Hub data from browser `l
 - Inline uploads are limited to 1MB per fanpage image or 1MB total per scheduled post to stay within D1's row-size limit. Public image URLs do not use that inline storage.
 - Instagram Graph publishing requires a public image URL.
 - Connect Meta again after deployment so page tokens are encrypted with the production `TOKEN_ENCRYPTION_KEY`.
+- Reconnect Meta after changing `META_SCOPES`; existing page tokens do not automatically gain newly requested permissions.
 - The Cron Trigger checks due posts every minute and refreshes connected Meta pages every 15 minutes.

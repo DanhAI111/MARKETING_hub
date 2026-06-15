@@ -3,6 +3,7 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const DEFAULT_SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
+  'pages_read_user_content',
   'pages_manage_posts',
   'instagram_basic',
   'instagram_content_publish'
@@ -307,20 +308,29 @@ export class MetaService {
   async syncFacebookPosts(fanpage) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.metaPageId) return 0;
-    const since = Math.floor((Date.now() - 1000 * 60 * 60 * 24 * 120) / 1000);
-    const posts = await this.graphGet(`${fanpage.metaPageId}/posts`, {
+    const query = {
       access_token: token,
-      since,
       limit: 100,
-      fields: 'id,message,created_time,permalink_url,full_picture'
-    });
+      fields: 'id,message,created_time,permalink_url,full_picture,from'
+    };
+    const postEdges = ['published_posts', 'posts', 'feed'];
+    let posts = { data: [] };
+    for (const edge of postEdges) {
+      posts = await this.graphGet(`${fanpage.metaPageId}/${edge}`, query).catch(() => ({ data: [] }));
+      if ((posts.data || []).length) break;
+    }
     let count = 0;
     for (const post of posts.data || []) {
+      if (post.from?.id && post.from.id !== fanpage.metaPageId) continue;
+      const publishedAt = post.created_time || '';
+      if (!publishedAt) continue;
       await this.repo.upsertPost({
         fanpageId: fanpage.id,
         externalPostId: post.id,
         title: post.message || 'Bài đăng Facebook',
-        date: (post.created_time || '').slice(0, 10),
+        content: post.message || '',
+        date: publishedAt.slice(0, 10),
+        publishedAt,
         permalink: post.permalink_url || '',
         mediaUrl: post.full_picture || '',
         source: 'facebook',

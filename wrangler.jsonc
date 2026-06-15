@@ -26,7 +26,7 @@
 	"vars": {
 		"AUTH_REQUIRED": "1",
 		"PUBLIC_BASE_URL": "https://marketing-hub.danhai111.workers.dev",
-		"META_SCOPES": "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
+		"META_SCOPES": "pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,instagram_basic,instagram_content_publish"
 	},
 	"observability": {
 		"enabled": true
