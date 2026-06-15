@@ -592,8 +592,8 @@ const ContentPage = (() => {
         fileInput.value = '';
         return;
       }
-      if (file.size > 2 * 1024 * 1024) {
-        Toast.error('Ảnh nên nhỏ hơn 2MB để lưu ổn định');
+      if (file.size > 1024 * 1024) {
+        Toast.error('Ảnh tải trực tiếp phải nhỏ hơn 1MB để lưu trên Cloudflare D1');
         fileInput.value = '';
         return;
       }
@@ -1152,6 +1152,7 @@ const ContentPage = (() => {
   };
 
   const bindScheduleMediaControls = (modalEl) => {
+    const maxInlineUploadBytes = 1024 * 1024;
     const hiddenInput = modalEl.querySelector('#scheduleMediaItems');
     const urlInput = modalEl.querySelector('#scheduleMediaUrlInput');
     const addUrlBtn = modalEl.querySelector('#addScheduleMediaUrlBtn');
@@ -1218,17 +1219,32 @@ const ContentPage = (() => {
 
     fileInput?.addEventListener('change', () => {
       const files = Array.from(fileInput.files || []);
+      const existingUploadBytes = mediaItems.reduce((total, item) => {
+        if (!item.url?.startsWith('data:')) return total;
+        return total + (Number(item.size) || Math.ceil(item.url.length * 0.75));
+      }, 0);
+      let selectedUploadBytes = 0;
       files.forEach(file => {
         if (!file.type.startsWith('image/')) {
           Toast.error(`File ${file.name} không phải ảnh`);
           return;
         }
-        if (file.size > 2 * 1024 * 1024) {
-          Toast.error(`Ảnh ${file.name} nên nhỏ hơn 2MB`);
+        if (file.size > maxInlineUploadBytes) {
+          Toast.error(`Ảnh ${file.name} phải nhỏ hơn 1MB để lưu trên Cloudflare D1`);
           return;
         }
+        if (existingUploadBytes + selectedUploadBytes + file.size > maxInlineUploadBytes) {
+          Toast.error('Tổng ảnh tải trực tiếp cho một lịch đăng không được vượt quá 1MB');
+          return;
+        }
+        selectedUploadBytes += file.size;
         const reader = new FileReader();
-        reader.onload = () => addMedia({ type: 'image', url: reader.result || '', name: file.name });
+        reader.onload = () => addMedia({
+          type: 'image',
+          url: reader.result || '',
+          name: file.name,
+          size: file.size
+        });
         reader.onerror = () => Toast.error(`Không thể đọc file ${file.name}`);
         reader.readAsDataURL(file);
       });

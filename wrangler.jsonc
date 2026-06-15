@@ -1,0 +1,34 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "marketing-hub",
+	"main": "worker/index.js",
+	"compatibility_date": "2026-06-15",
+	"workers_dev": true,
+	"preview_urls": false,
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "marketing-hub",
+			"database_id": "6676ef6a-8c34-4fe4-8393-9c3b72b3c261",
+			"migrations_dir": "migrations"
+		}
+	],
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	},
+	"vars": {
+		"AUTH_REQUIRED": "1",
+		"PUBLIC_BASE_URL": "https://marketing-hub.danhai111.workers.dev",
+		"META_SCOPES": "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
+	},
+	"observability": {
+		"enabled": true
+	}
+}

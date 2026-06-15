@@ -1,0 +1,394 @@
+const GRAPH_VERSION = 'v21.0';
+const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
+const DEFAULT_SCOPES = [
+  'pages_show_list',
+  'pages_read_engagement',
+  'pages_manage_posts',
+  'instagram_basic',
+  'instagram_content_publish'
+];
+
+const dataUrlToBlob = (dataUrl) => {
+  const match = String(dataUrl || '').match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match) return null;
+  const [, mime, base64] = match;
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new Blob([bytes], { type: mime });
+};
+
+const getPostMessage = (post) => (post.content || post.title || '').trim();
+const getMediaItems = (post) => {
+  if (Array.isArray(post.mediaItems) && post.mediaItems.length) {
+    return post.mediaItems.filter((item) => item?.url);
+  }
+  return post.mediaUrl ? [{ type: 'image', url: post.mediaUrl }] : [];
+};
+
+export class MetaService {
+  constructor(env, repo, origin) {
+    this.env = env;
+    this.repo = repo;
+    this.origin = origin;
+  }
+
+  configuredScopes() {
+    const raw = this.env.META_SCOPES || DEFAULT_SCOPES.join(',');
+    return raw.split(',').map((scope) => scope.trim()).filter(Boolean);
+  }
+
+  requiredEnv() {
+    return {
+      appId: this.env.META_APP_ID,
+      appSecret: this.env.META_APP_SECRET,
+      redirectUri: this.env.META_REDIRECT_URI || `${this.env.PUBLIC_BASE_URL || this.origin}/auth/meta/callback`
+    };
+  }
+
+  assertConfigured() {
+    const configured = this.requiredEnv();
+    if (!configured.appId || !configured.appSecret) {
+      const error = new Error('META_APP_ID và META_APP_SECRET chưa được cấu hình.');
+      error.status = 503;
+      throw error;
+    }
+    return configured;
+  }
+
+  authUrl(state) {
+    const configured = this.assertConfigured();
+    const url = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
+    url.searchParams.set('client_id', configured.appId);
+    url.searchParams.set('redirect_uri', configured.redirectUri);
+    url.searchParams.set('state', state);
+    url.searchParams.set('scope', this.configuredScopes().join(','));
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('auth_type', 'rerequest');
+    return url.toString();
+  }
+
+  async graphGet(path, params = {}) {
+    const url = new URL(`${GRAPH_BASE}/${path.replace(/^\//, '')}`);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+    });
+    const response = await fetch(url);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(body?.error?.message || `Meta API error ${response.status}`);
+      error.status = response.status;
+      error.meta = body;
+      throw error;
+    }
+    return body;
+  }
+
+  async graphPost(path, params = {}, { multipart = false } = {}) {
+    const url = new URL(`${GRAPH_BASE}/${path.replace(/^\//, '')}`);
+    const body = multipart ? new FormData() : new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        multipart ? body.append(key, value) : body.set(key, value);
+      }
+    });
+    const response = await fetch(url, { method: 'POST', body });
+    const responseBody = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(responseBody?.error?.message || `Meta API error ${response.status}`);
+      error.status = response.status;
+      error.meta = responseBody;
+      throw error;
+    }
+    return responseBody;
+  }
+
+  async addFacebookPhoto({ pageId, token, media, caption = '', published = true }) {
+    const dataBlob = dataUrlToBlob(media.url);
+    const params = { access_token: token, caption, published: String(published) };
+    if (dataBlob) {
+      params.source = dataBlob;
+      return this.graphPost(`${pageId}/photos`, params, { multipart: true });
+    }
+    params.url = media.url;
+    return this.graphPost(`${pageId}/photos`, params);
+  }
+
+  async publishFacebookPost(fanpage, post) {
+    const token = await this.repo.decryptPageToken(fanpage);
+    if (!token || !fanpage.metaPageId) {
+      throw new Error('Fanpage Facebook chưa có Page access token. Vui lòng liên kết Meta lại.');
+    }
+    const message = getPostMessage(post);
+    const mediaItems = getMediaItems(post);
+    if (!mediaItems.length) {
+      const result = await this.graphPost(`${fanpage.metaPageId}/feed`, { access_token: token, message });
+      return {
+        externalPostId: result.id || '',
+        permalink: result.id ? `https://www.facebook.com/${result.id}` : '',
+        mediaUrl: ''
+      };
+    }
+    if (mediaItems.length === 1) {
+      const result = await this.addFacebookPhoto({
+        pageId: fanpage.metaPageId,
+        token,
+        media: mediaItems[0],
+        caption: message,
+        published: true
+      });
+      return {
+        externalPostId: result.post_id || result.id || '',
+        permalink: result.post_id ? `https://www.facebook.com/${result.post_id}` : '',
+        mediaUrl: mediaItems[0].url || ''
+      };
+    }
+    const uploaded = [];
+    for (const media of mediaItems) {
+      const result = await this.addFacebookPhoto({
+        pageId: fanpage.metaPageId,
+        token,
+        media,
+        caption: '',
+        published: false
+      });
+      if (result.id) uploaded.push({ media_fbid: result.id });
+    }
+    if (!uploaded.length) throw new Error('Không thể tải ảnh lên Facebook.');
+    const result = await this.graphPost(`${fanpage.metaPageId}/feed`, {
+      access_token: token,
+      message,
+      attached_media: JSON.stringify(uploaded)
+    });
+    return {
+      externalPostId: result.id || '',
+      permalink: result.id ? `https://www.facebook.com/${result.id}` : '',
+      mediaUrl: mediaItems[0]?.url || ''
+    };
+  }
+
+  async publishInstagramPost(fanpage, post) {
+    const token = await this.repo.decryptPageToken(fanpage);
+    if (!token || !fanpage.instagramBusinessId) {
+      throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
+    }
+    const media = getMediaItems(post)[0];
+    if (!media?.url) throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
+    if (!/^https?:\/\//i.test(media.url)) {
+      throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
+    }
+    const container = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+      access_token: token,
+      image_url: media.url,
+      caption: getPostMessage(post)
+    });
+    const published = await this.graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
+      access_token: token,
+      creation_id: container.id
+    });
+    const details = published.id
+      ? await this.graphGet(published.id, { access_token: token, fields: 'permalink,media_url' }).catch(() => ({}))
+      : {};
+    return {
+      externalPostId: published.id || '',
+      permalink: details.permalink || '',
+      mediaUrl: details.media_url || media.url
+    };
+  }
+
+  async publishScheduledPost(post) {
+    const fanpage = await this.repo.getFanpage(post.fanpageId);
+    if (!fanpage) throw new Error('Không tìm thấy fanpage để đăng bài.');
+    if (!fanpage.connected) throw new Error('Fanpage chưa liên kết Meta.');
+    if (fanpage.platform === 'facebook') return this.publishFacebookPost(fanpage, post);
+    if (fanpage.platform === 'instagram') return this.publishInstagramPost(fanpage, post);
+    throw new Error(`Chưa hỗ trợ đăng tự động cho nền tảng ${fanpage.platform}.`);
+  }
+
+  async refreshFanpageProfile(fanpage) {
+    const token = await this.repo.decryptPageToken(fanpage);
+    if (!token) return fanpage;
+    if (fanpage.platform === 'instagram' && fanpage.instagramBusinessId) {
+      const instagram = await this.graphGet(fanpage.instagramBusinessId, {
+        access_token: token,
+        fields: 'username,profile_picture_url'
+      });
+      return this.repo.upsertFanpage({
+        id: fanpage.id,
+        platform: 'instagram',
+        name: instagram.username || fanpage.name,
+        link: instagram.username ? `https://instagram.com/${instagram.username}` : fanpage.link,
+        imageUrl: instagram.profile_picture_url || fanpage.imageUrl || '',
+        metaPageId: fanpage.metaPageId,
+        instagramBusinessId: fanpage.instagramBusinessId,
+        connected: true,
+        syncStatus: fanpage.syncStatus || 'connected'
+      });
+    }
+    if (fanpage.metaPageId) {
+      const page = await this.graphGet(fanpage.metaPageId, {
+        access_token: token,
+        fields: 'name,link,picture{url}'
+      });
+      return this.repo.upsertFanpage({
+        id: fanpage.id,
+        platform: fanpage.platform || 'facebook',
+        name: page.name || fanpage.name,
+        link: page.link || fanpage.link,
+        imageUrl: page.picture?.data?.url || fanpage.imageUrl || '',
+        metaPageId: fanpage.metaPageId,
+        instagramBusinessId: fanpage.instagramBusinessId,
+        connected: true,
+        syncStatus: fanpage.syncStatus || 'connected'
+      });
+    }
+    return fanpage;
+  }
+
+  async exchangeCode(code) {
+    const configured = this.assertConfigured();
+    const shortToken = await this.graphGet('oauth/access_token', {
+      client_id: configured.appId,
+      client_secret: configured.appSecret,
+      redirect_uri: configured.redirectUri,
+      code
+    });
+    const longToken = await this.graphGet('oauth/access_token', {
+      grant_type: 'fb_exchange_token',
+      client_id: configured.appId,
+      client_secret: configured.appSecret,
+      fb_exchange_token: shortToken.access_token
+    });
+    const expiresAt = longToken.expires_in
+      ? new Date(Date.now() + longToken.expires_in * 1000).toISOString()
+      : null;
+    await this.repo.saveMetaAccount({
+      accessToken: longToken.access_token,
+      tokenExpiresAt: expiresAt,
+      scopes: this.configuredScopes().join(',')
+    });
+    return longToken.access_token;
+  }
+
+  async connectPages(userAccessToken) {
+    const accounts = await this.graphGet('me/accounts', {
+      access_token: userAccessToken,
+      fields: 'id,name,link,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}'
+    });
+    const connected = [];
+    for (const page of accounts.data || []) {
+      connected.push(await this.repo.upsertFanpage({
+        platform: 'facebook',
+        name: page.name,
+        link: page.link || `https://facebook.com/${page.id}`,
+        imageUrl: page.picture?.data?.url || '',
+        metaPageId: page.id,
+        pageAccessToken: page.access_token,
+        connected: true,
+        syncStatus: 'connected'
+      }));
+      const instagram = page.instagram_business_account;
+      if (instagram?.id) {
+        connected.push(await this.repo.upsertFanpage({
+          platform: 'instagram',
+          name: instagram.username || `${page.name} Instagram`,
+          link: instagram.username ? `https://instagram.com/${instagram.username}` : '',
+          imageUrl: instagram.profile_picture_url || page.picture?.data?.url || '',
+          metaPageId: page.id,
+          instagramBusinessId: instagram.id,
+          pageAccessToken: page.access_token,
+          connected: true,
+          syncStatus: 'connected'
+        }));
+      }
+    }
+    return connected;
+  }
+
+  async syncFacebookPosts(fanpage) {
+    const token = await this.repo.decryptPageToken(fanpage);
+    if (!token || !fanpage.metaPageId) return 0;
+    const since = Math.floor((Date.now() - 1000 * 60 * 60 * 24 * 120) / 1000);
+    const posts = await this.graphGet(`${fanpage.metaPageId}/posts`, {
+      access_token: token,
+      since,
+      limit: 100,
+      fields: 'id,message,created_time,permalink_url,full_picture'
+    });
+    let count = 0;
+    for (const post of posts.data || []) {
+      await this.repo.upsertPost({
+        fanpageId: fanpage.id,
+        externalPostId: post.id,
+        title: post.message || 'Bài đăng Facebook',
+        date: (post.created_time || '').slice(0, 10),
+        permalink: post.permalink_url || '',
+        mediaUrl: post.full_picture || '',
+        source: 'facebook',
+        status: 'published'
+      });
+      count++;
+    }
+    return count;
+  }
+
+  async syncInstagramMedia(fanpage) {
+    const token = await this.repo.decryptPageToken(fanpage);
+    if (!token || !fanpage.instagramBusinessId) return 0;
+    const media = await this.graphGet(`${fanpage.instagramBusinessId}/media`, {
+      access_token: token,
+      limit: 100,
+      fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url'
+    });
+    let count = 0;
+    for (const item of media.data || []) {
+      await this.repo.upsertPost({
+        fanpageId: fanpage.id,
+        externalPostId: item.id,
+        title: item.caption || 'Bài đăng Instagram',
+        date: (item.timestamp || '').slice(0, 10),
+        permalink: item.permalink || '',
+        mediaUrl: item.media_url || item.thumbnail_url || '',
+        source: 'instagram',
+        status: 'published'
+      });
+      count++;
+    }
+    return count;
+  }
+
+  async syncAll() {
+    const fanpages = await this.repo.getConnectedFanpages();
+    const result = { startedAt: new Date().toISOString(), fanpages: [], totalPosts: 0 };
+    for (const fanpage of fanpages) {
+      try {
+        await this.repo.setFanpageSyncStatus(fanpage.id, 'syncing');
+        const refreshed = await this.refreshFanpageProfile(fanpage).catch(() => fanpage);
+        const count = refreshed.platform === 'instagram'
+          ? await this.syncInstagramMedia(refreshed)
+          : await this.syncFacebookPosts(refreshed);
+        await this.repo.setFanpageSyncStatus(refreshed.id, 'synced');
+        result.fanpages.push({
+          id: refreshed.id,
+          name: refreshed.name,
+          platform: refreshed.platform,
+          count,
+          status: 'synced'
+        });
+        result.totalPosts += count;
+      } catch (error) {
+        await this.repo.setFanpageSyncStatus(fanpage.id, 'error', error.message);
+        result.fanpages.push({
+          id: fanpage.id,
+          name: fanpage.name,
+          platform: fanpage.platform,
+          count: 0,
+          status: 'error',
+          error: error.message
+        });
+      }
+    }
+    result.finishedAt = new Date().toISOString();
+    await this.repo.saveState('lastMetaSync', result);
+    return result;
+  }
+}
