@@ -331,25 +331,38 @@ const connectPages = async (userAccessToken) => {
   return connected;
 };
 
+const fetchFacebookPostBatch = async (fanpage, token, limit = 100) => {
+  const postEdges = ['published_posts', 'posts', 'feed'];
+  const fieldSets = ['id,message,created_time,updated_time,permalink_url', 'id,created_time,updated_time'];
+  const edgeErrors = [];
+  for (const edge of postEdges) {
+    for (const fields of fieldSets) {
+      const posts = await graphGet(`${fanpage.metaPageId}/${edge}`, {
+        access_token: token,
+        limit,
+        fields
+      }).catch((err) => {
+        edgeErrors.push(`${edge} (${fields}): ${err.message}`);
+        return { data: [] };
+      });
+      if ((posts.data || []).length) {
+        return { posts: posts.data || [], edge, fields, edgeErrors };
+      }
+    }
+  }
+  if (edgeErrors.length === postEdges.length * fieldSets.length) {
+    throw new Error(`Meta không cho đọc bài đã đăng. ${edgeErrors.join(' | ')}`);
+  }
+  return { posts: [], edge: '', fields: '', edgeErrors };
+};
+
 const syncFacebookPosts = async (fanpage) => {
   const token = repo.decryptPageToken(fanpage);
   if (!token || !fanpage.metaPageId) return 0;
-  const query = {
-    access_token: token,
-    limit: 100,
-    fields: 'id,message,created_time,permalink_url,full_picture,from'
-  };
-  const postEdges = ['published_posts', 'posts', 'feed'];
-  let posts = { data: [] };
-  for (const edge of postEdges) {
-    posts = await graphGet(`${fanpage.metaPageId}/${edge}`, query).catch(() => ({ data: [] }));
-    if ((posts.data || []).length) break;
-  }
+  const { posts } = await fetchFacebookPostBatch(fanpage, token);
   let count = 0;
-  for (const post of posts.data || []) {
-    if (post.from?.id && post.from.id !== fanpage.metaPageId) continue;
-    const publishedAt = post.created_time || '';
-    if (!publishedAt) continue;
+  for (const post of posts) {
+    const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
     await repo.upsertPost({
       fanpageId: fanpage.id,
       externalPostId: post.id,
@@ -374,14 +387,20 @@ const syncInstagramMedia = async (fanpage) => {
     access_token: token,
     limit: 100,
     fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url'
-  });
+  }).catch(() => graphGet(`${fanpage.instagramBusinessId}/media`, {
+    access_token: token,
+    limit: 100,
+    fields: 'id,timestamp'
+  }));
   let count = 0;
   for (const item of media.data || []) {
+    const publishedAt = item.timestamp || new Date().toISOString();
     await repo.upsertPost({
       fanpageId: fanpage.id,
       externalPostId: item.id,
       title: item.caption || 'Bài đăng Instagram',
-      date: (item.timestamp || '').slice(0, 10),
+      date: publishedAt.slice(0, 10),
+      publishedAt,
       permalink: item.permalink || '',
       mediaUrl: item.media_url || item.thumbnail_url || '',
       source: 'instagram',
@@ -400,9 +419,13 @@ const syncAll = async () => {
     try {
       await repo.setFanpageSyncStatus(fanpage.id, 'syncing');
       const refreshed = await refreshFanpageProfile(fanpage).catch(() => fanpage);
-      const count = refreshed.platform === 'instagram'
-        ? await syncInstagramMedia(refreshed)
-        : await syncFacebookPosts(refreshed);
+      const syncFanpage = {
+        ...refreshed,
+        pageAccessTokenEncrypted: fanpage.pageAccessTokenEncrypted
+      };
+      const count = syncFanpage.platform === 'instagram'
+        ? await syncInstagramMedia(syncFanpage)
+        : await syncFacebookPosts(syncFanpage);
       await repo.setFanpageSyncStatus(refreshed.id, 'synced');
       result.fanpages.push({ id: refreshed.id, name: refreshed.name, platform: refreshed.platform, count, status: 'synced' });
       result.totalPosts += count;

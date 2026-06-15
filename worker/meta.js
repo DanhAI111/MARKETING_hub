@@ -305,25 +305,38 @@ export class MetaService {
     return connected;
   }
 
+  async fetchFacebookPostBatch(fanpage, token, limit = 100) {
+    const postEdges = ['published_posts', 'posts', 'feed'];
+    const fieldSets = ['id,message,created_time,updated_time,permalink_url', 'id,created_time,updated_time'];
+    const edgeErrors = [];
+    for (const edge of postEdges) {
+      for (const fields of fieldSets) {
+        const posts = await this.graphGet(`${fanpage.metaPageId}/${edge}`, {
+          access_token: token,
+          limit,
+          fields
+        }).catch((error) => {
+          edgeErrors.push(`${edge} (${fields}): ${error.message}`);
+          return { data: [] };
+        });
+        if ((posts.data || []).length) {
+          return { posts: posts.data || [], edge, fields, edgeErrors };
+        }
+      }
+    }
+    if (edgeErrors.length === postEdges.length * fieldSets.length) {
+      throw new Error(`Meta không cho đọc bài đã đăng. ${edgeErrors.join(' | ')}`);
+    }
+    return { posts: [], edge: '', fields: '', edgeErrors };
+  }
+
   async syncFacebookPosts(fanpage) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.metaPageId) return 0;
-    const query = {
-      access_token: token,
-      limit: 100,
-      fields: 'id,message,created_time,permalink_url,full_picture,from'
-    };
-    const postEdges = ['published_posts', 'posts', 'feed'];
-    let posts = { data: [] };
-    for (const edge of postEdges) {
-      posts = await this.graphGet(`${fanpage.metaPageId}/${edge}`, query).catch(() => ({ data: [] }));
-      if ((posts.data || []).length) break;
-    }
+    const { posts } = await this.fetchFacebookPostBatch(fanpage, token);
     let count = 0;
-    for (const post of posts.data || []) {
-      if (post.from?.id && post.from.id !== fanpage.metaPageId) continue;
-      const publishedAt = post.created_time || '';
-      if (!publishedAt) continue;
+    for (const post of posts) {
+      const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
       await this.repo.upsertPost({
         fanpageId: fanpage.id,
         externalPostId: post.id,
@@ -348,14 +361,20 @@ export class MetaService {
       access_token: token,
       limit: 100,
       fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url'
-    });
+    }).catch(() => this.graphGet(`${fanpage.instagramBusinessId}/media`, {
+      access_token: token,
+      limit: 100,
+      fields: 'id,timestamp'
+    }));
     let count = 0;
     for (const item of media.data || []) {
+      const publishedAt = item.timestamp || new Date().toISOString();
       await this.repo.upsertPost({
         fanpageId: fanpage.id,
         externalPostId: item.id,
         title: item.caption || 'Bài đăng Instagram',
-        date: (item.timestamp || '').slice(0, 10),
+        date: publishedAt.slice(0, 10),
+        publishedAt,
         permalink: item.permalink || '',
         mediaUrl: item.media_url || item.thumbnail_url || '',
         source: 'instagram',
@@ -373,9 +392,13 @@ export class MetaService {
       try {
         await this.repo.setFanpageSyncStatus(fanpage.id, 'syncing');
         const refreshed = await this.refreshFanpageProfile(fanpage).catch(() => fanpage);
-        const count = refreshed.platform === 'instagram'
-          ? await this.syncInstagramMedia(refreshed)
-          : await this.syncFacebookPosts(refreshed);
+        const syncFanpage = {
+          ...refreshed,
+          pageAccessTokenEncrypted: fanpage.pageAccessTokenEncrypted
+        };
+        const count = syncFanpage.platform === 'instagram'
+          ? await this.syncInstagramMedia(syncFanpage)
+          : await this.syncFacebookPosts(syncFanpage);
         await this.repo.setFanpageSyncStatus(refreshed.id, 'synced');
         result.fanpages.push({
           id: refreshed.id,
@@ -399,6 +422,60 @@ export class MetaService {
     }
     result.finishedAt = new Date().toISOString();
     await this.repo.saveState('lastMetaSync', result);
+    return result;
+  }
+
+  async diagnostics() {
+    const fanpages = await this.repo.getConnectedFanpages();
+    const configured = this.assertConfigured();
+    const appAccessToken = `${configured.appId}|${configured.appSecret}`;
+    const result = { checkedAt: new Date().toISOString(), fanpages: [] };
+    for (const fanpage of fanpages) {
+      const token = await this.repo.decryptPageToken(fanpage);
+      const item = {
+        id: fanpage.id,
+        name: fanpage.name,
+        platform: fanpage.platform,
+        connected: fanpage.connected,
+        hasToken: !!token,
+        scopes: [],
+        granularScopes: [],
+        edges: {}
+      };
+      if (!token) {
+        result.fanpages.push(item);
+        continue;
+      }
+      const tokenDebug = await this.graphGet('debug_token', {
+        input_token: token,
+        access_token: appAccessToken
+      }).catch((error) => ({ error: error.message }));
+      if (tokenDebug.error) {
+        item.tokenError = tokenDebug.error;
+      } else {
+        item.scopes = tokenDebug.data?.scopes || [];
+        item.granularScopes = tokenDebug.data?.granular_scopes || [];
+        item.expiresAt = tokenDebug.data?.expires_at
+          ? new Date(tokenDebug.data.expires_at * 1000).toISOString()
+          : null;
+      }
+      if (fanpage.platform === 'instagram' && fanpage.instagramBusinessId) {
+        const media = await this.graphGet(`${fanpage.instagramBusinessId}/media`, {
+          access_token: token,
+          limit: 5,
+          fields: 'id,timestamp'
+        }).catch((error) => ({ error: error.message, data: [] }));
+        item.edges.media = { count: (media.data || []).length, error: media.error || '' };
+      } else if (fanpage.metaPageId) {
+        const batch = await this.fetchFacebookPostBatch(fanpage, token, 5);
+        item.edges[batch.edge || 'none'] = {
+          count: batch.posts.length,
+          fields: batch.fields,
+          errorCount: batch.edgeErrors.length
+        };
+      }
+      result.fanpages.push(item);
+    }
     return result;
   }
 }

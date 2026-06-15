@@ -118,6 +118,10 @@ const handleRequest = async (request, env, context) => {
     return Response.redirect(`${url.origin}/login?next=${encodeURIComponent(`${pathname}${url.search}${url.hash}`)}`, 302);
   }
 
+  if (method === 'GET' && pathname === '/api/meta/diagnostics') {
+    return json(await meta.diagnostics());
+  }
+
   if (method === 'GET' && pathname === '/api/bootstrap') {
     return json({ ...await repo.getBootstrapData(), lastSync: await repo.getState('lastMetaSync') });
   }
