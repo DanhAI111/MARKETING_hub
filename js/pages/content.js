@@ -841,7 +841,7 @@ const ContentPage = (() => {
               <span>Đọc link</span>
             </button>
           </div>
-          <div class="form-hint">Sheet cần chia sẻ quyền xem hoặc publish. Nếu không dùng backend Node, hãy tải CSV rồi import file.</div>
+          <div class="form-hint">Sheet cần chia sẻ quyền xem cho bất kỳ ai có link hoặc dùng link Publish to web. Nếu link vẫn bị chặn, hãy tải CSV rồi import file.</div>
         </div>
 
         <div class="form-group">
@@ -1093,13 +1093,13 @@ const ContentPage = (() => {
 
   const parseScheduleCsvContent = (text) => {
     const cleanText = String(text || '').replace(/^\uFEFF/, '');
-    const firstLine = cleanText.split(/\r?\n/)[0] || '';
-    const delimiter = detectScheduleCsvDelimiter(firstLine);
-    const lines = cleanText.split(/\r?\n/).filter(line => line.trim());
-    if (lines.length < 2) return { headers: [], rows: [] };
-    const headers = parseScheduleCsvLine(lines[0], delimiter);
-    const rows = lines.slice(1).map(line => {
-      const values = parseScheduleCsvLine(line, delimiter);
+    const previewLine = cleanText.split(/\r?\n/)[0] || '';
+    const delimiter = detectScheduleCsvDelimiter(previewLine);
+    const records = parseScheduleCsvRecords(cleanText, delimiter)
+      .filter(record => record.some(value => String(value).trim()));
+    if (records.length < 2) return { headers: [], rows: [] };
+    const headers = records[0];
+    const rows = records.slice(1).map(values => {
       const row = {};
       headers.forEach((header, index) => {
         row[header] = values[index] || '';
@@ -1107,6 +1107,39 @@ const ContentPage = (() => {
       return row;
     }).filter(row => Object.values(row).some(value => String(value).trim()));
     return { headers, rows };
+  };
+
+  const parseScheduleCsvRecords = (text, delimiter = ',') => {
+    const records = [];
+    let record = [];
+    let current = '';
+    let inQuotes = false;
+    const input = String(text || '');
+    for (let i = 0; i < input.length; i++) {
+      const char = input[i];
+      if (char === '"') {
+        if (inQuotes && input[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        record.push(current.trim());
+        current = '';
+      } else if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (char === '\r' && input[i + 1] === '\n') i++;
+        record.push(current.trim());
+        if (record.some(value => String(value).trim())) records.push(record);
+        record = [];
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    record.push(current.trim());
+    if (record.some(value => String(value).trim())) records.push(record);
+    return records.map(row => row.map(value => value.replace(/^"|"$/g, '')));
   };
 
   const detectScheduleCsvDelimiter = (line) => {

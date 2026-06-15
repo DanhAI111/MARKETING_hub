@@ -31,15 +31,24 @@ const googleSheetCsvUrl = (inputUrl) => {
     error.status = 400;
     throw error;
   }
-  const match = url.pathname.match(/\/spreadsheets\/d\/([^/]+)/);
-  if (!match) {
+
+  if (url.pathname.includes('/spreadsheets/') && (url.searchParams.get('output') === 'csv' || url.searchParams.get('format') === 'csv')) {
+    return url.toString();
+  }
+
+  const publishedMatch = url.pathname.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/e\/([^/]+)/);
+  const regularMatch = url.pathname.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/([^/]+)/);
+  if (!publishedMatch && !regularMatch) {
     const error = new Error('Không tìm thấy Google Sheets ID trong link');
     error.status = 400;
     throw error;
   }
   const hashParams = new URLSearchParams(String(url.hash || '').replace(/^#/, ''));
   const gid = url.searchParams.get('gid') || hashParams.get('gid') || '0';
-  return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv&gid=${encodeURIComponent(gid)}`;
+  if (publishedMatch) {
+    return `https://docs.google.com/spreadsheets/d/e/${publishedMatch[1]}/pub?output=csv&gid=${encodeURIComponent(gid)}`;
+  }
+  return `https://docs.google.com/spreadsheets/d/${regularMatch[1]}/export?format=csv&gid=${encodeURIComponent(gid)}`;
 };
 
 const processScheduledPosts = async (repo, meta) => {
