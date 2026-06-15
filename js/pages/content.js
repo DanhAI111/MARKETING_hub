@@ -996,13 +996,13 @@ const ContentPage = (() => {
   const buildScheduleImportItems = (rows, defaultFanpageId = '') => {
     const fanpages = Store.fanpages.getAll();
     return rows.map(row => {
-      const title = getScheduleRowValue(row, ['title', 'tieu de', 'tiêu đề']);
-      const content = getScheduleRowValue(row, ['content', 'noi dung', 'nội dung', 'caption', 'post', 'bai dang', 'bài đăng']);
-      const fanpageText = getScheduleRowValue(row, ['fanpage', 'page', 'tai khoan', 'tài khoản', 'account', 'kenh', 'kênh']);
-      const scheduledRaw = getScheduleRowValue(row, ['scheduledat', 'scheduled at', 'schedule', 'datetime', 'thoi gian dang', 'thời gian đăng', 'ngay gio', 'ngày giờ']);
-      const dateRaw = getScheduleRowValue(row, ['date', 'ngay', 'ngày', 'ngay dang', 'ngày đăng']);
-      const timeRaw = getScheduleRowValue(row, ['time', 'gio', 'giờ', 'gio dang', 'giờ đăng']);
-      const mediaRaw = getScheduleRowValue(row, ['media', 'image', 'anh', 'ảnh', 'url anh', 'url ảnh', 'link anh', 'link ảnh']);
+      const title = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.title);
+      const content = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.content);
+      const fanpageText = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.fanpage);
+      const scheduledRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.scheduled);
+      const dateRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.date);
+      const timeRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.time);
+      const mediaRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.media);
       const fanpage = matchScheduleFanpage(fanpages, fanpageText, defaultFanpageId);
       const scheduledDate = parseScheduleDateTime(scheduledRaw, dateRaw, timeRaw);
       const mediaItems = parseScheduleMediaItems(mediaRaw);
@@ -1036,6 +1036,33 @@ const ContentPage = (() => {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();
+  };
+
+  const SCHEDULE_IMPORT_ALIASES = {
+    title: ['title', 'tieu de', 'tiêu đề', 'chu de', 'chủ đề', 'topic'],
+    content: [
+      'content', 'noi dung', 'nội dung', 'noi dung bai dang', 'nội dung bài đăng',
+      'caption', 'post', 'bai dang', 'bài đăng', 'bai viet', 'bài viết', 'copy',
+      'text', 'mo ta', 'mô tả'
+    ],
+    fanpage: [
+      'fanpage', 'page', 'ten page', 'tên page', 'fan page', 'facebook page',
+      'tai khoan', 'tài khoản', 'account', 'kenh', 'kênh', 'kenh dang',
+      'kênh đăng', 'page dang', 'page đăng', 'nhan hang', 'nhãn hàng',
+      'brand', 'thuong hieu', 'thương hiệu'
+    ],
+    scheduled: [
+      'scheduledat', 'scheduled at', 'schedule', 'datetime', 'thoi gian',
+      'thời gian', 'thoi gian dang', 'thời gian đăng', 'lich dang',
+      'lịch đăng', 'ngay gio', 'ngày giờ', 'ngay gio dang', 'ngày giờ đăng'
+    ],
+    date: ['date', 'ngay', 'ngày', 'ngay dang', 'ngày đăng', 'ngay len bai', 'ngày lên bài'],
+    time: ['time', 'gio', 'giờ', 'gio dang', 'giờ đăng', 'khung gio', 'khung giờ'],
+    media: [
+      'media', 'image', 'anh', 'ảnh', 'hinh', 'hình', 'url anh', 'url ảnh',
+      'link anh', 'link ảnh', 'link hinh', 'link hình', 'photo', 'video',
+      'asset', 'creative'
+    ]
   };
 
   const getScheduleRowValue = (row, aliases) => {
@@ -1098,8 +1125,9 @@ const ContentPage = (() => {
     const records = parseScheduleCsvRecords(cleanText, delimiter)
       .filter(record => record.some(value => String(value).trim()));
     if (records.length < 2) return { headers: [], rows: [] };
-    const headers = records[0];
-    const rows = records.slice(1).map(values => {
+    const headerIndex = findScheduleHeaderRecordIndex(records);
+    const headers = records[headerIndex];
+    const rows = records.slice(headerIndex + 1).map(values => {
       const row = {};
       headers.forEach((header, index) => {
         row[header] = values[index] || '';
@@ -1107,6 +1135,35 @@ const ContentPage = (() => {
       return row;
     }).filter(row => Object.values(row).some(value => String(value).trim()));
     return { headers, rows };
+  };
+
+  const findScheduleHeaderRecordIndex = (records) => {
+    const candidates = records.slice(0, Math.min(records.length, 12));
+    let bestIndex = 0;
+    let bestScore = -1;
+    candidates.forEach((record, index) => {
+      const normalized = record.map(normalizeScheduleKey);
+      const score =
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.content) * 3 +
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.scheduled) * 3 +
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.date) * 2 +
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.time) * 2 +
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.fanpage) * 2 +
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.media) +
+        scoreHeaderAliases(normalized, SCHEDULE_IMPORT_ALIASES.title);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    });
+    return bestScore > 0 ? bestIndex : 0;
+  };
+
+  const scoreHeaderAliases = (normalizedHeaders, aliases) => {
+    const normalizedAliases = aliases.map(normalizeScheduleKey);
+    return normalizedHeaders.some(header =>
+      normalizedAliases.some(alias => header === alias || header.includes(alias))
+    ) ? 1 : 0;
   };
 
   const parseScheduleCsvRecords = (text, delimiter = ',') => {
