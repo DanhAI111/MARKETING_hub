@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Marketing Hub - Ứng dụng quản lý công việc marketing cá nhân. Quản lý lịch đăng bài, KPI, sự kiện, chi phí và hiệu quả quảng cáo.">
+  <title>Marketing Hub - Quản Lý Marketing</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/dashboard.css">
+  <link rel="stylesheet" href="css/pages.css">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2310b981' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3v18h18'/><path d='m19 9-5 5-4-4-3 3'/></svg>">
+</head>
+<body>
+  <div class="app" id="app">
+    <!-- Top Navigation -->
+    <header class="top-nav" id="sidebar">
+      <!-- Rendered by sidebar.js -->
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+      <header class="page-toolbar">
+        <div class="main-header-left"></div>
+        <div class="main-header-right"></div>
+      </header>
+      <div class="main-content" id="mainContent">
+        <!-- Pages rendered here -->
+      </div>
+    </main>
+  </div>
+
+  <!-- Scripts - Core -->
+  <script src="js/store.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/utils.js"></script>
+
+  <!-- Scripts - Components -->
+  <script src="js/components/sidebar.js"></script>
+  <script src="js/components/modal.js"></script>
+  <script src="js/components/chart.js"></script>
+  <script src="js/components/toast.js"></script>
+
+  <!-- Scripts - App (defines App object - must load before pages) -->
+  <script src="js/app.js"></script>
+
+  <!-- Scripts - Pages (call App.registerPage) -->
+  <script src="js/pages/dashboard.js"></script>
+  <script src="js/pages/content.js"></script>
+  <script src="js/pages/scheduled.js"></script>
+  <script src="js/pages/tasks.js"></script>
+  <script src="js/pages/events.js"></script>
+  <script src="js/pages/expenses.js"></script>
+  <script src="js/pages/ads.js"></script>
+  <script src="js/pages/settings.js"></script>
+</body>
+</html>

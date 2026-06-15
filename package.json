@@ -1,0 +1,20 @@
+{
+  "name": "marketing-hub-meta-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "node server/index.js",
+    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pg": "^8.21.0"
+  }
+}

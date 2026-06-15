@@ -1,0 +1,364 @@
+/* ═══════════════════════════════════════════
+   MARKETING HUB - Layout Styles
+   Sidebar + Main content structure
+   Matches ui_design Layout.tsx / Sidebar.tsx
+   ═══════════════════════════════════════════ */
+
+/* ── App Shell ── */
+/* Layout.tsx: <div className="flex h-screen bg-background"> */
+.app {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  background: var(--background);
+}
+
+/* ── Sidebar ── */
+/* Sidebar.tsx: Outer wrapper has ml-6 my-6 */
+.sidebar {
+  flex-shrink: 0;
+  padding: var(--space-6); /* my-6 ml-6 */
+  padding-right: 0;
+}
+
+/* Sidebar.tsx: Inner container */
+/* "flex flex-col h-[calc(100vh-3rem)] transition-all duration-300 ease-in-out rounded-3xl" */
+/* "bg-gradient-to-b from-sidebar via-sidebar to-sidebar-accent shadow-2xl border border-sidebar-border/20 overflow-hidden" */
+/* Collapsed: w-20 */
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 3rem);
+  width: var(--sidebar-width);
+  background: linear-gradient(to bottom, var(--sidebar), var(--sidebar), var(--sidebar-accent));
+  border-radius: var(--radius-3xl);
+  box-shadow: var(--shadow-2xl);
+  border: 1px solid rgba(58, 107, 90, 0.2); /* sidebar-border/20 */
+  overflow: hidden;
+  transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Sidebar Header ── */
+/* "p-6 flex flex-col items-center relative" */
+.sidebar-header {
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+/* Logo circle */
+/* "w-12 h-12 bg-gradient-to-br from-sidebar-primary to-sidebar-primary/80 rounded-full flex items-center justify-center shadow-lg" */
+.sidebar-logo {
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(to bottom right, var(--sidebar-primary), rgba(123, 220, 147, 0.8));
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-lg);
+  color: var(--sidebar-primary-foreground);
+}
+
+.sidebar-logo svg {
+  width: 24px;
+  height: 24px;
+}
+
+.sidebar-title {
+  color: var(--sidebar-foreground);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--text-base);
+  white-space: nowrap;
+  margin-top: var(--space-3);
+  text-align: center;
+  display: none; /* Hidden when collapsed */
+}
+
+/* ── Sidebar Navigation ── */
+/* "flex-1 px-4 py-6" */
+.sidebar-nav {
+  flex: 1;
+  padding: var(--space-6) var(--space-4);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* "space-y-4" */
+.sidebar-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem; /* space-y-4 */
+}
+
+/* Navigation items */
+/* Collapsed: "w-12 h-12 justify-center mx-auto rounded-full" */
+/* "transition-all duration-300 flex items-center relative overflow-hidden" */
+/* "hover:scale-110 hover:shadow-lg" */
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto;
+  border-radius: var(--radius-full);
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: visible;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  /* Default inactive: "bg-gradient-to-br from-sidebar-accent to-sidebar-accent/80" */
+  background: linear-gradient(to bottom right, var(--sidebar-accent), rgba(58, 107, 90, 0.8));
+  color: var(--sidebar-accent-foreground);
+}
+
+.nav-item:hover {
+  transform: scale(1.1);
+  box-shadow: var(--shadow-lg);
+  /* "hover:from-sidebar-primary/80 hover:to-sidebar-primary/60" */
+  background: linear-gradient(to bottom right, rgba(123, 220, 147, 0.8), rgba(123, 220, 147, 0.6));
+  color: var(--sidebar-primary-foreground);
+}
+
+/* Active state */
+/* "bg-gradient-to-br from-sidebar-primary to-sidebar-primary/80 shadow-lg shadow-sidebar-primary/30 scale-105" */
+.nav-item.active {
+  background: linear-gradient(to bottom right, var(--sidebar-primary), rgba(123, 220, 147, 0.8));
+  box-shadow: var(--shadow-lg), 0 4px 14px rgba(123, 220, 147, 0.3);
+  transform: scale(1.05);
+  color: var(--sidebar-primary-foreground);
+}
+
+/* Active indicator bar (collapsed) */
+/* "absolute -right-2 top-1/2 -translate-y-1/2 w-1 h-6 bg-sidebar-primary rounded-l-full" */
+.nav-item.active::after {
+  content: '';
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 24px;
+  background: var(--sidebar-primary);
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+}
+
+.nav-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.nav-item-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.nav-item-text {
+  display: none; /* Hidden when collapsed */
+  font-weight: var(--font-weight-medium);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  margin-left: var(--space-3);
+}
+
+/* Badge */
+.nav-item-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: var(--font-weight-bold);
+  color: #ffffff;
+  background: var(--destructive);
+  border: 2px solid var(--sidebar);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  line-height: 1;
+  z-index: 2;
+}
+
+/* Tooltip for collapsed state */
+/* "absolute left-full ml-4 px-3 py-2 bg-gradient-to-br from-sidebar-primary to-sidebar-primary/90 text-sidebar-primary-foreground rounded-xl" */
+/* "opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none whitespace-nowrap z-50 shadow-lg" */
+.nav-item::before {
+  content: attr(title);
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  transform: translateY(-50%) translateX(8px);
+  padding: var(--space-2) var(--space-3);
+  background: linear-gradient(to bottom right, var(--sidebar-primary), rgba(123, 220, 147, 0.9));
+  color: var(--sidebar-primary-foreground);
+  border-radius: var(--radius-xl);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  z-index: var(--z-tooltip);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nav-item:hover::before {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* ── Sidebar Footer ── */
+/* "p-4 flex justify-center" */
+.sidebar-footer {
+  padding: var(--space-4);
+  display: flex;
+  justify-content: center;
+}
+
+/* User profile button */
+/* "w-12 h-12 bg-gradient-to-br from-sidebar-primary to-sidebar-primary/80 rounded-full" */
+/* "flex items-center justify-center shadow-lg hover:scale-110 transition-all duration-300 cursor-pointer" */
+.user-profile-btn {
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(to bottom right, var(--sidebar-primary), rgba(123, 220, 147, 0.8));
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  padding: 0;
+  overflow: hidden;
+}
+
+.user-profile-btn:hover {
+  transform: scale(1.1);
+}
+
+.user-profile-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius-full);
+}
+
+.user-profile-btn span {
+  color: var(--sidebar-primary-foreground);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--text-lg);
+}
+
+/* ── Main Content Area ── */
+/* Layout.tsx: <main className="flex-1 overflow-auto"> */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Page header bar */
+.page-toolbar,
+.main-header {
+  display: none; /* Hidden — EMS design has no top header */
+}
+
+/* Page content */
+/* Dashboard.tsx: <div className="p-6 space-y-6"> */
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+}
+
+/* Each page gets p-6 padding */
+.page {
+  padding: var(--space-6);
+}
+
+/* ── Sidebar Toggle (mobile) ── */
+.sidebar-toggle {
+  display: none;
+}
+
+/* ══════════ RESPONSIVE ══════════ */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: var(--z-overlay);
+    padding: var(--space-4);
+    padding-right: 0;
+    transform: translateX(-100%);
+    transition: transform 300ms ease;
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .main {
+    width: 100%;
+  }
+
+  .sidebar-toggle {
+    display: flex;
+    position: fixed;
+    bottom: var(--space-6);
+    left: var(--space-4);
+    z-index: var(--z-overlay);
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-full);
+    background: var(--sidebar);
+    color: var(--sidebar-foreground);
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-xl);
+    cursor: pointer;
+    border: none;
+  }
+}
+
+/* ══════════ GRADIENT UTILITIES (from globals.css) ══════════ */
+.gradient-sidebar {
+  background: linear-gradient(135deg, var(--sidebar) 0%, var(--sidebar-accent) 100%);
+}
+
+.gradient-primary {
+  background: linear-gradient(135deg, var(--sidebar-primary) 0%, rgba(123, 220, 147, 0.8) 100%);
+}
+
+.gradient-glow {
+  box-shadow: 0 0 20px rgba(123, 220, 147, 0.3), 0 0 40px rgba(123, 220, 147, 0.1);
+}
+
+/* ══════════ SIDEBAR ANIMATIONS (from globals.css) ══════════ */
+@keyframes activeIndicator {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.8; }
+}
+
+.active-indicator {
+  animation: activeIndicator 2s ease-in-out infinite;
+}
