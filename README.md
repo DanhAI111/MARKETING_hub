@@ -65,7 +65,7 @@ https://marketing-hub.danhai111.workers.dev
 Google OAuth authorized redirect URI:
 
 ```text
-https://your-worker-url/auth/google/callback
+https://marketing-hub.danhai111.workers.dev/auth/google/callback
 ```
 
 Meta Facebook Login redirect URI:
@@ -79,6 +79,8 @@ If a custom domain is added, set these optional Worker variables to the custom H
 - `PUBLIC_BASE_URL`
 - `GOOGLE_CALLBACK_URL`
 - `META_REDIRECT_URI`
+
+If you keep the default `workers.dev` deployment, nothing else needs to be edited in code or config.
 
 ## Local Cloudflare Development
 
