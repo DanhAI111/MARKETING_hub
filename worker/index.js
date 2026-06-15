@@ -193,7 +193,13 @@ const handleRequest = async (request, env, context) => {
     return json({ value: await repo.saveSingleton(decodeURIComponent(match[1]), body.value ?? null) });
   }
 
-  if (method === 'POST' && pathname === '/api/sync') return json(await meta.syncAll());
+  if (method === 'POST' && pathname === '/api/sync') {
+    return json(await meta.syncAll({
+      cursor: url.searchParams.has('cursor') ? url.searchParams.get('cursor') : null,
+      maxFanpages: Number(url.searchParams.get('maxFanpages') || 1),
+      postLimit: Number(url.searchParams.get('postLimit') || 100)
+    }));
+  }
   if (method === 'POST' && pathname === '/api/publish-due') {
     return json(await processScheduledPosts(repo, meta));
   }

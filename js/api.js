@@ -131,7 +131,13 @@ const RemoteStore = (() => {
 
   const syncNow = async () => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
-    lastSync = await request('/api/sync', { method: 'POST', body: '{}' });
+    let cursor = 0;
+    let attempts = 0;
+    do {
+      lastSync = await request(`/api/sync?cursor=${cursor}&maxFanpages=1&postLimit=100`, { method: 'POST', body: '{}' });
+      cursor = lastSync.nextCursor || 0;
+      attempts++;
+    } while (lastSync.hasMore && attempts < 20);
     const data = await request('/api/bootstrap');
     lastSync = data.lastSync || lastSync;
     Store.mergeRemoteData(data);

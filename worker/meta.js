@@ -330,10 +330,10 @@ export class MetaService {
     return { posts: [], edge: '', fields: '', edgeErrors };
   }
 
-  async syncFacebookPosts(fanpage) {
+  async syncFacebookPosts(fanpage, { limit = 100 } = {}) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.metaPageId) return 0;
-    const { posts } = await this.fetchFacebookPostBatch(fanpage, token);
+    const { posts } = await this.fetchFacebookPostBatch(fanpage, token, limit);
     let count = 0;
     for (const post of posts) {
       const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
@@ -354,16 +354,16 @@ export class MetaService {
     return count;
   }
 
-  async syncInstagramMedia(fanpage) {
+  async syncInstagramMedia(fanpage, { limit = 100 } = {}) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.instagramBusinessId) return 0;
     const media = await this.graphGet(`${fanpage.instagramBusinessId}/media`, {
       access_token: token,
-      limit: 100,
+      limit,
       fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url'
     }).catch(() => this.graphGet(`${fanpage.instagramBusinessId}/media`, {
       access_token: token,
-      limit: 100,
+      limit,
       fields: 'id,timestamp'
     }));
     let count = 0;
@@ -385,10 +385,24 @@ export class MetaService {
     return count;
   }
 
-  async syncAll() {
-    const fanpages = await this.repo.getConnectedFanpages();
-    const result = { startedAt: new Date().toISOString(), fanpages: [], totalPosts: 0 };
-    for (const fanpage of fanpages) {
+  async syncAll({ cursor = null, maxFanpages = 1, postLimit = 100 } = {}) {
+    const fanpages = (await this.repo.getConnectedFanpages())
+      .sort((a, b) => `${a.name || ''}:${a.id}`.localeCompare(`${b.name || ''}:${b.id}`));
+    const savedCursor = await this.repo.getState('lastMetaSyncCursor');
+    const startIndex = Math.max(0, Math.min(
+      cursor === null ? Number(savedCursor || 0) : Number(cursor || 0),
+      Math.max(fanpages.length - 1, 0)
+    ));
+    const batchSize = Math.max(1, Math.min(Number(maxFanpages || 1), fanpages.length || 1));
+    const selectedFanpages = fanpages.slice(startIndex, startIndex + batchSize);
+    const result = {
+      startedAt: new Date().toISOString(),
+      cursor: startIndex,
+      fanpageCount: fanpages.length,
+      fanpages: [],
+      totalPosts: 0
+    };
+    for (const fanpage of selectedFanpages) {
       try {
         await this.repo.setFanpageSyncStatus(fanpage.id, 'syncing');
         const refreshed = await this.refreshFanpageProfile(fanpage).catch(() => fanpage);
@@ -397,8 +411,8 @@ export class MetaService {
           pageAccessTokenEncrypted: fanpage.pageAccessTokenEncrypted
         };
         const count = syncFanpage.platform === 'instagram'
-          ? await this.syncInstagramMedia(syncFanpage)
-          : await this.syncFacebookPosts(syncFanpage);
+          ? await this.syncInstagramMedia(syncFanpage, { limit: postLimit })
+          : await this.syncFacebookPosts(syncFanpage, { limit: postLimit });
         await this.repo.setFanpageSyncStatus(refreshed.id, 'synced');
         result.fanpages.push({
           id: refreshed.id,
@@ -420,7 +434,11 @@ export class MetaService {
         });
       }
     }
+    const nextCursor = startIndex + selectedFanpages.length;
+    result.nextCursor = nextCursor < fanpages.length ? nextCursor : 0;
+    result.hasMore = nextCursor < fanpages.length;
     result.finishedAt = new Date().toISOString();
+    await this.repo.saveState('lastMetaSyncCursor', result.nextCursor);
     await this.repo.saveState('lastMetaSync', result);
     return result;
   }
