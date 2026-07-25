@@ -22,6 +22,21 @@ let lastSync = null;
 let syncInFlight = null;
 let publishInFlight = false;
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// Clamp a query param to a safe integer range, rejecting NaN/negative values.
+const clampInt = (value, { fallback, min = 0, max = Number.MAX_SAFE_INTEGER }) => {
+  const num = Number.parseInt(value, 10);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
+};
+
+// Kick off scheduled publishing in the background without blocking the response,
+// but do NOT unref: an unref'd timer is dropped if the process exits, silently
+// losing the publish. Errors are logged.
+const publishSoon = () => {
+  Promise.resolve().then(() => processScheduledPosts())
+    .catch((err) => console.error('Immediate publish failed:', err.message));
+};
 const assertExpectedVersion = async (latest, expectedUpdatedAt) => {
   if (!expectedUpdatedAt || latest?.updatedAt === expectedUpdatedAt) return;
   const err = new Error('Dữ liệu đã thay đổi');
@@ -179,8 +194,8 @@ app.get('/api/posts', asyncHandler(async (req, res) => {
   res.json(await repo.listPosts({
     month: req.query.month || '',
     pending: req.query.pending === '1',
-    limit: Number(req.query.limit || 500),
-    offset: Number(req.query.offset || 0)
+    limit: clampInt(req.query.limit, { fallback: 500, min: 1, max: 5000 }),
+    offset: clampInt(req.query.offset, { fallback: 0, min: 0 })
   }));
 }));
 
@@ -188,7 +203,7 @@ app.post('/api/posts', asyncHandler(async (req, res) => {
   const post = await repo.upsertPost(req.body || {});
   writeAudit(req, 'create', 'post', post.id, post);
   if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
-    setTimeout(() => processScheduledPosts().catch((err) => console.error('Immediate publish failed:', err.message)), 100).unref();
+    publishSoon();
   }
   res.status(201).json(post);
 }));
@@ -202,7 +217,7 @@ app.put('/api/posts/:id', asyncHandler(async (req, res) => {
   const post = await repo.upsertPost({ ...updates, id: req.params.id });
   writeAudit(req, 'update', 'post', post.id, post);
   if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
-    setTimeout(() => processScheduledPosts().catch((err) => console.error('Immediate publish failed:', err.message)), 100).unref();
+    publishSoon();
   }
   res.json(post);
 }));
@@ -271,8 +286,10 @@ app.put('/api/singletons/:key', asyncHandler(async (req, res) => {
 app.post('/api/sync', rateLimit('sync', { limit: 60, windowSeconds: 60 }), asyncHandler(async (req, res) => {
   res.json(await runSync({
     cursor: Object.prototype.hasOwnProperty.call(req.query, 'cursor') ? req.query.cursor : null,
-    maxFanpages: Object.prototype.hasOwnProperty.call(req.query, 'maxFanpages') ? Number(req.query.maxFanpages) : null,
-    postLimit: Number(req.query.postLimit || 100)
+    maxFanpages: Object.prototype.hasOwnProperty.call(req.query, 'maxFanpages')
+      ? clampInt(req.query.maxFanpages, { fallback: null, min: 1, max: 1000 })
+      : null,
+    postLimit: clampInt(req.query.postLimit, { fallback: 100, min: 1, max: 100 })
   }));
 }));
 
