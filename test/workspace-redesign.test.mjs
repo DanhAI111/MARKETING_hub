@@ -36,7 +36,9 @@ test('all non-dashboard pages receive a shared workspace identity', () => {
 test('approved command-center layouts are implemented with live data', () => {
   assert.match(contentSource, /content-command-grid/);
   assert.match(contentSource, /content-publishing-queue/);
-  assert.match(contentSource, /Store\.tasks\.getAll/);
+  assert.match(contentSource, /const data = Store\.getData\(\)/);
+  assert.match(contentSource, /const pendingTasks = \(data\.tasks \|\| \[\]\)/);
+  assert.match(contentSource, /Công việc gần hạn/);
   assert.match(scheduledSource, /scheduled-workspace-grid/);
   assert.match(scheduledSource, /queue-health-gauge/);
   assert.match(tasksSource, /task-workspace-grid/);
