@@ -411,7 +411,7 @@ const ContentPage = (() => {
       ? `<span class="post-engagement" title="Tương tác tự nhiên">Thích ${Utils.formatNumberCompact(eng.likes || 0)} · Bình luận ${Utils.formatNumberCompact(eng.comments || 0)}${eng.shares ? ` · Chia sẻ ${Utils.formatNumberCompact(eng.shares)}` : ''}</span>`
       : '';
     return `
-      <div class="post-item ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
+      <div class="post-item ${thumbnailUrl ? 'has-thumbnail' : ''} ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
         ${thumbnailUrl ? `
           <span class="post-thumbnail">
             <img class="post-thumbnail-image" src="${Utils.escapeHtml(thumbnailUrl)}" alt="" loading="lazy" decoding="async" onerror="this.parentElement.classList.add('is-broken'); this.remove();">

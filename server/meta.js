@@ -597,7 +597,7 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
   const media = await graphGet(`${fanpage.instagramBusinessId}/media`, {
     access_token: token,
     limit,
-      fields: 'id,caption,timestamp,permalink,media_type,media_url,thumbnail_url,like_count,comments_count'
+    fields: 'id,caption,timestamp,permalink,media_type,media_url,thumbnail_url,like_count,comments_count'
   }).catch(() => graphGet(`${fanpage.instagramBusinessId}/media`, {
     access_token: token,
     limit,
@@ -617,9 +617,9 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
       date: publishedAt.slice(0, 10),
       publishedAt,
       permalink: item.permalink || '',
-        mediaUrl: item.media_type === 'VIDEO'
-          ? (item.thumbnail_url || item.media_url || '')
-          : (item.media_url || item.thumbnail_url || ''),
+      mediaUrl: item.media_type === 'VIDEO'
+        ? (item.thumbnail_url || item.media_url || '')
+        : (item.media_url || item.thumbnail_url || ''),
       engagement: extractInstagramEngagement(item),
       source: 'instagram',
       status: 'published'

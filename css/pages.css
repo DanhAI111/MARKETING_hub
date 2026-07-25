@@ -2623,12 +2623,16 @@ html:not([data-page="dashboard"]) .page-subtitle {
 }
 
 .content-master-body .post-item {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 7px;
   margin-top: 4px;
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.content-master-body .post-item.has-thumbnail {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
 .post-thumbnail {

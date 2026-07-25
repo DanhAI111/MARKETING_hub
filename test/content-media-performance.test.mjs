@@ -38,8 +38,13 @@ test('post rows render lazy thumbnails and progressively reveal long lists', () 
   assert.match(contentSource, /const getPostThumbnail =/);
   assert.match(contentSource, /post\.mediaUrl/);
   assert.match(contentSource, /post-thumbnail-image/);
+  assert.match(contentSource, /thumbnailUrl \? 'has-thumbnail' : ''/);
   assert.match(contentCss, /\.post-thumbnail/);
   assert.match(contentCss, /\.post-thumbnail-image/);
+  assert.match(
+    contentCss,
+    /\.content-master-body \.post-item\.has-thumbnail\s*\{\s*grid-template-columns: auto minmax\(0, 1fr\) auto auto;/
+  );
 });
 
 test('Instagram sync stores a still thumbnail for videos', () => {
