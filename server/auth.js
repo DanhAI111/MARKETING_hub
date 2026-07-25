@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { readRequiredSecret } = require('./security');
+const { rateLimit } = require('./rate-limit');
 
 const COOKIE_NAME = 'mh_session';
 const CSRF_COOKIE_NAME = 'mh_csrf';
@@ -182,7 +183,7 @@ const installRoutes = (app) => {
     res.json({ authenticated: !!user, user, authRequired: required() });
   });
 
-  app.get('/auth/google/start', async (req, res) => {
+  app.get('/auth/google/start', rateLimit('google-auth', { limit: 20, windowSeconds: 60 }), async (req, res) => {
     if (!configured()) {
       res.redirect('/login?error=Google%20OAuth%20chua%20duoc%20cau%20hinh');
       return;

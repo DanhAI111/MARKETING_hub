@@ -556,7 +556,9 @@ const syncFacebookPosts = async (fanpage, { limit = 100 } = {}) => {
     });
     count++;
   }
-  if (repo.markMissingSyncedPostsDeleted) {
+  // Only prune when we saw the full tail. A full page (length >= limit) means
+  // Meta may have more posts we did not fetch, so NOT-IN could delete real posts.
+  if (repo.markMissingSyncedPostsDeleted && posts.length > 0 && posts.length < limit) {
     await repo.markMissingSyncedPostsDeleted({
       fanpageId: fanpage.id,
       source: 'facebook',
@@ -599,7 +601,8 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
     });
     count++;
   }
-  if (repo.markMissingSyncedPostsDeleted) {
+  const mediaCount = (media.data || []).length;
+  if (repo.markMissingSyncedPostsDeleted && mediaCount > 0 && mediaCount < limit) {
     await repo.markMissingSyncedPostsDeleted({
       fanpageId: fanpage.id,
       source: 'instagram',

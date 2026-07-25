@@ -660,6 +660,11 @@ export class Repository {
     await this.db.prepare('DELETE FROM oauth_states WHERE expiresAt <= ?').bind(now()).run();
   }
 
+  async cleanupRateLimits(maxAgeSeconds = 3600) {
+    const cutoff = Math.floor(Date.now() / 1000) - maxAgeSeconds;
+    await this.db.prepare('DELETE FROM rate_limits WHERE windowStart < ?').bind(cutoff).run();
+  }
+
   async importLocalData(payload = {}) {
     for (const fanpage of payload.fanpages || []) {
       await this.upsertFanpage({ ...fanpage, connected: fanpage.connected || false });

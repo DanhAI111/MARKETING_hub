@@ -4,9 +4,21 @@ const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.ip || req
   .split(',')[0]
   .trim();
 
+// Evict stale buckets so the Map does not grow unbounded. Runs at most once per
+// window tick, sweeping entries whose window ended more than one window ago.
+let lastEvictSecond = 0;
+const evictStale = (nowSeconds, windowSeconds) => {
+  if (nowSeconds - lastEvictSecond < windowSeconds) return;
+  lastEvictSecond = nowSeconds;
+  for (const [key, value] of buckets) {
+    if (nowSeconds - value.windowStart > windowSeconds * 2) buckets.delete(key);
+  }
+};
+
 const checkRateLimit = (req, name, { limit, windowSeconds }) => {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const windowStart = nowSeconds - (nowSeconds % windowSeconds);
+  evictStale(nowSeconds, windowSeconds);
   const key = `${name}:${clientIp(req)}`;
   const existing = buckets.get(key);
   const next = existing?.windowStart === windowStart

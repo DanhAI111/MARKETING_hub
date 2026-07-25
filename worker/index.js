@@ -390,6 +390,7 @@ export default {
     const tasks = [
       processQueue(),
       repo.cleanupOAuthStates(),
+      repo.cleanupRateLimits(),
       sendDailyTaskSummaryIfDue(env, repo, controller.scheduledTime)
     ];
     if (new Date(controller.scheduledTime).getUTCMinutes() % 15 === 0 && env.META_APP_ID && env.META_APP_SECRET) {

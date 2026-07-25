@@ -276,7 +276,7 @@ app.post('/api/sync', rateLimit('sync', { limit: 60, windowSeconds: 60 }), async
   }));
 }));
 
-app.post('/api/publish-due', asyncHandler(async (req, res) => {
+app.post('/api/publish-due', rateLimit('publish-due', { limit: 30, windowSeconds: 60 }), asyncHandler(async (req, res) => {
   // Run sheet sync in the background (see worker/index.js) so a slow/hanging
   // Google Sheets fetch can't stall or fail the publish response.
   if (req.query.syncSheets === '1') {
@@ -286,7 +286,7 @@ app.post('/api/publish-due', asyncHandler(async (req, res) => {
   res.json(publisher);
 }));
 
-app.post('/api/sheet-schedules/sync', asyncHandler(async (req, res) => {
+app.post('/api/sheet-schedules/sync', rateLimit('sheet-schedules-sync', { limit: 30, windowSeconds: 60 }), asyncHandler(async (req, res) => {
   if (!req.body?.sourceUrl) {
     const err = new Error('Thiếu link Google Sheets');
     err.status = 400;
@@ -315,7 +315,7 @@ app.get('/api/sync/status', asyncHandler(async (req, res) => {
   res.json({ inFlight: !!syncInFlight, lastSync: lastSync || await repo.getState('lastMetaSync') });
 }));
 
-app.get('/auth/meta/start', asyncHandler(async (req, res) => {
+app.get('/auth/meta/start', rateLimit('meta-auth', { limit: 20, windowSeconds: 60 }), asyncHandler(async (req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
   await repo.saveOAuthState('meta', state, {});
   res.redirect(meta.authUrl(state));

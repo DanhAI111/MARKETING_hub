@@ -522,12 +522,16 @@ export class MetaService {
       });
       count++;
     }
-    await this.repo.markMissingSyncedPostsDeleted?.({
-      fanpageId: fanpage.id,
-      source: 'facebook',
-      externalPostIds: syncedIds,
-      sinceDate: getOldestSyncDate(syncedDates)
-    });
+    // Only prune when we saw the full tail. A full page (length >= limit) means
+    // Meta may have more posts we did not fetch, so NOT-IN could delete real posts.
+    if (posts.length > 0 && posts.length < limit) {
+      await this.repo.markMissingSyncedPostsDeleted?.({
+        fanpageId: fanpage.id,
+        source: 'facebook',
+        externalPostIds: syncedIds,
+        sinceDate: getOldestSyncDate(syncedDates)
+      });
+    }
     return count;
   }
 
@@ -563,12 +567,15 @@ export class MetaService {
       });
       count++;
     }
-    await this.repo.markMissingSyncedPostsDeleted?.({
-      fanpageId: fanpage.id,
-      source: 'instagram',
-      externalPostIds: syncedIds,
-      sinceDate: getOldestSyncDate(syncedDates)
-    });
+    const mediaCount = (media.data || []).length;
+    if (mediaCount > 0 && mediaCount < limit) {
+      await this.repo.markMissingSyncedPostsDeleted?.({
+        fanpageId: fanpage.id,
+        source: 'instagram',
+        externalPostIds: syncedIds,
+        sinceDate: getOldestSyncDate(syncedDates)
+      });
+    }
     return count;
   }
 
