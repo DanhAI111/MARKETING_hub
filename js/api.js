@@ -144,11 +144,22 @@ const RemoteStore = (() => {
     return lastSync;
   };
 
-  const publishDue = async () => {
+  const publishDue = async ({ syncSheets = false } = {}) => {
     if (!available && !(await check())) return null;
-    const result = await request('/api/publish-due', { method: 'POST', body: '{}' });
+    const result = await request(`/api/publish-due${syncSheets ? '?syncSheets=1' : ''}`, { method: 'POST', body: '{}' });
     const data = await request('/api/bootstrap');
     lastSync = data.lastSync || lastSync;
+    Store.mergeRemoteData(data);
+    return result;
+  };
+
+  const syncSheetSchedules = async ({ sourceUrl, defaultFanpageId = '' }) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    const result = await request('/api/sheet-schedules/sync', {
+      method: 'POST',
+      body: JSON.stringify({ sourceUrl, defaultFanpageId })
+    });
+    const data = await request('/api/bootstrap');
     Store.mergeRemoteData(data);
     return result;
   };
@@ -187,6 +198,7 @@ const RemoteStore = (() => {
     logout,
     syncNow,
     publishDue,
+    syncSheetSchedules,
     updatePost,
     deletePost,
     fetchGoogleSheetCsv,

@@ -53,6 +53,9 @@ db.exec(`
     mediaUrl TEXT,
     mediaItems TEXT,
     publishError TEXT,
+    sheetUrl TEXT,
+    sheetRowKey TEXT,
+    sheetDefaultFanpageId TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     status TEXT NOT NULL DEFAULT 'published',
     createdAt TEXT NOT NULL,
@@ -92,5 +95,14 @@ ensureColumn('posts', 'scheduledAt', 'TEXT');
 ensureColumn('posts', 'publishedAt', 'TEXT');
 ensureColumn('posts', 'mediaItems', 'TEXT');
 ensureColumn('posts', 'publishError', 'TEXT');
+ensureColumn('posts', 'sheetUrl', 'TEXT');
+ensureColumn('posts', 'sheetRowKey', 'TEXT');
+ensureColumn('posts', 'sheetDefaultFanpageId', 'TEXT');
+
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row
+    ON posts(sheetUrl, sheetRowKey)
+    WHERE sheetUrl IS NOT NULL AND sheetRowKey IS NOT NULL
+`);
 
 module.exports = db;

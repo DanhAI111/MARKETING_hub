@@ -37,6 +37,15 @@ const authUrl = (state) => {
   return url.toString();
 };
 
+const formatMetaError = (body, fallback) => {
+  const metaError = body?.error;
+  if (!metaError) return fallback;
+  const detail = metaError.error_user_msg || metaError.error_user_title || '';
+  const message = [metaError.message, detail && detail !== metaError.message ? detail : ''].filter(Boolean).join(': ');
+  const code = [metaError.code, metaError.error_subcode].filter(value => value !== undefined).join('/');
+  return `${message || fallback}${code ? ` (Meta ${code})` : ''}`;
+};
+
 const graphGet = async (path, params = {}) => {
   const url = new URL(`${GRAPH_BASE}/${path.replace(/^\//, '')}`);
   Object.entries(params).forEach(([key, value]) => {
@@ -45,7 +54,7 @@ const graphGet = async (path, params = {}) => {
   const res = await fetch(url);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = body?.error?.message || `Meta API error ${res.status}`;
+    const message = formatMetaError(body, `Meta API error ${res.status}`);
     const err = new Error(message);
     err.status = res.status;
     err.meta = body;
@@ -73,7 +82,7 @@ const graphPost = async (path, params = {}, { multipart = false } = {}) => {
   const res = await fetch(url, { method: 'POST', body });
   const responseBody = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = responseBody?.error?.message || `Meta API error ${res.status}`;
+    const message = formatMetaError(responseBody, `Meta API error ${res.status}`);
     const err = new Error(message);
     err.status = res.status;
     err.meta = responseBody;
@@ -87,6 +96,53 @@ const dataUrlToBlob = (dataUrl) => {
   if (!match) return null;
   const [, mime, base64] = match;
   return new Blob([Buffer.from(base64, 'base64')], { type: mime });
+};
+
+const getGoogleDriveFileId = (rawUrl) => {
+  try {
+    const url = new URL(rawUrl);
+    if (!/(^|\.)drive\.google\.com$|(^|\.)drive\.usercontent\.google\.com$/i.test(url.hostname)) return '';
+    return url.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || url.searchParams.get('id') || '';
+  } catch {
+    return '';
+  }
+};
+
+const normalizeMediaUrl = (rawUrl) => {
+  const fileId = getGoogleDriveFileId(rawUrl);
+  return fileId
+    ? `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`
+    : rawUrl;
+};
+
+const filenameFromDisposition = (value = '') => {
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try { return decodeURIComponent(utf8Match[1]); } catch { return utf8Match[1]; }
+  }
+  return value.match(/filename="([^"]+)"/i)?.[1] || value.match(/filename=([^;]+)/i)?.[1]?.trim() || '';
+};
+
+const isVideoName = (value = '') => /\.(mp4|mov|m4v|avi|webm|mkv)(?:$|[?#])/i.test(value);
+
+const resolveMediaItem = async (media) => {
+  const originalUrl = media?.url || '';
+  const driveFileId = getGoogleDriveFileId(originalUrl);
+  const resolved = { ...media, url: normalizeMediaUrl(originalUrl) };
+  if (!driveFileId) {
+    if (media?.type === 'video' || isVideoName(originalUrl) || isVideoName(media?.name)) resolved.type = 'video';
+    return resolved;
+  }
+
+  const response = await fetch(resolved.url, { method: 'HEAD', redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`Không thể tải media từ Google Drive (HTTP ${response.status}). Hãy bật quyền "Anyone with the link".`);
+  }
+  const filename = filenameFromDisposition(response.headers.get('content-disposition') || '');
+  const contentType = response.headers.get('content-type') || '';
+  resolved.name = filename || resolved.name;
+  resolved.type = contentType.startsWith('video/') || isVideoName(filename) ? 'video' : 'image';
+  return resolved;
 };
 
 const getPostMessage = (post) => (post.content || post.title || '').trim();
@@ -113,6 +169,16 @@ const addFacebookPhoto = async ({ pageId, token, media, caption = '', published 
   return graphPost(`${pageId}/photos`, params);
 };
 
+const addFacebookVideo = async ({ pageId, token, media, description = '' }) => {
+  if (!/^https?:\/\//i.test(media.url)) throw new Error('Facebook video yêu cầu URL tải công khai.');
+  return graphPost(`${pageId}/videos`, {
+    access_token: token,
+    file_url: media.url,
+    description,
+    published: 'true'
+  });
+};
+
 const publishFacebookPost = async (fanpage, post) => {
   const token = repo.decryptPageToken(fanpage);
   if (!token || !fanpage.metaPageId) {
@@ -120,7 +186,7 @@ const publishFacebookPost = async (fanpage, post) => {
   }
 
   const message = getPostMessage(post);
-  const mediaItems = getMediaItems(post);
+  const mediaItems = await Promise.all(getMediaItems(post).map(resolveMediaItem));
   if (!mediaItems.length) {
     const result = await graphPost(`${fanpage.metaPageId}/feed`, {
       access_token: token,
@@ -134,6 +200,19 @@ const publishFacebookPost = async (fanpage, post) => {
   }
 
   if (mediaItems.length === 1) {
+    if (mediaItems[0].type === 'video') {
+      const result = await addFacebookVideo({
+        pageId: fanpage.metaPageId,
+        token,
+        media: mediaItems[0],
+        description: message
+      });
+      return {
+        externalPostId: result.id || '',
+        permalink: result.id ? `https://www.facebook.com/${fanpage.metaPageId}/videos/${result.id}` : '',
+        mediaUrl: mediaItems[0].url || ''
+      };
+    }
     const result = await addFacebookPhoto({
       pageId: fanpage.metaPageId,
       token,
@@ -146,6 +225,10 @@ const publishFacebookPost = async (fanpage, post) => {
       permalink: result.post_id ? `https://www.facebook.com/${result.post_id}` : '',
       mediaUrl: mediaItems[0].url || ''
     };
+  }
+
+  if (mediaItems.some((media) => media.type === 'video')) {
+    throw new Error('Mỗi bài Facebook chỉ hỗ trợ một video; không thể trộn video với media khác.');
   }
 
   const uploaded = [];
@@ -179,12 +262,15 @@ const publishInstagramPost = async (fanpage, post) => {
     throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
   }
 
-  const media = getMediaItems(post)[0];
+  const media = await resolveMediaItem(getMediaItems(post)[0]);
   if (!media?.url) {
     throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
   }
   if (!/^https?:\/\//i.test(media.url)) {
     throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
+  }
+  if (media.type === 'video') {
+    throw new Error('Lịch đăng Instagram hiện chỉ hỗ trợ ảnh; chưa hỗ trợ video/Reels.');
   }
 
   const container = await graphPost(`${fanpage.instagramBusinessId}/media`, {

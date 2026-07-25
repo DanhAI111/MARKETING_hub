@@ -1,6 +1,7 @@
 import { AuthService } from './auth.js';
 import { MetaService } from './meta.js';
 import { Repository } from './repository.js';
+import { syncScheduleSheets } from '../shared/sheet-sync.mjs';
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status,
@@ -86,6 +87,22 @@ const fetchGoogleSheetCsvText = async (inputUrl, { signal } = {}) => {
   error.status = lastStatus || 400;
   throw error;
 };
+
+const syncLinkedScheduleSheets = async (repo, options = {}) => syncScheduleSheets({
+  repo,
+  sourceUrl: options.sourceUrl || '',
+  defaultFanpageId: options.defaultFanpageId || '',
+  timezoneOffset: options.timezoneOffset || '+07:00',
+  fetchCsv: async (sourceUrl) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      return await fetchGoogleSheetCsvText(sourceUrl, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+});
 
 const processScheduledPosts = async (repo, meta) => {
   const result = { startedAt: new Date().toISOString(), published: 0, failed: 0, posts: [] };
@@ -246,7 +263,16 @@ const handleRequest = async (request, env, context) => {
     }));
   }
   if (method === 'POST' && pathname === '/api/publish-due') {
-    return json(await processScheduledPosts(repo, meta));
+    const sheetSync = url.searchParams.get('syncSheets') === '1'
+      ? await syncLinkedScheduleSheets(repo)
+      : null;
+    const publisher = await processScheduledPosts(repo, meta);
+    return json(sheetSync ? { ...publisher, sheetSync } : publisher);
+  }
+  if (method === 'POST' && pathname === '/api/sheet-schedules/sync') {
+    const body = await parseJsonBody(request);
+    if (!body.sourceUrl) return json({ error: 'Thiếu link Google Sheets' }, 400);
+    return json(await syncLinkedScheduleSheets(repo, body));
   }
   if (method === 'GET' && pathname === '/api/sync/status') {
     return json({ inFlight: false, lastSync: await repo.getState('lastMetaSync') });

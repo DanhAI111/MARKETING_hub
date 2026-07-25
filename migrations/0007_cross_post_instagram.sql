@@ -1,0 +1,1 @@
+ALTER TABLE fanpages ADD COLUMN crossPostInstagram INTEGER NOT NULL DEFAULT 0;

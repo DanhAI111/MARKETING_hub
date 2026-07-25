@@ -94,6 +94,9 @@ const initPostgres = async () => {
       "mediaUrl" TEXT,
       "mediaItems" TEXT,
       "publishError" TEXT,
+      "sheetUrl" TEXT,
+      "sheetRowKey" TEXT,
+      "sheetDefaultFanpageId" TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
       status TEXT NOT NULL DEFAULT 'published',
       "createdAt" TEXT NOT NULL,
@@ -103,6 +106,14 @@ const initPostgres = async () => {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_external
       ON posts(source, "externalPostId")
       WHERE "externalPostId" IS NOT NULL;
+
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetUrl" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetRowKey" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetDefaultFanpageId" TEXT;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row
+      ON posts("sheetUrl", "sheetRowKey")
+      WHERE "sheetUrl" IS NOT NULL AND "sheetRowKey" IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS sync_state (
       key TEXT PRIMARY KEY,
@@ -164,6 +175,9 @@ const postFromRow = (row) => row && ({
   mediaUrl: row.mediaUrl || '',
   mediaItems: parseJson(row.mediaItems, []),
   publishError: row.publishError || '',
+  sheetUrl: row.sheetUrl || '',
+  sheetRowKey: row.sheetRowKey || '',
+  sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
   source: row.source,
   status: row.status,
   createdAt: row.createdAt,
@@ -505,6 +519,11 @@ const upsertPost = async (post = {}) => {
     mediaUrl: post.mediaUrl || existing?.mediaUrl || '',
     mediaItems: JSON.stringify(post.mediaItems !== undefined ? post.mediaItems : (existing?.mediaItems || [])),
     publishError: post.publishError !== undefined ? post.publishError : (existing?.publishError || ''),
+    sheetUrl: post.sheetUrl !== undefined ? post.sheetUrl : (existing?.sheetUrl || null),
+    sheetRowKey: post.sheetRowKey !== undefined ? post.sheetRowKey : (existing?.sheetRowKey || null),
+    sheetDefaultFanpageId: post.sheetDefaultFanpageId !== undefined
+      ? post.sheetDefaultFanpageId
+      : (existing?.sheetDefaultFanpageId || null),
     source: post.source || existing?.source || 'manual',
     status: post.status || existing?.status || 'published',
     createdAt: existing?.createdAt || post.createdAt || timestamp,
@@ -515,10 +534,10 @@ const upsertPost = async (post = {}) => {
     await pgQuery(`
       INSERT INTO posts (
         id, "fanpageId", "externalPostId", title, content, date, "scheduledAt", "publishedAt", permalink, "mediaUrl",
-        "mediaItems", "publishError", source, status, "createdAt", "updatedAt"
+        "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", source, status, "createdAt", "updatedAt"
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16
+        $11, $12, $13, $14, $15, $16, $17, $18, $19
       )
       ON CONFLICT(id) DO UPDATE SET
         "fanpageId" = EXCLUDED."fanpageId",
@@ -532,12 +551,16 @@ const upsertPost = async (post = {}) => {
         "mediaUrl" = EXCLUDED."mediaUrl",
         "mediaItems" = EXCLUDED."mediaItems",
         "publishError" = EXCLUDED."publishError",
+        "sheetUrl" = EXCLUDED."sheetUrl",
+        "sheetRowKey" = EXCLUDED."sheetRowKey",
+        "sheetDefaultFanpageId" = EXCLUDED."sheetDefaultFanpageId",
         source = EXCLUDED.source,
         status = EXCLUDED.status,
         "updatedAt" = EXCLUDED."updatedAt"
     `, [
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date, data.scheduledAt,
-      data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems, data.publishError, data.source,
+      data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems, data.publishError,
+      data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId, data.source,
       data.status, data.createdAt, data.updatedAt
     ]);
     return postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]);
@@ -546,10 +569,10 @@ const upsertPost = async (post = {}) => {
   getSqlite().prepare(`
     INSERT INTO posts (
       id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
-      mediaItems, publishError, source, status, createdAt, updatedAt
+      mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, createdAt, updatedAt
     ) VALUES (
       @id, @fanpageId, @externalPostId, @title, @content, @date, @scheduledAt, @publishedAt, @permalink, @mediaUrl,
-      @mediaItems, @publishError, @source, @status, @createdAt, @updatedAt
+      @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @source, @status, @createdAt, @updatedAt
     )
     ON CONFLICT(source, externalPostId) WHERE externalPostId IS NOT NULL DO UPDATE SET
       fanpageId = excluded.fanpageId,
@@ -562,6 +585,9 @@ const upsertPost = async (post = {}) => {
       mediaUrl = excluded.mediaUrl,
       mediaItems = excluded.mediaItems,
       publishError = excluded.publishError,
+      sheetUrl = excluded.sheetUrl,
+      sheetRowKey = excluded.sheetRowKey,
+      sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
       status = excluded.status,
       updatedAt = excluded.updatedAt
     ON CONFLICT(id) DO UPDATE SET
@@ -576,6 +602,9 @@ const upsertPost = async (post = {}) => {
       mediaUrl = excluded.mediaUrl,
       mediaItems = excluded.mediaItems,
       publishError = excluded.publishError,
+      sheetUrl = excluded.sheetUrl,
+      sheetRowKey = excluded.sheetRowKey,
+      sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
       source = excluded.source,
       status = excluded.status,
       updatedAt = excluded.updatedAt

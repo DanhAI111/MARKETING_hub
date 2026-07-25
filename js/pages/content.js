@@ -747,7 +747,7 @@ const ContentPage = (() => {
             <input type="file" id="scheduleMediaFileInput" accept="image/*" multiple hidden>
           </div>
           <div class="schedule-media-list" id="scheduleMediaList"></div>
-          <div class="form-hint">Facebook hỗ trợ URL ảnh hoặc ảnh upload. Instagram cần URL ảnh công khai; file upload/base64 sẽ không đăng được lên Instagram.</div>
+          <div class="form-hint">Facebook hỗ trợ URL ảnh/video hoặc ảnh upload. Instagram hiện cần URL ảnh công khai; file upload/base64 và video chưa được hỗ trợ.</div>
         </div>
       </div>
     `;
@@ -783,6 +783,10 @@ const ContentPage = (() => {
         const mediaItems = parseMediaItems(formData.mediaItems);
         if (fanpage.platform === 'instagram' && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
           Toast.error('Instagram chỉ nhận media có URL công khai');
+          return;
+        }
+        if (fanpage.platform === 'instagram' && mediaItems.some(item => item.type === 'video')) {
+          Toast.error('Lịch đăng Instagram hiện chưa hỗ trợ video/Reels');
           return;
         }
         if (!fanpage.connected) {
@@ -828,6 +832,7 @@ const ContentPage = (() => {
 
     let parsedRows = [];
     let importItems = [];
+    let sheetSourceUrl = '';
     const selectedFanpage = Store.fanpages.getById(defaultFanpageId);
 
     const content = `
@@ -856,7 +861,8 @@ const ContentPage = (() => {
 
         <div class="sheet-import-template">
           <div class="sheet-import-template-title">Cột hỗ trợ</div>
-          <div class="sheet-import-template-text">fanpage, nội dung/content, thời gian đăng/scheduledAt, media, tiêu đề/title.</div>
+          <div class="sheet-import-template-text">id, fanpage, nội dung/content, thời gian đăng/scheduledAt, media, tiêu đề/title.</div>
+          <div class="form-hint">Khi nhập bằng link, Sheet sẽ được liên kết với hàng đợi. Nên có cột <strong>id</strong> duy nhất và không đổi cho mỗi bài để việc cập nhật vẫn chính xác khi sắp xếp hoặc chèn thêm dòng.</div>
           ${selectedFanpage ? `<div class="form-hint">Nếu file không có cột fanpage, toàn bộ bài sẽ áp dụng cho: ${Utils.escapeHtml(selectedFanpage.name)}.</div>` : ''}
         </div>
 
@@ -876,19 +882,32 @@ const ContentPage = (() => {
           return;
         }
 
-        validItems.forEach(item => {
-          Store.posts.create({
-            fanpageId: item.fanpage.id,
-            title: item.title || item.content.slice(0, 80),
-            content: item.content,
-            date: item.localDate,
-            scheduledAt: item.scheduledAt,
-            mediaUrl: item.mediaItems[0]?.url || '',
-            mediaItems: item.mediaItems,
-            status: 'scheduled',
-            source: 'scheduled'
+        if (sheetSourceUrl && window.RemoteStore?.available) {
+          try {
+            const result = await RemoteStore.syncSheetSchedules({
+              sourceUrl: sheetSourceUrl,
+              defaultFanpageId
+            });
+            Toast.success(`Đã liên kết Sheet: ${result.created} bài mới, ${result.updated} bài cập nhật`);
+          } catch (err) {
+            Toast.error(err.message || 'Không thể liên kết Google Sheets');
+            return;
+          }
+        } else {
+          validItems.forEach(item => {
+            Store.posts.create({
+              fanpageId: item.fanpage.id,
+              title: item.title || item.content.slice(0, 80),
+              content: item.content,
+              date: item.localDate,
+              scheduledAt: item.scheduledAt,
+              mediaUrl: item.mediaItems[0]?.url || '',
+              mediaItems: item.mediaItems,
+              status: 'scheduled',
+              source: 'scheduled'
+            });
           });
-        });
+        }
 
         if (window.RemoteStore?.available && validItems.some(item => new Date(item.scheduledAt) <= new Date())) {
           try {
@@ -898,7 +917,7 @@ const ContentPage = (() => {
           }
         }
 
-        Toast.success(`Đã nhập ${validItems.length} lịch đăng`);
+        if (!sheetSourceUrl) Toast.success(`Đã nhập ${validItems.length} lịch đăng`);
         Modal.close();
         renderPage();
         Sidebar.updateBadge();
@@ -924,13 +943,14 @@ const ContentPage = (() => {
       `;
     };
 
-    const loadCsvText = (text, sourceName) => {
+    const loadCsvText = (text, sourceName, sourceUrl = '') => {
       const parsed = parseScheduleCsvContent(text);
       if (!parsed.rows.length) {
         Toast.error('Không tìm thấy dữ liệu lịch đăng trong file');
         return;
       }
       parsedRows = parsed.rows;
+      sheetSourceUrl = sourceUrl;
       Toast.success(`Đã đọc ${parsed.rows.length} dòng từ ${sourceName}`);
       renderImportPreview();
     };
@@ -948,7 +968,7 @@ const ContentPage = (() => {
       try {
         Toast.info('Đang đọc Google Sheets...');
         const result = await RemoteStore.fetchGoogleSheetCsv(url);
-        loadCsvText(result.text || '', 'Google Sheets');
+        loadCsvText(result.text || '', 'Google Sheets', url);
       } catch (err) {
         Toast.error(err.message || 'Không thể đọc Google Sheets');
       }
@@ -959,7 +979,7 @@ const ContentPage = (() => {
     const handleFile = (file) => {
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = () => loadCsvText(reader.result || '', file.name);
+      reader.onload = () => loadCsvText(reader.result || '', file.name, '');
       reader.onerror = () => Toast.error('Không thể đọc file');
       reader.readAsText(file, 'UTF-8');
     };
@@ -1003,6 +1023,9 @@ const ContentPage = (() => {
       const dateRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.date);
       const timeRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.time);
       const mediaRaw = getScheduleRowValue(row, SCHEDULE_IMPORT_ALIASES.media);
+      if (![title, content, fanpageText, scheduledRaw, dateRaw, timeRaw, mediaRaw].some(value => value.trim())) {
+        return null;
+      }
       const fanpage = matchScheduleFanpage(fanpages, fanpageText, defaultFanpageId);
       const scheduledDate = parseScheduleDateTime(scheduledRaw, dateRaw, timeRaw);
       const mediaItems = parseScheduleMediaItems(mediaRaw);
@@ -1013,6 +1036,9 @@ const ContentPage = (() => {
       if (!scheduledDate) errors.push('Thời gian không hợp lệ');
       if (fanpage?.platform === 'instagram' && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
         errors.push('Instagram cần URL ảnh công khai');
+      }
+      if (fanpage?.platform === 'instagram' && mediaItems.some(item => item.type === 'video')) {
+        errors.push('Instagram chưa hỗ trợ video/Reels');
       }
 
       return {
@@ -1026,7 +1052,7 @@ const ContentPage = (() => {
         localDate: scheduledDate ? toLocalDateTimeValue(scheduledDate).slice(0, 10) : '',
         displayTime: scheduledDate ? formatScheduleTime(scheduledDate.toISOString()) : ''
       };
-    });
+    }).filter(Boolean);
   };
 
   const normalizeScheduleKey = (value = '') => {
@@ -1039,6 +1065,7 @@ const ContentPage = (() => {
   };
 
   const SCHEDULE_IMPORT_ALIASES = {
+    id: ['id', 'post id', 'postid', 'stt', 'so thu tu', 'số thứ tự', 'ma', 'mã', 'ma bai', 'mã bài', 'key'],
     title: ['title', 'tieu de', 'tiêu đề', 'chu de', 'chủ đề', 'topic'],
     content: [
       'content', 'noi dung', 'nội dung', 'noi dung bai dang', 'nội dung bài đăng',
@@ -1067,9 +1094,13 @@ const ContentPage = (() => {
 
   const getScheduleRowValue = (row, aliases) => {
     const normalizedAliases = aliases.map(normalizeScheduleKey);
-    const entry = Object.entries(row).find(([key]) => {
-      const normalizedKey = normalizeScheduleKey(key);
-      return normalizedAliases.some(alias => normalizedKey === alias || normalizedKey.includes(alias));
+    const entries = Object.entries(row).map(([key, value]) => [normalizeScheduleKey(key), value]);
+    const exact = entries.find(([key]) => normalizedAliases.includes(key));
+    if (exact) return String(exact[1] || '').trim();
+    const idAliases = SCHEDULE_IMPORT_ALIASES.id.map(normalizeScheduleKey);
+    const entry = entries.find(([normalizedKey]) => {
+      if (aliases !== SCHEDULE_IMPORT_ALIASES.id && idAliases.includes(normalizedKey)) return false;
+      return normalizedAliases.some(alias => alias.length >= 4 && normalizedKey.includes(alias));
     });
     return entry ? String(entry[1] || '').trim() : '';
   };
@@ -1085,13 +1116,34 @@ const ContentPage = (() => {
       || null;
   };
 
+  const normalizeMediaUrl = (rawUrl = '') => {
+    try {
+      const url = new URL(rawUrl);
+      if (!/(^|\.)drive\.google\.com$|(^|\.)drive\.usercontent\.google\.com$/i.test(url.hostname)) return rawUrl;
+      const fileId = url.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || url.searchParams.get('id');
+      return fileId
+        ? `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`
+        : rawUrl;
+    } catch {
+      return rawUrl;
+    }
+  };
+
+  const inferMediaType = (url = '', name = '') => /\.(mp4|mov|m4v|avi|webm|mkv)(?:$|[?#])/i.test(`${url} ${name}`)
+    ? 'video'
+    : 'image';
+
   const parseScheduleMediaItems = (raw = '') => {
     return String(raw || '')
       .split(/[\n;,|]+/)
       .map(url => url.trim())
       .filter(Boolean)
       .slice(0, 10)
-      .map(url => ({ type: 'image', url, name: url.split('/').pop() || 'Media URL' }));
+      .map(rawUrl => {
+        const url = normalizeMediaUrl(rawUrl);
+        const name = rawUrl.split('/').pop() || 'Media URL';
+        return { type: inferMediaType(url, name), url, name };
+      });
   };
 
   const parseScheduleDateTime = (scheduledRaw, dateRaw = '', timeRaw = '') => {
@@ -1162,7 +1214,7 @@ const ContentPage = (() => {
   const scoreHeaderAliases = (normalizedHeaders, aliases) => {
     const normalizedAliases = aliases.map(normalizeScheduleKey);
     return normalizedHeaders.some(header =>
-      normalizedAliases.some(alias => header === alias || header.includes(alias))
+      normalizedAliases.some(alias => header === alias || (alias.length >= 4 && header.includes(alias)))
     ) ? 1 : 0;
   };
 
@@ -1262,7 +1314,7 @@ const ContentPage = (() => {
           </div>
           <div class="schedule-media-info">
             <div class="schedule-media-name">${Utils.escapeHtml(item.name || item.url)}</div>
-            <div class="schedule-media-type">${item.url.startsWith('data:') ? 'Ảnh upload' : 'URL công khai'}</div>
+            <div class="schedule-media-type">${item.url.startsWith('data:') ? 'Ảnh upload' : (item.type === 'video' ? 'Video URL' : 'Ảnh URL')}</div>
           </div>
           <button type="button" class="btn btn-icon btn-ghost btn-sm remove-schedule-media-btn" data-index="${index}">
             ${Utils.icons.close}
@@ -1294,7 +1346,9 @@ const ContentPage = (() => {
         Toast.error('URL media phải bắt đầu bằng http:// hoặc https://');
         return;
       }
-      addMedia({ type: 'image', url, name: url.split('/').pop() || 'Ảnh URL' });
+      const normalizedUrl = normalizeMediaUrl(url);
+      const name = url.split('/').pop() || 'Media URL';
+      addMedia({ type: inferMediaType(normalizedUrl, name), url: normalizedUrl, name });
       urlInput.value = '';
     });
 

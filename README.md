@@ -104,3 +104,4 @@ On first login, the frontend imports existing Marketing Hub data from browser `l
 - Connect Meta again after deployment so page tokens are encrypted with the production `TOKEN_ENCRYPTION_KEY`.
 - Reconnect Meta after changing `META_SCOPES`; existing page tokens do not automatically gain newly requested permissions.
 - The Cron Trigger checks due posts every minute and refreshes connected Meta pages every 15 minutes.
+- Google Sheets imported by URL stay linked to scheduled posts. The "Cập nhật hàng đợi" action reloads linked sheets before publishing due posts; add a stable, unique `id` column so rows remain linked when the sheet is reordered.

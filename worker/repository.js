@@ -52,6 +52,9 @@ const postFromRow = (row) => row && ({
   mediaUrl: row.mediaUrl || '',
   mediaItems: parseJson(row.mediaItems, []),
   publishError: row.publishError || '',
+  sheetUrl: row.sheetUrl || '',
+  sheetRowKey: row.sheetRowKey || '',
+  sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
   source: row.source,
   status: row.status,
   createdAt: row.createdAt,
@@ -308,6 +311,11 @@ export class Repository {
       mediaUrl: post.mediaUrl || existing?.mediaUrl || '',
       mediaItems: JSON.stringify(post.mediaItems !== undefined ? post.mediaItems : (existing?.mediaItems || [])),
       publishError: post.publishError !== undefined ? post.publishError : (existing?.publishError || ''),
+      sheetUrl: post.sheetUrl !== undefined ? post.sheetUrl : (existing?.sheetUrl || null),
+      sheetRowKey: post.sheetRowKey !== undefined ? post.sheetRowKey : (existing?.sheetRowKey || null),
+      sheetDefaultFanpageId: post.sheetDefaultFanpageId !== undefined
+        ? post.sheetDefaultFanpageId
+        : (existing?.sheetDefaultFanpageId || null),
       source: post.source || existing?.source || 'manual',
       status: post.status || existing?.status || 'published',
       createdAt: existing?.createdAt || post.createdAt || timestamp,
@@ -321,8 +329,8 @@ export class Repository {
     await this.db.prepare(`
       INSERT INTO posts (
         id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
-        mediaItems, publishError, source, status, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         fanpageId = excluded.fanpageId,
         externalPostId = excluded.externalPostId,
@@ -335,13 +343,17 @@ export class Repository {
         mediaUrl = excluded.mediaUrl,
         mediaItems = excluded.mediaItems,
         publishError = excluded.publishError,
+        sheetUrl = excluded.sheetUrl,
+        sheetRowKey = excluded.sheetRowKey,
+        sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
         source = excluded.source,
         status = excluded.status,
         updatedAt = excluded.updatedAt
     `).bind(
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date,
       data.scheduledAt, data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems,
-      data.publishError, data.source, data.status, data.createdAt, data.updatedAt
+      data.publishError, data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId,
+      data.source, data.status, data.createdAt, data.updatedAt
     ).run();
     return postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first());
   }

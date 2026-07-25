@@ -6,6 +6,7 @@ const express = require('express');
 const repo = require('./repository');
 const meta = require('./meta');
 const auth = require('./auth');
+const sheetSyncModule = import('../shared/sheet-sync.mjs');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -147,6 +148,25 @@ const fetchGoogleSheetCsvText = async (inputUrl, { signal } = {}) => {
   throw err;
 };
 
+const syncLinkedScheduleSheets = async (options = {}) => {
+  const { syncScheduleSheets } = await sheetSyncModule;
+  return syncScheduleSheets({
+    repo,
+    sourceUrl: options.sourceUrl || '',
+    defaultFanpageId: options.defaultFanpageId || '',
+    timezoneOffset: options.timezoneOffset || '+07:00',
+    fetchCsv: async (sourceUrl) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        return await fetchGoogleSheetCsvText(sourceUrl, { signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+  });
+};
+
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
@@ -244,7 +264,18 @@ app.post('/api/sync', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/publish-due', asyncHandler(async (req, res) => {
-  res.json(await processScheduledPosts());
+  const sheetSync = req.query.syncSheets === '1' ? await syncLinkedScheduleSheets() : null;
+  const publisher = await processScheduledPosts();
+  res.json(sheetSync ? { ...publisher, sheetSync } : publisher);
+}));
+
+app.post('/api/sheet-schedules/sync', asyncHandler(async (req, res) => {
+  if (!req.body?.sourceUrl) {
+    const err = new Error('Thiếu link Google Sheets');
+    err.status = 400;
+    throw err;
+  }
+  res.json(await syncLinkedScheduleSheets(req.body));
 }));
 
 app.post('/api/google-sheets/csv', asyncHandler(async (req, res) => {
