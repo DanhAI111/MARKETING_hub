@@ -1,11 +1,25 @@
 AUTH_REQUIRED=1
+# Set to 1 ONLY for local `wrangler dev` to allow weak/missing secrets. Never set
+# in production — the Worker throws unless real 32+ char secrets are configured.
+ALLOW_DEV_SECRETS=1
+# Production requires SESSION_SECRET and TOKEN_ENCRYPTION_KEY to be at least 32 characters.
 SESSION_SECRET=replace-with-a-long-random-string
 TOKEN_ENCRYPTION_KEY=replace-with-a-long-random-string
 ADMIN_PASSWORD=replace-with-a-strong-password
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-ALLOWED_EMAIL_DOMAINS=example.com
+# For personal Gmail login, prefer listing exact employee Gmail addresses in ALLOWED_EMAILS.
+ALLOWED_EMAIL_DOMAINS=
 ALLOWED_EMAILS=
+ALLOW_EMPLOYEE_EMAILS=0
+
+# Cloudflare Worker task email notifications via Resend.
+RESEND_API_KEY=
+EMAIL_FROM=
+EMAIL_REPLY_TO=
+TASK_DAILY_SUMMARY_ENABLED=0
+TASK_DAILY_SUMMARY_HOUR=1
+
 META_APP_ID=
 META_APP_SECRET=
 META_SCOPES=pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,instagram_basic,instagram_content_publish

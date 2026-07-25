@@ -1,4 +1,4 @@
-# Marketing Hub
+# MKT_Hub
 
 Marketing dashboard with shared data, Google login, Meta sync, and scheduled Facebook/Instagram publishing. Production runs on Cloudflare Workers with D1 and a one-minute Cron Trigger.
 
@@ -34,7 +34,7 @@ npm run d1:migrate:remote
 
 ### 3. Add secrets
 
-Generate two long random values and keep `TOKEN_ENCRYPTION_KEY` unchanged after Meta is connected:
+Generate two long random values of at least 32 characters. Production fails fast when `SESSION_SECRET` or `TOKEN_ENCRYPTION_KEY` is missing or too short. Keep `TOKEN_ENCRYPTION_KEY` unchanged after Meta is connected:
 
 ```bash
 npx wrangler secret put SESSION_SECRET
@@ -42,11 +42,13 @@ npx wrangler secret put TOKEN_ENCRYPTION_KEY
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put EMAIL_FROM
 npx wrangler secret put META_APP_ID
 npx wrangler secret put META_APP_SECRET
 ```
 
-`ADMIN_PASSWORD` enables immediate password login. Google OAuth is optional; omit its two secrets until a Google OAuth client is available. Set `ALLOWED_EMAIL_DOMAINS` in `wrangler.jsonc` or add it as a secret when enabling Google login.
+`ADMIN_PASSWORD` enables immediate password login. Google OAuth is optional; omit its two secrets until a Google OAuth client is available. For personal Gmail login, add each employee Gmail to `ALLOWED_EMAILS`, or set `ALLOW_EMPLOYEE_EMAILS=1` after saving employee Gmail addresses in Settings -> Employees. Avoid allowing the whole `gmail.com` domain unless every Gmail account should be able to access the app. Task email notifications on Cloudflare use Resend: set `RESEND_API_KEY` and `EMAIL_FROM` after verifying the sender domain/address in Resend. Employees also need their Gmail saved in Settings -> Employees so task changes can resolve the recipient.
 
 ### 4. Deploy
 
@@ -92,9 +94,21 @@ npm run dev
 
 Open the local URL printed by Wrangler. The original Node/SQLite server remains available with `npm run dev:node` for migration or fallback testing.
 
+For local Node email notifications, configure SMTP in `.env`. Gmail SMTP works with a Google App Password:
+
+```text
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-sender@gmail.com
+SMTP_PASS=your-google-app-password
+SMTP_FROM="MKT_Hub <your-sender@gmail.com>"
+```
+
+Task notification emails are sent when a task is created, updated, deleted, reassigned, or moved between statuses. If `TASK_DAILY_SUMMARY_ENABLED=1`, the scheduler also sends one daily open-task summary per assignee email.
+
 ## Existing Browser Data
 
-On first login, the frontend imports existing Marketing Hub data from browser `localStorage` into D1 once. SQLite/PostgreSQL migration is not required for browser-local data.
+On first login, the frontend imports existing MKT_Hub data from browser `localStorage` into D1 once. SQLite/PostgreSQL migration is not required for browser-local data.
 
 ## Meta Publishing Notes
 

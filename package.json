@@ -1,5 +1,5 @@
 {
-  "name": "marketing-hub-meta-sync",
+  "name": "mkt-hub",
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
@@ -11,6 +11,7 @@
     "dev": "npm run build:assets && wrangler dev",
     "dev:node": "node server/index.js",
     "start": "node server/index.js",
+    "test": "node --test",
     "deploy": "npm run build:assets && wrangler deploy",
     "deploy:check": "npm run build:assets && wrangler deploy --dry-run",
     "d1:create": "wrangler d1 create marketing-hub",
