@@ -145,7 +145,11 @@ const handleRequest = async (request, env, context) => {
     return auth.finishPassword();
   }
 
-  if (method === 'GET' && pathname === '/auth/google/start') return auth.startGoogle(url);
+  if (method === 'GET' && pathname === '/auth/google/start') {
+    const limited = await requireRateLimit(repo, request, 'google-auth', { limit: 20, windowSeconds: 60 });
+    if (limited) return limited;
+    return auth.startGoogle(url);
+  }
   if (method === 'GET' && pathname === '/auth/google/callback') return auth.finishGoogle(url);
   if (method === 'GET' && pathname === '/auth/logout') {
     const headers = new Headers({ Location: `${url.origin}/login` });
@@ -290,6 +294,8 @@ const handleRequest = async (request, env, context) => {
     }));
   }
   if (method === 'POST' && pathname === '/api/publish-due') {
+    const limited = await requireRateLimit(repo, request, 'publish-due', { limit: 30, windowSeconds: 60 });
+    if (limited) return limited;
     // Sheet sync fetches N Google Sheets (15s each) + can exhaust the Worker's
     // wall-clock/subrequest budget → Cloudflare edge 503. Run it in the
     // background so publishing (the fast path) always returns cleanly; newly
@@ -305,6 +311,8 @@ const handleRequest = async (request, env, context) => {
     return json(publisher);
   }
   if (method === 'POST' && pathname === '/api/sheet-schedules/sync') {
+    const limited = await requireRateLimit(repo, request, 'sheet-schedules-sync', { limit: 30, windowSeconds: 60 });
+    if (limited) return limited;
     const body = await parseJsonBody(request);
     if (!body.sourceUrl) return json({ error: 'Thiếu link Google Sheets' }, 400);
     return json(await syncLinkedScheduleSheets(repo, body));
@@ -333,6 +341,8 @@ const handleRequest = async (request, env, context) => {
   }
 
   if (method === 'GET' && pathname === '/auth/meta/start') {
+    const limited = await requireRateLimit(repo, request, 'meta-auth', { limit: 20, windowSeconds: 60 });
+    if (limited) return limited;
     const state = crypto.randomUUID();
     await repo.saveOAuthState('meta', state, {});
     return Response.redirect(meta.authUrl(state), 302);

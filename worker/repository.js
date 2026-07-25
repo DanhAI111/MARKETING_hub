@@ -649,10 +649,12 @@ export class Repository {
 
   async consumeOAuthState(provider, state) {
     if (!state) return null;
+    // Atomic delete-and-return: a concurrent callback with the same state can't
+    // double-consume it (only one DELETE matches the row). Expiry filtered here
+    // so an expired state is rejected even though the row is removed.
     const row = await this.db.prepare(
-      'SELECT * FROM oauth_states WHERE state = ? AND provider = ? AND expiresAt > ?'
+      'DELETE FROM oauth_states WHERE state = ? AND provider = ? AND expiresAt > ? RETURNING payload'
     ).bind(state, provider, now()).first();
-    await this.db.prepare('DELETE FROM oauth_states WHERE state = ?').bind(state).run();
     return row ? parseJson(row.payload, {}) : null;
   }
 

@@ -95,3 +95,18 @@ test('server CSRF accepts matching double-submit tokens', () => {
     socket: {}
   }), true);
 });
+
+test('server login page escapes the error query param (no reflected XSS)', () => {
+  const out = serverAuth.escapeHtml('<img src=x onerror=alert(1)>');
+  assert.equal(out, '&lt;img src=x onerror=alert(1)&gt;');
+  assert.ok(!out.includes('<'));
+});
+
+test('worker allowlist fails closed with no config, opens only with ALLOW_ALL_AUTHENTICATED', async () => {
+  const request = new Request('https://example.test/login');
+  const repo = { listAppItems: async () => [] };
+  const denied = new AuthService({}, repo, request);
+  assert.equal(await denied.isAllowedUser('anyone@gmail.com'), false);
+  const opened = new AuthService({ ALLOW_ALL_AUTHENTICATED: '1' }, repo, request);
+  assert.equal(await opened.isAllowedUser('anyone@gmail.com'), true);
+});

@@ -580,11 +580,38 @@ const saveOAuthState = async (provider, state, payload = null, ttlSeconds = 600)
 const consumeOAuthState = async (provider, state) => {
   if (!state) return null;
   const key = oauthStateKey(provider, state);
-  const row = await getState(key);
-  if (!row) return null;
-  await saveState(key, null); // one-time use
-  if (row.expiresAt && Date.now() > row.expiresAt) return null;
-  return row.payload ?? {};
+  // Atomic delete-and-return so two concurrent callbacks can't both consume the
+  // same state (only one DELETE matches). Postgres needs this; better-sqlite3 is
+  // single-threaded but RETURNING works there too (SQLite >= 3.35).
+  let raw = null;
+  if (usePostgres) {
+    const rows = await pgQuery('DELETE FROM sync_state WHERE key = $1 RETURNING value', [key]);
+    raw = rows[0] ? parseJson(rows[0].value, null) : null;
+  } else {
+    const row = getSqlite().prepare('DELETE FROM sync_state WHERE key = ? RETURNING value').get(key);
+    raw = row ? parseJson(row.value, null) : null;
+  }
+  if (!raw) return null;
+  if (raw.expiresAt && Date.now() > raw.expiresAt) return null;
+  return raw.payload ?? {};
+};
+
+// Prune expired OAuth states left behind by abandoned logins (consumed ones are
+// already deleted). Value is JSON so filter in JS rather than SQL.
+const cleanupOAuthStates = async () => {
+  const prefix = 'oauth_state:';
+  const now = Date.now();
+  const rows = usePostgres
+    ? await pgQuery("SELECT key, value FROM sync_state WHERE key LIKE 'oauth_state:%'")
+    : getSqlite().prepare("SELECT key, value FROM sync_state WHERE key LIKE 'oauth_state:%'").all();
+  for (const row of rows) {
+    if (!String(row.key).startsWith(prefix)) continue;
+    const parsed = parseJson(row.value, null);
+    if (!parsed || (parsed.expiresAt && now > parsed.expiresAt)) {
+      if (usePostgres) await pgQuery('DELETE FROM sync_state WHERE key = $1', [row.key]);
+      else getSqlite().prepare('DELETE FROM sync_state WHERE key = ?').run(row.key);
+    }
+  }
 };
 
 const getBootstrapData = async () => ({
@@ -1162,6 +1189,7 @@ module.exports = {
   saveState,
   saveOAuthState,
   consumeOAuthState,
+  cleanupOAuthStates,
   upsertFanpage,
   deleteFanpage,
   upsertPost,

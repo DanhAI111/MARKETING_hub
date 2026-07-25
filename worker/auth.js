@@ -11,6 +11,11 @@ const splitList = (value) => String(value || '')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 
+// Dedupe the allowlist-config warnings to one line per isolate (a fresh
+// AuthService is built per request, so without this they log on every login).
+let warnedAllowAll = false;
+let warnedNoAllowlist = false;
+
 const parseCookies = (request) => Object.fromEntries(String(request.headers.get('cookie') || '')
   .split(';')
   .map((part) => part.trim())
@@ -86,10 +91,16 @@ export class AuthService {
     // old allow-any-Google behavior with ALLOW_ALL_AUTHENTICATED=1 (single-user setups).
     if (!allowedEmails.length && !allowedDomains.length && !allowEmployeeEmails) {
       if (this.env.ALLOW_ALL_AUTHENTICATED === '1') {
-        console.warn('[auth] ALLOW_ALL_AUTHENTICATED=1: any verified Google account is admitted. Set ALLOWED_EMAILS to restrict access.');
+        if (!warnedAllowAll) {
+          console.warn('[auth] ALLOW_ALL_AUTHENTICATED=1: any verified Google account is admitted. Set ALLOWED_EMAILS to restrict access.');
+          warnedAllowAll = true;
+        }
         return true;
       }
-      console.warn('[auth] No allowlist configured (ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS / ALLOW_EMPLOYEE_EMAILS). Denying login. Set ALLOW_ALL_AUTHENTICATED=1 to allow any verified Google account.');
+      if (!warnedNoAllowlist) {
+        console.warn('[auth] No allowlist configured (ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS / ALLOW_EMPLOYEE_EMAILS). Denying login. Set ALLOW_ALL_AUTHENTICATED=1 to allow any verified Google account.');
+        warnedNoAllowlist = true;
+      }
     }
     return false;
   }

@@ -382,6 +382,10 @@ const startSchedulers = () => {
     sendDailyTaskSummaryIfDue().catch((err) => console.error('Daily task summary failed:', err.message));
   }, 60 * 1000).unref();
 
+  setInterval(() => {
+    repo.cleanupOAuthStates().catch((err) => console.error('OAuth state cleanup failed:', err.message));
+  }, 15 * 60 * 1000).unref();
+
   setTimeout(() => {
     processScheduledPosts().catch((err) => console.error('Startup publish failed:', err.message));
     sendDailyTaskSummaryIfDue().catch((err) => console.error('Startup task summary failed:', err.message));

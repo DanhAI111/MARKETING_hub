@@ -145,6 +145,13 @@ const safeNext = (value) => {
   return next.startsWith('/') && !next.startsWith('//') ? next : '/';
 };
 
+const escapeHtml = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 const html = (error = '', next = '/') => `<!doctype html>
 <html lang="vi">
 <head>
@@ -165,7 +172,7 @@ const html = (error = '', next = '/') => `<!doctype html>
   <main>
     <h1>Marketing Hub</h1>
     <p>Đăng nhập bằng Gmail cá nhân hoặc tài khoản Google được cấp quyền để sử dụng dữ liệu chung.</p>
-    ${error ? `<div class="error">${error}</div>` : ''}
+    ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
     ${configured()
       ? `<a href="/auth/google/start?next=${encodeURIComponent(next)}">Đăng nhập với Google</a>`
       : '<div class="error">Google OAuth chưa được cấu hình trên server.</div>'}
@@ -271,5 +278,6 @@ module.exports = {
   required,
   configured,
   readSession,
-  verifyCsrf
+  verifyCsrf,
+  escapeHtml
 };
