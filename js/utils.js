@@ -194,6 +194,15 @@ const Utils = (() => {
     'low': { label: 'Thấp', cssClass: 'tag-priority-low' }
   };
 
+  const POST_STATUSES = {
+    scheduled: { label: 'Chờ đăng', className: 'tag-warning' },
+    publishing: { label: 'Đang đăng', className: 'tag-info' },
+    published: { label: 'Đã đăng', className: 'tag-success' },
+    failed: { label: 'Lỗi đăng', className: 'tag-danger' }
+  };
+
+  const getPostStatus = (status, fallback = 'published') => POST_STATUSES[status] || POST_STATUSES[fallback];
+
   // ── KPI Color ──
   const getKpiColor = (percentage) => {
     if (percentage >= 80) return 'success';
@@ -241,23 +250,48 @@ const Utils = (() => {
     URL.revokeObjectURL(url);
   };
 
+  // ── Parse CSV (RFC 4180: quoted fields may contain commas, newlines, "" ) ──
+  // Symmetric with exportCSV, which quotes fields containing , or " and escapes " as "".
+  const parseCSV = (text) => {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    const src = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (src[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+        } else { field += c; }
+      } else if (c === '"') {
+        inQuotes = true;
+      } else if (c === ',') {
+        row.push(field); field = '';
+      } else if (c === '\n') {
+        row.push(field); rows.push(row); row = []; field = '';
+      } else {
+        field += c;
+      }
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(r => r.some(cell => cell.trim() !== ''));
+  };
+
   // ── Import CSV ──
   const importCSV = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
-          const text = e.target.result;
-          const lines = text.split('\n').filter(l => l.trim());
-          if (lines.length < 2) { resolve([]); return; }
-          const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-          const rows = [];
-          for (let i = 1; i < lines.length; i++) {
-            const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+          const matrix = parseCSV(e.target.result);
+          if (matrix.length < 2) { resolve([]); return; }
+          const headers = matrix[0].map(h => h.trim());
+          const rows = matrix.slice(1).map((values) => {
             const row = {};
-            headers.forEach((h, idx) => { row[h] = values[idx] || ''; });
-            rows.push(row);
-          }
+            headers.forEach((h, idx) => { row[h] = (values[idx] ?? '').trim(); });
+            return row;
+          });
           resolve(rows);
         } catch (err) {
           reject(err);
@@ -384,7 +418,7 @@ const Utils = (() => {
     MONTHS_VI, DAYS_VI,
     PLATFORMS, getPlatformInfo,
     EXPENSE_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, getExpenseCategories, getCategoryInfo, getExpenseCategoryIcon,
-    EVENT_TYPES, EVENT_STATUSES, TASK_STATUSES, PRIORITIES,
+    EVENT_TYPES, EVENT_STATUSES, TASK_STATUSES, PRIORITIES, POST_STATUSES, getPostStatus,
     getKpiColor,
     exportCSV, exportExcel, importCSV, downloadBlob,
     debounce, escapeHtml, safeUrl, onActivate,

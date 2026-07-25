@@ -8,14 +8,8 @@ const ContentPage = (() => {
   let currentMonth = Utils.getReportingMonth();
   let selectedPlatform = '';
 
-  const POST_STATUSES = {
-    scheduled: { label: 'Chờ đăng', className: 'tag-warning' },
-    publishing: { label: 'Đang đăng', className: 'tag-info' },
-    published: { label: 'Đã đăng', className: 'tag-success' },
-    failed: { label: 'Lỗi đăng', className: 'tag-danger' }
-  };
-
-  const getPostStatus = (status) => POST_STATUSES[status] || POST_STATUSES.published;
+  const POST_STATUSES = Utils.POST_STATUSES;
+  const getPostStatus = (status) => Utils.getPostStatus(status);
 
   const formatScheduleTime = (value) => {
     if (!value) return '';

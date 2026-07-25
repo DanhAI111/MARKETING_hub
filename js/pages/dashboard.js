@@ -45,8 +45,8 @@ const DashboardPage = (() => {
       <!-- Welcome Section -->
       <div class="dashboard-welcome">
         <div>
-          <h2>Hello, Admin</h2>
-          <p>Here is your marketing overview for ${Utils.formatMonthYear(currentMonth)}.</p>
+          <h2>Xin chào</h2>
+          <p>Tổng quan marketing tháng ${Utils.formatMonthYear(currentMonth)}.</p>
         </div>
         <div style="display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;">
           <div class="month-picker">

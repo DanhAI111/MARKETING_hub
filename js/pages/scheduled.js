@@ -9,12 +9,8 @@ const ScheduledPage = (() => {
   let selectedStatus = '';
   let selectedPlatform = '';
 
-  const STATUS_META = {
-    scheduled: { label: 'Chờ đăng', className: 'tag-warning' },
-    publishing: { label: 'Đang đăng', className: 'tag-info' },
-    failed: { label: 'Lỗi đăng', className: 'tag-danger' }
-  };
-
+  // Scheduled queue excludes 'published' — those leave the queue.
+  const { published, ...STATUS_META } = Utils.POST_STATUSES;
   const getStatusMeta = (status) => STATUS_META[status] || STATUS_META.scheduled;
 
   const formatScheduleTime = (value) => {
