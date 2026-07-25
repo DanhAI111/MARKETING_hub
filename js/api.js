@@ -21,6 +21,17 @@ const RemoteStore = (() => {
   let bootstrapped = false;
   let lastSync = null;
   let currentUser = null;
+  const mutatingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+  const readCookie = (name) => document.cookie
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const index = part.indexOf('=');
+      return index === -1 ? [part, ''] : [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+    })
+    .find(([key]) => key === name)?.[1] || '';
 
   const redirectToLogin = () => {
     if (window.location.pathname === '/login') return;
@@ -30,12 +41,29 @@ const RemoteStore = (() => {
 
   const request = async (path, options = {}) => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), options.timeout || 5000);
-    const res = await fetch(path, {
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-      signal: controller.signal,
-      ...options
-    }).finally(() => clearTimeout(timeout));
+    const { timeout: timeoutMs = 5000, ...fetchOptions } = options;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const method = String(options.method || 'GET').toUpperCase();
+    const csrfToken = mutatingMethods.has(method) ? readCookie('mh_csrf') : '';
+    let res;
+    try {
+      res = await fetch(path, {
+        ...fetchOptions,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+          ...(options.headers || {})
+        },
+        signal: controller.signal
+      });
+    } catch (err) {
+      if (err.name === 'AbortError' || String(err.message || '').toLowerCase().includes('abort')) {
+        throw new Error('Đồng bộ mất nhiều thời gian hơn dự kiến. Vui lòng thử lại sau ít phút.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (res.status === 401) {
       redirectToLogin();
       throw new Error('Bạn cần đăng nhập để sử dụng ứng dụng.');
@@ -54,7 +82,8 @@ const RemoteStore = (() => {
       const health = await request('/api/health');
       available = !!health.ok;
       lastSync = health.lastSync || null;
-      await loadMe().catch(() => null);
+      const user = await loadMe().catch(() => null);
+      if (health.authRequired && !user) return false;
       return available;
     } catch {
       available = false;
@@ -97,12 +126,24 @@ const RemoteStore = (() => {
     localStorage.setItem(IMPORT_FLAG, '1');
   };
 
+  const runFullSync = async () => {
+    let cursor = 0;
+    let attempts = 0;
+    do {
+      lastSync = await request(`/api/sync?cursor=${cursor}&maxFanpages=1&postLimit=100`, { method: 'POST', body: '{}', timeout: 60000 });
+      cursor = lastSync.nextCursor || 0;
+      attempts++;
+    } while (lastSync.hasMore && attempts < 20);
+    return lastSync;
+  };
+
   const hydrate = async ({ sync = false } = {}) => {
     if (!available && !(await check())) return false;
+    if (!currentUser) return false;
     await importLocalOnce();
     if (sync) {
       try {
-        lastSync = await request('/api/sync', { method: 'POST', body: '{}' });
+        await runFullSync();
       } catch (err) {
         console.warn('Meta sync skipped:', err.message);
       }
@@ -114,10 +155,23 @@ const RemoteStore = (() => {
     return true;
   };
 
+  // Warn the user (at most once per interval) when a background write to the
+  // server fails, so local edits don't silently diverge from the backend.
+  let mirrorWarnAt = 0;
+  const notifyMirrorFailure = () => {
+    const nowMs = Date.now();
+    if (nowMs - mirrorWarnAt < 8000) return;
+    mirrorWarnAt = nowMs;
+    if (typeof Toast !== 'undefined') {
+      Toast.warning('Chưa đồng bộ được lên máy chủ — thay đổi mới chỉ lưu cục bộ. Sẽ thử lại khi tải lại trang.');
+    }
+  };
+
   const mirror = (path, options = {}) => {
     if (!available) return;
     request(path, options).catch((err) => {
       console.warn('Backend mirror failed:', err.message);
+      notifyMirrorFailure();
     });
   };
 
@@ -131,13 +185,7 @@ const RemoteStore = (() => {
 
   const syncNow = async () => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
-    let cursor = 0;
-    let attempts = 0;
-    do {
-      lastSync = await request(`/api/sync?cursor=${cursor}&maxFanpages=1&postLimit=100`, { method: 'POST', body: '{}' });
-      cursor = lastSync.nextCursor || 0;
-      attempts++;
-    } while (lastSync.hasMore && attempts < 20);
+    await runFullSync();
     const data = await request('/api/bootstrap');
     lastSync = data.lastSync || lastSync;
     Store.mergeRemoteData(data);
@@ -147,10 +195,29 @@ const RemoteStore = (() => {
   const publishDue = async ({ syncSheets = false } = {}) => {
     if (!available && !(await check())) return null;
     const result = await request(`/api/publish-due${syncSheets ? '?syncSheets=1' : ''}`, { method: 'POST', body: '{}' });
-    const data = await request('/api/bootstrap');
-    lastSync = data.lastSync || lastSync;
-    Store.mergeRemoteData(data);
+    await loadPosts(window.Utils?.getReportingMonth?.() || '');
+    await loadPending().catch(() => {});
     return result;
+  };
+
+  const loadPosts = async (month = '', { limit = 500, offset = 0 } = {}) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    const posts = await request(`/api/posts?${params.toString()}`);
+    Store.mergeRemotePosts(posts, month);
+    return posts;
+  };
+
+  // Publishing queue: pull every not-yet-published post across all months so
+  // future-dated schedules show up regardless of the reporting month.
+  const loadPending = async ({ limit = 500 } = {}) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    const posts = await request(`/api/posts?pending=1&limit=${limit}`);
+    Store.mergeRemotePending(posts);
+    return posts;
   };
 
   const syncSheetSchedules = async ({ sourceUrl, defaultFanpageId = '' }) => {
@@ -198,6 +265,8 @@ const RemoteStore = (() => {
     logout,
     syncNow,
     publishDue,
+    loadPosts,
+    loadPending,
     syncSheetSchedules,
     updatePost,
     deletePost,

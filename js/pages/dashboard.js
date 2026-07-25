@@ -66,6 +66,17 @@ const DashboardPage = (() => {
         </div>
       </div>
 
+      <!-- Spotlight Hero Card (Framer signature — 1 per page) -->
+      <div class="gradient-card gradient-card-violet dashboard-spotlight">
+        <div class="dashboard-spotlight-label">Tổng quan tháng ${Utils.formatMonthYear(currentMonth)}</div>
+        <div class="dashboard-spotlight-headline">${Utils.formatNumber(postsThisMonth.length)} bài đăng · ${Utils.formatVNDCompact(totalExpenses)} chi phí</div>
+        <div class="dashboard-spotlight-meta">
+          <span>${Utils.formatNumber(events.length)} sự kiện</span>
+          <span>${Utils.formatVNDCompact(adsSpend)} chi quảng cáo</span>
+          <span>${fanpages.length} fanpage</span>
+        </div>
+      </div>
+
       <!-- Quick Stats -->
       <div class="quick-stats">
         <div class="stat-card" id="statPosts">
@@ -323,6 +334,7 @@ const DashboardPage = (() => {
 
     return fanpages.map(fp => {
       const platform = Utils.getPlatformInfo(fp.platform);
+      const imageUrl = (fp.imageUrl || '').trim();
       const kpiTarget = fp.kpis?.[currentMonth] || 0;
       const posted = Store.posts.getCountByFanpageAndMonth(fp.id, currentMonth);
       const percent = kpiTarget > 0 ? Math.round((posted / kpiTarget) * 100) : 0;
@@ -331,7 +343,10 @@ const DashboardPage = (() => {
       return `
         <div class="kpi-item">
           <div class="kpi-platform-icon ${platform.cssClass}">
-            ${platform.icon}
+            ${imageUrl ? `
+              <img src="${Utils.escapeHtml(imageUrl)}" alt="${Utils.escapeHtml(fp.name)}" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();">
+            ` : ''}
+            <span class="kpi-platform-fallback">${platform.icon}</span>
           </div>
           <div class="kpi-info">
             <div class="kpi-name">${Utils.escapeHtml(fp.name)}</div>
@@ -368,7 +383,7 @@ const DashboardPage = (() => {
       const amount = Store.expenses.getTotalByCategoryAndMonth(cat, currentMonth);
       if (amount > 0) {
         chartData.push({ label: catInfo.name, value: amount, color: catInfo.color });
-        legendItems.push({ name: catInfo.name, icon: catInfo.icon, color: catInfo.color, amount });
+        legendItems.push({ name: catInfo.name, icon: Utils.getExpenseCategoryIcon(cat, catInfo), color: catInfo.color, amount });
       }
     });
 
@@ -389,7 +404,7 @@ const DashboardPage = (() => {
         legendEl.innerHTML = legendItems.map(item => `
           <div class="donut-legend-item">
             <div class="donut-legend-dot" style="background: ${item.color}"></div>
-            <span class="donut-legend-label">${item.icon} ${item.name}</span>
+            <span class="donut-legend-label"><span class="expense-inline-icon">${item.icon}</span> ${Utils.escapeHtml(item.name)}</span>
             <span class="donut-legend-value">${Utils.formatVNDCompact(item.amount)}</span>
           </div>
         `).join('');
@@ -416,7 +431,7 @@ const DashboardPage = (() => {
       const statusInfo = Utils.EVENT_STATUSES[event.status] || { label: event.status, cssClass: 'tag-neutral' };
 
       return `
-        <div class="event-widget-item" data-event-id="${event.id}">
+        <div class="event-widget-item" data-event-id="${event.id}" tabindex="0" role="button" aria-label="Xem sự kiện">
           <div class="event-date-box">
             <div class="event-date-day">${day}</div>
             <div class="event-date-month">${monthShort}</div>
@@ -468,7 +483,7 @@ const DashboardPage = (() => {
         : '';
 
       return `
-        <div class="task-widget-item priority-${priority}" data-task-id="${task.id}" style="${overdueStyle}">
+        <div class="task-widget-item priority-${priority}" data-task-id="${task.id}" style="${overdueStyle}" tabindex="0" role="button" aria-label="Xem công việc">
           <div class="task-widget-info">
             <div class="task-widget-title">${Utils.escapeHtml(task.title)}</div>
             <div class="task-widget-meta">
@@ -557,10 +572,10 @@ const DashboardPage = (() => {
       const sparkConversions = document.getElementById('sparkConversions');
       const sparkCpc = document.getElementById('sparkCpc');
 
-      if (sparkSpend) Chart.drawSparkline(sparkSpend, spendData, '#7c3aed');
-      if (sparkReach) Chart.drawSparkline(sparkReach, reachData, '#3b82f6');
-      if (sparkConversions) Chart.drawSparkline(sparkConversions, convData, '#10b981');
-      if (sparkCpc) Chart.drawSparkline(sparkCpc, cpcData, '#f59e0b');
+      if (sparkSpend) Chart.drawSparkline(sparkSpend, spendData, '#6a4cf5');
+      if (sparkReach) Chart.drawSparkline(sparkReach, reachData, '#0099ff');
+      if (sparkConversions) Chart.drawSparkline(sparkConversions, convData, '#ff5577');
+      if (sparkCpc) Chart.drawSparkline(sparkCpc, cpcData, '#ff7a3d');
     });
   };
 
@@ -625,12 +640,12 @@ const DashboardPage = (() => {
 
     // Click on events to navigate
     document.querySelectorAll('.event-widget-item').forEach(el => {
-      el.addEventListener('click', () => App.navigate('events'));
+      Utils.onActivate(el, () => App.navigate('events'));
     });
 
     // Click on tasks to navigate
     document.querySelectorAll('.task-widget-item').forEach(el => {
-      el.addEventListener('click', () => App.navigate('tasks'));
+      Utils.onActivate(el, () => App.navigate('tasks'));
     });
 
     // Export monthly report button

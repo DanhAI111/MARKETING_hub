@@ -8,12 +8,39 @@
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl); /* Framer content cards: 20px */
   padding: var(--space-5);
   transition: all var(--transition-base);
   position: relative;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
+}
+
+/* ══ Gradient Spotlight Cards (Framer signature — use 1–2 per page, never 3+) ══
+   Oversized atmospheric tiles dropped into the otherwise-monochrome grid.
+   Add `.gradient-card gradient-card-violet` (etc.) to a container in a template. */
+.gradient-card {
+  border-radius: var(--radius-3xl); /* 30px — softer than content cards */
+  padding: var(--space-8);
+  color: #ffffff;
+  border: none;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.gradient-card,
+.gradient-card * { color: #ffffff; }
+.gradient-card-violet {
+  background: linear-gradient(135deg, var(--gradient-violet) 0%, var(--gradient-magenta) 100%);
+}
+.gradient-card-magenta {
+  background: linear-gradient(135deg, var(--gradient-magenta) 0%, var(--gradient-coral) 100%);
+}
+.gradient-card-orange {
+  background: linear-gradient(135deg, var(--gradient-orange) 0%, var(--gradient-coral) 100%);
+}
+.gradient-card-coral {
+  background: linear-gradient(135deg, var(--gradient-coral) 0%, var(--gradient-violet) 100%);
 }
 
 .card:hover {
@@ -140,9 +167,10 @@
   justify-content: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill); /* Framer: every CTA is a pill */
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
   cursor: pointer;
   transition: all var(--transition-base);
   white-space: nowrap;
@@ -162,28 +190,28 @@
   flex-shrink: 0;
 }
 
-/* Primary Button */
+/* Primary Button — white pill on dark canvas (the only primary CTA shape) */
 .btn-primary {
-  background: var(--primary-500);
-  color: #ffffff;
-  border-color: var(--primary-500);
+  background: var(--primary); /* white */
+  color: var(--primary-foreground); /* black */
+  border-color: var(--primary);
 }
 
 .btn-primary:hover {
-  background: var(--primary-600);
-  color: #ffffff;
-  border-color: var(--primary-600);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--primary-foreground);
+  border-color: rgba(255, 255, 255, 0.88);
 }
 
-/* Secondary Button */
+/* Secondary Button — charcoal pill */
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-secondary);
+  background: var(--card);
+  color: var(--text-primary);
   border-color: var(--border-default);
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--popover);
   color: var(--text-primary);
   border-color: var(--border-strong);
 }
@@ -233,7 +261,7 @@
   width: 36px;
   height: 36px;
   padding: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full); /* circular icon buttons */
   display: flex;
   align-items: center;
   justify-content: center;

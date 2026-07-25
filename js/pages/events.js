@@ -5,7 +5,7 @@
 
 const EventsPage = (() => {
   let container = null;
-  let currentMonth = Utils.getReportingMonth();
+  let calendarStartMonth = Utils.getReportingMonth();
   let activeTab = 'list'; // 'list' or 'timeline'
   let filters = { search: '', status: '', type: '' };
 
@@ -13,7 +13,7 @@ const EventsPage = (() => {
 
   const render = (el) => {
     container = el;
-    currentMonth = Utils.getReportingMonth();
+    calendarStartMonth = Utils.getReportingMonth();
     filters = { search: '', status: '', type: '' };
     renderPage();
   };
@@ -50,21 +50,11 @@ const EventsPage = (() => {
         </div>
       </div>
 
+      ${renderEventCalendar(events)}
+
       <!-- Toolbar -->
       <div class="toolbar">
         <div class="toolbar-left">
-          <div class="month-picker">
-            <button class="month-picker-btn" id="prevMonthBtn">
-              ${Utils.icons.chevronLeft}
-            </button>
-            <span class="month-picker-label" id="currentMonthLabel">
-              ${Utils.formatMonthYear(currentMonth)}
-            </span>
-            <button class="month-picker-btn" id="nextMonthBtn">
-              ${Utils.icons.chevronRight}
-            </button>
-          </div>
-
           <!-- Search -->
           <div class="search-input-wrapper">
             ${Utils.icons.search}
@@ -115,7 +105,7 @@ const EventsPage = (() => {
   // ── Helpers ──
 
   const getFilteredEvents = () => {
-    let list = Store.events.getByMonth(currentMonth);
+    let list = Store.events.getAll();
     
     // Sort: upcoming events first (planning, preparing, ongoing first, then completed, then cancelled)
     // and sort by date ascending for upcoming, descending for past
@@ -153,6 +143,138 @@ const EventsPage = (() => {
     };
   };
 
+  const getMonthDate = (monthStr) => {
+    const [year, month] = monthStr.split('-').map(Number);
+    return new Date(year, month - 1, 1);
+  };
+
+  const shiftMonth = (monthStr, offset) => {
+    const d = getMonthDate(monthStr);
+    d.setMonth(d.getMonth() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  const getMonthDays = (monthStr) => {
+    const first = getMonthDate(monthStr);
+    const year = first.getFullYear();
+    const month = first.getMonth();
+    const startOffset = first.getDay();
+    const gridStart = new Date(year, month, 1 - startOffset);
+    return Array.from({ length: 42 }, (_, idx) => {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + idx);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return {
+        date: dateStr,
+        day: d.getDate(),
+        inMonth: d.getMonth() === month,
+        isToday: Utils.isToday(dateStr)
+      };
+    });
+  };
+
+  const renderEventCalendar = (events) => {
+    const months = [0, 1, 2].map(offset => shiftMonth(calendarStartMonth, offset));
+    const eventsByDate = events.reduce((acc, event) => {
+      if (!event.date) return acc;
+      if (!acc[event.date]) acc[event.date] = [];
+      acc[event.date].push(event);
+      return acc;
+    }, {});
+
+    return `
+      <section class="event-calendar-panel" aria-label="Lịch sự kiện 3 tháng">
+        <div class="event-calendar-header">
+          <div>
+            <h2>Lịch sự kiện 3 tháng</h2>
+            <p>Hiển thị tất cả sự kiện theo lịch; dùng nút lùi/tiến để đổi khoảng tháng.</p>
+          </div>
+          <div class="event-calendar-controls">
+            <button class="btn btn-secondary btn-sm" id="prevCalendarRangeBtn">
+              ${Utils.icons.chevronLeft}
+              <span>3 tháng trước</span>
+            </button>
+            <span class="event-calendar-range">
+              ${Utils.formatMonthYear(months[0])} - ${Utils.formatMonthYear(months[2])}
+            </span>
+            <button class="btn btn-secondary btn-sm" id="nextCalendarRangeBtn">
+              <span>3 tháng sau</span>
+              ${Utils.icons.chevronRight}
+            </button>
+          </div>
+        </div>
+        <div class="event-calendar-months">
+          ${months.map(month => `
+            <article class="event-calendar-month">
+              <div class="event-calendar-month-title">${Utils.formatMonthYear(month)}</div>
+              <div class="event-calendar-weekdays">
+                ${['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map(day => `<span>${day}</span>`).join('')}
+              </div>
+              <div class="event-calendar-grid">
+                ${getMonthDays(month).map(day => {
+                  const dayEvents = eventsByDate[day.date] || [];
+                  return `
+                    <button type="button"
+                            class="event-calendar-day ${day.inMonth ? '' : 'muted'} ${day.isToday ? 'today' : ''} ${dayEvents.length ? 'has-events' : ''}"
+                            data-calendar-date="${day.date}">
+                      <span class="event-calendar-day-number">${day.day}</span>
+                      <span class="event-calendar-day-items">
+                        ${dayEvents.slice(0, 2).map(event => {
+                          const statusInfo = Utils.EVENT_STATUSES[event.status] || { label: event.status || 'Sự kiện', cssClass: 'tag-neutral' };
+                          return `
+                            <span class="event-calendar-chip ${statusInfo.cssClass}"
+                                  data-calendar-event-id="${event.id}"
+                                  title="${Utils.escapeHtml(event.name)}">
+                              ${Utils.escapeHtml(event.name)}
+                            </span>
+                          `;
+                        }).join('')}
+                        ${dayEvents.length > 2 ? `<span class="event-calendar-more">+${dayEvents.length - 2}</span>` : ''}
+                      </span>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </article>
+          `).join('')}
+        </div>
+      </section>
+    `;
+  };
+
+  const extractEventLink = (value = '') => {
+    const match = String(value).match(/https?:\/\/[^\s<>"']+|(?:docs\.google\.com|drive\.google\.com)\/[^\s<>"']+/i);
+    if (!match) return '';
+    const url = match[0].replace(/[),.;]+$/, '');
+    return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  };
+
+  const renderEventResourceLink = (value, label) => {
+    const url = extractEventLink(value);
+    if (!url) return '';
+    const isGoogleSheet = /docs\.google\.com\/spreadsheets/i.test(url);
+    const text = label || (isGoogleSheet ? 'Mở Google Sheet' : 'Mở link');
+    return `
+      <a class="event-resource-link" href="${Utils.escapeHtml(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">
+        ${Utils.icons.fileText}
+        <span>${text}</span>
+      </a>
+    `;
+  };
+
+  const bindEventResourceLinkPreview = () => {
+    document.querySelectorAll('[data-event-link-source]').forEach(field => {
+      const preview = document.querySelector(`[data-event-link-preview="${field.dataset.eventLinkSource}"]`);
+      if (!preview) return;
+      const label = preview.dataset.label || '';
+      const sync = () => {
+        preview.innerHTML = renderEventResourceLink(field.value, label);
+      };
+      field.addEventListener('input', sync);
+      sync();
+    });
+  };
+
   // ── Render Views ──
 
   const renderTableView = (events) => {
@@ -184,7 +306,7 @@ const EventsPage = (() => {
               const timeStr = e.startTime ? `${e.startTime}${e.endTime ? ' - ' + e.endTime : ''}` : 'Chưa set';
               
               return `
-                <tr class="clickable-row" data-event-id="${e.id}">
+                <tr class="clickable-row" data-event-id="${e.id}" tabindex="0" role="button" aria-label="Sửa sự kiện ${Utils.escapeHtml(e.name)}">
                   <td style="white-space: nowrap; font-family: var(--font-mono);">${dateStr}</td>
                   <td style="white-space: nowrap; font-family: var(--font-mono);">${timeStr}</td>
                   <td style="font-weight: var(--weight-medium); color: var(--text-primary); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -225,7 +347,7 @@ const EventsPage = (() => {
           return `
             <div class="timeline-item">
               <div class="timeline-dot ${e.status}"></div>
-              <div class="timeline-card" data-event-id="${e.id}">
+              <div class="timeline-card" data-event-id="${e.id}" tabindex="0" role="button" aria-label="Sửa sự kiện ${Utils.escapeHtml(e.name)}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-2); flex-wrap: wrap; gap: var(--space-2);">
                   <div style="font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-tertiary); display: flex; align-items: center; gap: 8px;">
                     <span>📅 ${dateStr}</span>
@@ -249,6 +371,10 @@ const EventsPage = (() => {
                     ${Utils.escapeHtml(e.plan)}
                   </div>
                 ` : ''}
+                <div class="event-resource-links">
+                  ${renderEventResourceLink(e.plan, 'Mở Google Sheet kế hoạch')}
+                  ${renderEventResourceLink(e.guestList, 'Mở Google Sheet khách mời')}
+                </div>
               </div>
             </div>
           `;
@@ -307,21 +433,35 @@ const EventsPage = (() => {
       openEventModal();
     });
 
-    container.querySelector('#prevMonthBtn')?.addEventListener('click', () => {
-      currentMonth = Utils.getPrevMonth(currentMonth);
-      Utils.setReportingMonth(currentMonth);
+    container.querySelector('#prevCalendarRangeBtn')?.addEventListener('click', () => {
+      calendarStartMonth = shiftMonth(calendarStartMonth, -3);
+      Utils.setReportingMonth(calendarStartMonth);
       renderPage();
     });
 
-    container.querySelector('#nextMonthBtn')?.addEventListener('click', () => {
-      currentMonth = Utils.getNextMonth(currentMonth);
-      Utils.setReportingMonth(currentMonth);
+    container.querySelector('#nextCalendarRangeBtn')?.addEventListener('click', () => {
+      calendarStartMonth = shiftMonth(calendarStartMonth, 3);
+      Utils.setReportingMonth(calendarStartMonth);
       renderPage();
+    });
+
+    container.querySelectorAll('[data-calendar-event-id]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const event = Store.events.getById(el.dataset.calendarEventId);
+        if (event) openEventModal(event);
+      });
+    });
+
+    container.querySelectorAll('[data-calendar-date]').forEach(day => {
+      day.addEventListener('click', () => {
+        openEventModal(null, day.dataset.calendarDate);
+      });
     });
 
     // Row / Card Click to Edit
     container.querySelectorAll('.clickable-row, .timeline-card').forEach(el => {
-      el.addEventListener('click', () => {
+      Utils.onActivate(el, () => {
         const eventId = el.dataset.eventId;
         const event = Store.events.getById(eventId);
         if (event) openEventModal(event);
@@ -331,7 +471,7 @@ const EventsPage = (() => {
 
   // ── Modals ──
 
-  const openEventModal = (event = null) => {
+  const openEventModal = (event = null, presetDate = '') => {
     const isEdit = !!event;
     const title = isEdit ? 'Chỉnh sửa sự kiện' : 'Thêm sự kiện mới';
 
@@ -354,7 +494,7 @@ const EventsPage = (() => {
         <div class="form-group">
           <label class="form-label">Ngày tổ chức <span style="color:var(--danger-400);">*</span></label>
           <input type="date" class="form-input" data-field="date" 
-                 value="${isEdit ? event.date : Utils.getDefaultDateForMonth(currentMonth)}">
+                 value="${isEdit ? event.date : (presetDate || Utils.getDefaultDateForMonth(calendarStartMonth))}">
         </div>
       </div>
 
@@ -410,12 +550,14 @@ const EventsPage = (() => {
 
       <div class="form-group">
         <label class="form-label">Kế hoạch chi tiết</label>
-        <textarea class="form-textarea" data-field="plan" style="height: 80px;" placeholder="Outline chương trình...">${isEdit ? Utils.escapeHtml(event.plan || '') : ''}</textarea>
+        <textarea class="form-textarea" data-field="plan" data-event-link-source="plan" style="height: 80px;" placeholder="Outline chương trình...">${isEdit ? Utils.escapeHtml(event.plan || '') : ''}</textarea>
+        <div class="event-link-preview" data-event-link-preview="plan" data-label="Mở Google Sheet kế hoạch"></div>
       </div>
 
       <div class="form-group">
         <label class="form-label">Danh sách khách mời (mỗi khách một dòng)</label>
-        <textarea class="form-textarea" data-field="guestList" style="height: 80px;" placeholder="Họ tên - Số điện thoại - Đơn vị...">${isEdit ? Utils.escapeHtml(event.guestList || '') : ''}</textarea>
+        <textarea class="form-textarea" data-field="guestList" data-event-link-source="guestList" style="height: 80px;" placeholder="Họ tên - Số điện thoại - Đơn vị...">${isEdit ? Utils.escapeHtml(event.guestList || '') : ''}</textarea>
+        <div class="event-link-preview" data-event-link-preview="guestList" data-label="Mở Google Sheet khách mời"></div>
       </div>
 
       ${isEdit ? `
@@ -479,6 +621,8 @@ const EventsPage = (() => {
       }
     });
 
+    bindEventResourceLinkPreview();
+
     // Delete confirmation
     if (isEdit) {
       setTimeout(() => {
@@ -539,7 +683,19 @@ const EventsPage = (() => {
     }
   };
 
-  return { render };
+  const openEventById = (eventId) => {
+    const event = Store.events.getById(eventId);
+    if (!event) return;
+    if (event.date) {
+      calendarStartMonth = event.date.slice(0, 7);
+      Utils.setReportingMonth(calendarStartMonth);
+    }
+    activeTab = 'list';
+    if (container) renderPage();
+    setTimeout(() => openEventModal(event), 0);
+  };
+
+  return { render, openEventById };
 })();
 
 App.registerPage('events', EventsPage);

@@ -7,60 +7,69 @@
 :root {
   /* ── Font ── */
   --font-size: 14px;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Mona Sans Variable', 'Mona Sans', var(--font-sans); /* display face */
+  --font-display: var(--font-serif);
   --font-mono: 'JetBrains Mono', monospace;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
 
-  /* ── Core Colors (Light) ── */
-  --background: #f8faf9;
-  --foreground: #1a1a1a;
-  --card: #ffffff;
-  --card-foreground: #1a1a1a;
-  --popover: #ffffff;
-  --popover-foreground: #1a1a1a;
-  --primary: #22c55e;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f5f4;
-  --secondary-foreground: #1a1a1a;
-  --muted: #f1f5f4;
-  --muted-foreground: #6b7280;
-  --accent: #dcfce7;
-  --accent-foreground: #166534;
+  /* ── Core Colors (Framer dark canvas — dark-only) ── */
+  --background: #090909;          /* canvas */
+  --foreground: #ffffff;          /* ink */
+  --card: #141414;                /* surface-1 */
+  --card-foreground: #ffffff;
+  --popover: #1c1c1c;             /* surface-2 */
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;             /* CTA anchor = white pill */
+  --primary-foreground: #000000;
+  --secondary: #1c1c1c;           /* surface-2 */
+  --secondary-foreground: #ffffff;
+  --muted: #1c1c1c;
+  --muted-foreground: #999999;    /* ink-muted */
+  --accent: #0099ff;              /* signal blue — link/focus/selection only */
+  --accent-foreground: #ffffff;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --border: #e5e7eb;
-  --input: transparent;
-  --input-background: #ffffff;
-  --ring: #22c55e;
+  --border: #262626;              /* hairline */
+  --input: #141414;
+  --input-background: #141414;
+  --ring: #0099ff;                /* focus ring = accent blue */
 
-  /* ── Sidebar (Dark Green) ── */
-  --sidebar: #2c5f4e;
+  /* ── Sidebar (charcoal chrome, not a gradient section) ── */
+  --sidebar: #0d0d0d;
   --sidebar-foreground: #ffffff;
-  --sidebar-primary: #7bdc93;
-  --sidebar-primary-foreground: #2c5f4e;
-  --sidebar-accent: #3a6b5a;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #1c1c1c;
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #3a6b5a;
-  --sidebar-ring: #7bdc93;
+  --sidebar-border: #262626;
+  --sidebar-ring: #0099ff;
 
-  /* ── Chart Colors ── */
-  --chart-1: #22c55e;
-  --chart-2: #3b82f6;
-  --chart-3: #f59e0b;
-  --chart-4: #ef4444;
-  --chart-5: #8b5cf6;
+  /* ── Chart Colors (Framer gradient family) ── */
+  --chart-1: #6a4cf5;   /* violet */
+  --chart-2: #d44df0;   /* magenta */
+  --chart-3: #ff7a3d;   /* orange */
+  --chart-4: #ff5577;   /* coral */
+  --chart-5: #0099ff;   /* blue */
 
-  /* ── Border Radius ── */
+  /* ── Gradient Spotlight tokens (Framer signature) ── */
+  --gradient-magenta: #d44df0;
+  --gradient-violet: #6a4cf5;
+  --gradient-orange: #ff7a3d;
+  --gradient-coral: #ff5577;
+
+  /* ── Border Radius (Framer scale: 4/6/10/15/20/30/pill) ── */
   --radius: 0.625rem; /* 10px */
-  --radius-sm: calc(var(--radius) - 4px); /* 6px */
-  --radius-md: calc(var(--radius) - 2px); /* 8px */
-  --radius-lg: var(--radius); /* 10px */
-  --radius-xl: calc(var(--radius) + 4px); /* 14px */
-  --radius-2xl: 1rem; /* 16px */
-  --radius-3xl: 1.5rem; /* 24px */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 15px;
+  --radius-xl: 20px;   /* cards, mockup tiles */
+  --radius-2xl: 24px;
+  --radius-3xl: 30px;  /* gradient spotlight cards */
+  --radius-pill: 100px; /* all primary text CTAs */
   --radius-full: 9999px;
 
   /* ── Spacing ── */
@@ -87,12 +96,12 @@
   --text-2xl: 1.5rem;
   --text-3xl: 1.875rem;
 
-  /* ── Shadows ── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03);
-  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+  /* ── Shadows (Framer dark: light top-edge + near-black drop) ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: inset 0 0.5px 0 rgba(255, 255, 255, 0.06), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: inset 0 0.5px 0 rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.5);
+  --shadow-xl: inset 0 0.5px 0 rgba(255, 255, 255, 0.10), 0 20px 40px rgba(0, 0, 0, 0.55);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
   --shadow-card: var(--shadow-sm);
   --shadow-card-hover: var(--shadow-md);
 
@@ -115,32 +124,38 @@
   --sidebar-width-expanded: 256px; /* w-64 expanded */
   --header-height: 0px; /* No top header in EMS design */
 
-  /* ── Legacy Aliases (backward-compat) ── */
+  /* ── Missing-but-used vars (define so they don't fall back) ── */
+  --text-4xl: 2.75rem;
+  --leading-relaxed: 1.6;
+  --primary-950: #052e16;
+
+  /* ── Legacy Aliases (backward-compat, remapped for dark canvas) ── */
   --bg-root: var(--background);
   --bg-body: var(--background);
   --bg-sidebar: var(--sidebar);
   --bg-card: var(--card);
-  --bg-card-hover: #fafafa;
+  --bg-card-hover: #1c1c1c;          /* surface-2 */
   --bg-card-solid: var(--card);
   --bg-input: var(--input-background);
-  --bg-input-focus: var(--input-background);
-  --bg-modal-overlay: rgba(0, 0, 0, 0.5);
+  --bg-input-focus: #1c1c1c;
+  --bg-modal-overlay: rgba(0, 0, 0, 0.7);
   --bg-modal: var(--card);
-  --bg-dropdown: var(--card);
-  --bg-tooltip: #1e293b;
-  --bg-table-header: var(--muted);
-  --bg-table-row-hover: var(--muted);
-  --bg-tag: var(--accent);
+  --bg-dropdown: var(--popover);
+  --bg-tooltip: #1c1c1c;
+  --bg-table-header: var(--card);
+  --bg-table-row-hover: rgba(255, 255, 255, 0.03);
+  --bg-tag: rgba(255, 255, 255, 0.06);
   --bg-elevated: var(--secondary);
   --text-primary: var(--foreground);
   --text-secondary: var(--muted-foreground);
-  --text-tertiary: #9ca3af;
-  --text-inverse: #ffffff;
-  --text-inverse-muted: rgba(255, 255, 255, 0.7);
+  --text-tertiary: #6b6b6b;
+  --text-inverse: #000000;
+  --text-inverse-muted: rgba(0, 0, 0, 0.7);
   --text-muted: var(--muted-foreground);
-  --border-subtle: var(--border);
+  --border-subtle: #1a1a1a;          /* hairline-soft */
   --border-default: var(--border);
-  --border-strong: #d1d5db;
+  --border-strong: #333333;
+  --border-focus: var(--accent);     /* blue focus/drop-zone outline */
   --weight-normal: var(--font-weight-normal);
   --weight-medium: var(--font-weight-medium);
   --weight-semibold: var(--font-weight-semibold);
@@ -165,25 +180,28 @@
   --danger-bg: rgba(239, 68, 68, 0.1);
   --danger-border: rgba(239, 68, 68, 0.2);
 
+  --info-200: #bfdbfe;
+  --info-300: #93c5fd;
   --info-400: #60a5fa;
   --info-500: #3b82f6;
   --info-600: #2563eb;
   --info-bg: rgba(59, 130, 246, 0.1);
   --info-border: rgba(59, 130, 246, 0.2);
 
-  --primary-50: #f0fdf4;
-  --primary-100: #dcfce7;
-  --primary-200: #bbf7d0;
-  --primary-300: #86efac;
-  --primary-400: #4ade80;
-  --primary-500: #22c55e;
-  --primary-600: #16a34a;
-  --primary-700: #15803d;
-  --primary-800: #166534;
-  --primary-900: #14532d;
-  --primary-gradient: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  --primary-gradient-hover: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-  --primary-glow: 0 0 20px rgba(34, 197, 94, 0.3);
+  /* Accent-blue ramp (Framer signal color: links, focus, active/selected) */
+  --primary-50: #e6f4ff;
+  --primary-100: #cce9ff;
+  --primary-200: #99d3ff;
+  --primary-300: #66bdff;
+  --primary-400: #33a8ff;
+  --primary-500: #0099ff;
+  --primary-600: #007acc;
+  --primary-700: #005c99;
+  --primary-800: #003d66;
+  --primary-900: #001f33;
+  --primary-gradient: linear-gradient(135deg, #6a4cf5 0%, #d44df0 100%);
+  --primary-gradient-hover: linear-gradient(135deg, #7c5ff7 0%, #dd5ff2 100%);
+  --primary-glow: 0 0 20px rgba(0, 153, 255, 0.3);
 
   /* ── Priority Colors ── */
   --priority-high: #ef4444;
@@ -205,62 +223,98 @@
    Dark Mode Theme Overrides
    From ui_design/src/styles/globals.css .dark
    ═══════════════════════════════════════════ */
+/* Dark-only system: body.dark mirrors :root so any legacy `.dark` selector stays
+   correct. The Framer canvas IS the default — see app.js forcing theme 'dark'. */
 body.dark {
-  --background: #0f172a;
-  --foreground: #f8fafc;
-  --card: #1e293b;
-  --card-foreground: #f8fafc;
-  --popover: #1e293b;
-  --popover-foreground: #f8fafc;
-  --primary: #22c55e;
-  --primary-foreground: #ffffff;
-  --secondary: #334155;
-  --secondary-foreground: #f8fafc;
-  --muted: #334155;
-  --muted-foreground: #94a3b8;
-  --accent: #1e3a2e;
-  --accent-foreground: #22c55e;
+  --background: #090909;
+  --foreground: #ffffff;
+  --card: #141414;
+  --card-foreground: #ffffff;
+  --popover: #1c1c1c;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #1c1c1c;
+  --secondary-foreground: #ffffff;
+  --muted: #1c1c1c;
+  --muted-foreground: #999999;
+  --accent: #0099ff;
+  --accent-foreground: #ffffff;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --border: #334155;
-  --input: #334155;
-  --input-background: #1e293b;
-  --ring: #22c55e;
+  --border: #262626;
+  --input: #141414;
+  --input-background: #141414;
+  --ring: #0099ff;
 
-  /* Sidebar stays the same in dark mode */
-  --sidebar: #2c5f4e;
+  --sidebar: #0d0d0d;
   --sidebar-foreground: #ffffff;
-  --sidebar-primary: #7bdc93;
-  --sidebar-primary-foreground: #2c5f4e;
-  --sidebar-accent: #3a6b5a;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #1c1c1c;
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #3a6b5a;
-  --sidebar-ring: #7bdc93;
+  --sidebar-border: #262626;
+  --sidebar-ring: #0099ff;
 
-  /* Legacy overrides */
-  --bg-root: var(--background);
-  --bg-body: var(--background);
-  --bg-card: var(--card);
-  --bg-card-hover: #253349;
-  --bg-card-solid: var(--card);
-  --bg-input: var(--input-background);
-  --bg-input-focus: #253349;
-  --bg-modal: var(--card);
-  --bg-dropdown: var(--card);
-  --bg-table-header: var(--muted);
-  --bg-table-row-hover: rgba(34, 197, 94, 0.06);
-  --bg-tag: var(--accent);
-  --bg-elevated: var(--secondary);
-  --text-primary: var(--foreground);
-  --text-secondary: var(--muted-foreground);
-  --text-tertiary: #64748b;
-  --border-subtle: var(--border);
-  --border-default: var(--border);
-  --border-strong: #475569;
+  --bg-card-hover: #1c1c1c;
+  --bg-input-focus: #1c1c1c;
+  --bg-table-row-hover: rgba(255, 255, 255, 0.03);
+  --text-tertiary: #6b6b6b;
+  --border-subtle: #1a1a1a;
+  --border-strong: #333333;
+}
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3);
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.15), 0 0 0 1px var(--border);
-  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--border);
+/* ═══════════════════════════════════════════
+   Light Mode Theme Overrides
+   Inverts the Framer canvas for a bright surface.
+   ═══════════════════════════════════════════ */
+body.light {
+  --background: #f5f6f8;          /* canvas */
+  --foreground: #0d0d0d;          /* ink */
+  --card: #ffffff;                /* surface-1 */
+  --card-foreground: #0d0d0d;
+  --popover: #ffffff;             /* surface-2 */
+  --popover-foreground: #0d0d0d;
+  --primary: #0d0d0d;             /* CTA anchor = dark pill */
+  --primary-foreground: #ffffff;
+  --secondary: #eceef1;           /* surface-2 */
+  --secondary-foreground: #0d0d0d;
+  --muted: #eceef1;
+  --muted-foreground: #5c5c5c;    /* ink-muted */
+  --accent: #0099ff;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #e2e4e8;              /* hairline */
+  --input: #ffffff;
+  --input-background: #ffffff;
+  --ring: #0099ff;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0d0d0d;
+  --sidebar-primary: #0d0d0d;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eceef1;
+  --sidebar-accent-foreground: #0d0d0d;
+  --sidebar-border: #e2e4e8;
+  --sidebar-ring: #0099ff;
+
+  /* Shadows: soft grey drop, no light top-edge on white */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 10px 30px rgba(15, 23, 42, 0.10);
+  --shadow-xl: 0 20px 40px rgba(15, 23, 42, 0.12);
+
+  /* Legacy alias remaps for light canvas */
+  --bg-card-hover: #f5f6f8;
+  --bg-input-focus: #f5f6f8;
+  --bg-modal-overlay: rgba(15, 23, 42, 0.35);
+  --bg-tooltip: #0d0d0d;
+  --bg-table-row-hover: rgba(15, 23, 42, 0.03);
+  --bg-tag: rgba(15, 23, 42, 0.05);
+  --text-tertiary: #8a8a8a;
+  --text-inverse: #ffffff;
+  --text-inverse-muted: rgba(255, 255, 255, 0.7);
+  --border-subtle: #edeef1;
+  --border-strong: #cfd2d8;
 }

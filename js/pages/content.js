@@ -228,7 +228,7 @@ const ContentPage = (() => {
               </div>
             </div>
             <div class="fanpage-link">
-              <a href="${Utils.escapeHtml(fp.link || '#')}" target="_blank">
+              <a href="${Utils.escapeHtml(Utils.safeUrl(fp.link))}" target="_blank" rel="noopener noreferrer">
                 Link ${Utils.icon('chevronRight', 'icon-xs')}
               </a>
             </div>
@@ -293,10 +293,12 @@ const ContentPage = (() => {
       ? (post.date ? `${post.date.split('-')[2]}/${post.date.split('-')[1]}` : '')
       : formatScheduleTime(post.scheduledAt);
     const mediaCount = Array.isArray(post.mediaItems) ? post.mediaItems.length : (post.mediaUrl ? 1 : 0);
+    const permalink = post.status === 'published' ? (post.permalink || '') : '';
+    const linkable = /^https?:\/\//i.test(permalink);
     return `
-      <div class="post-item ${post.status === 'failed' ? 'post-item-failed' : ''}">
+      <div class="post-item ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
         <span class="post-date">${displayTime}</span>
-        <span class="post-title-text" title="${Utils.escapeHtml(post.publishError || post.content || post.title)}">${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</span>
+        <span class="post-title-text" title="${Utils.escapeHtml(linkable ? 'Mở bài trên Facebook' : (post.publishError || post.content || post.title))}">${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</span>
         ${mediaCount ? `<span class="post-media-count">${Utils.icons.image || ''}${mediaCount}</span>` : ''}
         <span class="tag ${status.className} post-status-tag">${status.label}</span>
         ${post.status === 'failed' ? `
@@ -315,15 +317,17 @@ const ContentPage = (() => {
 
   const bindEvents = () => {
     // Month picker
-    container.querySelector('#prevMonthBtn')?.addEventListener('click', () => {
+    container.querySelector('#prevMonthBtn')?.addEventListener('click', async () => {
       currentMonth = Utils.getPrevMonth(currentMonth);
       Utils.setReportingMonth(currentMonth);
+      if (window.RemoteStore?.available) await RemoteStore.loadPosts(currentMonth).catch((err) => Toast.error(err.message));
       renderPage();
     });
 
-    container.querySelector('#nextMonthBtn')?.addEventListener('click', () => {
+    container.querySelector('#nextMonthBtn')?.addEventListener('click', async () => {
       currentMonth = Utils.getNextMonth(currentMonth);
       Utils.setReportingMonth(currentMonth);
+      if (window.RemoteStore?.available) await RemoteStore.loadPosts(currentMonth).catch((err) => Toast.error(err.message));
       renderPage();
     });
 
@@ -415,6 +419,14 @@ const ContentPage = (() => {
             renderPage();
           }
         });
+      });
+    });
+
+    // Click a published row → open its Facebook/Instagram permalink.
+    container.querySelectorAll('.post-item-linkable').forEach(row => {
+      row.addEventListener('click', () => {
+        const url = row.dataset.permalink;
+        if (url) window.open(url, '_blank', 'noopener');
       });
     });
 

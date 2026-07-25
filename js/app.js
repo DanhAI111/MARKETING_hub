@@ -4,10 +4,14 @@
    ═══════════════════════════════════════════ */
 
 // Global error handler — shows errors visually for debugging
+const escapeForError = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
 window.onerror = (msg, src, line, col, err) => {
   const el = document.getElementById('mainContent');
   if (el) {
-    el.innerHTML += `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;'>⚠ JavaScript Error</b>\n\n${msg}\n\nFile: ${src}\nLine: ${line}:${col}\n${err?.stack || ''}</div>`;
+    el.innerHTML += `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;'>⚠ JavaScript Error</b>\n\n${escapeForError(msg)}\n\nFile: ${escapeForError(src)}\nLine: ${line}:${col}\n${escapeForError(err?.stack || '')}</div>`;
   }
   console.error('App Error:', msg, src, line, col, err);
 };
@@ -50,7 +54,7 @@ const App = (() => {
           pages[pageId].render(container);
         } catch (err) {
           console.error(`Error rendering page "${pageId}":`, err);
-          container.innerHTML = `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;'>⚠ Page Render Error: ${pageId}</b>\n\n${err.message}\n\n${err.stack || ''}</div>`;
+          container.innerHTML = `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;'>⚠ Page Render Error: ${escapeForError(pageId)}</b>\n\n${escapeForError(err.message)}\n\n${escapeForError(err.stack || '')}</div>`;
         }
       }
     }
@@ -199,7 +203,7 @@ const App = (() => {
       container.innerHTML = '<div class="search-no-results">Không tìm thấy kết quả</div>';
     } else {
       container.innerHTML = limited.map((r, i) => `
-        <div class="search-result-item" data-page="${r.page}" data-index="${i}">
+        <div class="search-result-item" data-page="${r.page}" data-index="${i}" tabindex="0" role="button">
           <span class="search-result-icon">${r.icon}</span>
           <div class="search-result-info">
             <div class="search-result-label">${Utils.escapeHtml(r.label)}</div>
@@ -212,7 +216,7 @@ const App = (() => {
     container.style.display = 'block';
 
     container.querySelectorAll('.search-result-item').forEach(item => {
-      item.addEventListener('click', () => {
+      Utils.onActivate(item, () => {
         navigate(item.dataset.page);
         container.style.display = 'none';
         document.getElementById('globalSearchInput').value = '';
@@ -222,13 +226,8 @@ const App = (() => {
 
   // Initialize app
   const init = () => {
-    // Apply theme
-    const theme = Store.settings.get('theme') || 'light';
-    if (theme === 'dark') {
-      document.body.classList.add('dark');
-    } else {
-      document.body.classList.remove('dark');
-    }
+    // Apply stored theme (defaults to dark Framer canvas).
+    applyTheme(Store.settings.get('theme') || 'dark');
 
     // Render sidebar
     Sidebar.render();
@@ -261,22 +260,58 @@ const App = (() => {
     });
   };
 
-  const setTheme = (theme) => {
-    Store.settings.set('theme', theme);
-    if (theme === 'dark') {
-      document.body.classList.add('dark');
-    } else {
-      document.body.classList.remove('dark');
-    }
+  const applyTheme = (theme) => {
+    const t = theme === 'light' ? 'light' : 'dark';
+    document.body.classList.toggle('dark', t === 'dark');
+    document.body.classList.toggle('light', t === 'light');
   };
 
-  return { registerPage, navigate, init, setTheme, get currentPage() { return currentPage; } };
+  const setTheme = (theme) => {
+    Store.settings.set('theme', theme);
+    applyTheme(theme);
+  };
+
+  const getTheme = () => Store.settings.get('theme') || 'dark';
+
+  return { registerPage, navigate, init, setTheme, getTheme, get currentPage() { return currentPage; } };
 })();
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
+  const mainContent = document.getElementById('mainContent');
+  if (mainContent) {
+    mainContent.innerHTML = `
+      <div class="page" style="display:grid;min-height:calc(100vh - 96px);place-items:center;color:var(--text-muted);font-family:var(--font-sans);">
+        <div style="display:grid;gap:10px;text-align:center;">
+          <div style="font-weight:700;color:var(--text-primary);">Đang tải MKT_Hub</div>
+          <div style="font-size:13px;">Đang kiểm tra phiên đăng nhập và tải dữ liệu...</div>
+        </div>
+      </div>
+    `;
+  }
+
+  let hydrated = false;
   if (window.RemoteStore) {
-    await RemoteStore.hydrate({ sync: true });
+    try {
+      hydrated = await RemoteStore.hydrate({ sync: false });
+    } catch (err) {
+      console.warn('Remote hydrate failed:', err.message);
+      if (typeof Toast !== 'undefined' && RemoteStore.available) {
+        Toast.warning('Không tải được dữ liệu mới từ máy chủ — đang hiển thị dữ liệu cục bộ.');
+      }
+    }
   }
   App.init();
+
+  if (hydrated && window.RemoteStore?.currentUser) {
+    window.setTimeout(async () => {
+      try {
+        await RemoteStore.syncNow();
+        Sidebar.updateBadge?.();
+        if (App.currentPage) App.navigate(App.currentPage);
+      } catch (err) {
+        console.warn('Background sync failed:', err.message);
+      }
+    }, 0);
+  }
 });

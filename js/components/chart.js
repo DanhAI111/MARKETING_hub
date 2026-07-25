@@ -31,8 +31,8 @@ const Chart = (() => {
       ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2, true);
       ctx.fillStyle = 'rgba(255,255,255,0.04)';
       ctx.fill();
-      ctx.fillStyle = '#64748b';
-      ctx.font = '13px Inter';
+      ctx.fillStyle = '#999999';
+      ctx.font = '13px "Inter Variable", Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('Chưa có dữ liệu', cx, cy);
@@ -54,14 +54,14 @@ const Chart = (() => {
 
     // Center text
     if (options.centerText) {
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = '#ffffff';
       ctx.font = `bold ${Math.floor(size * 0.12)}px "JetBrains Mono", monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(options.centerText, cx, cy - 6);
       if (options.centerSubtext) {
-        ctx.fillStyle = '#64748b';
-        ctx.font = `${Math.floor(size * 0.07)}px Inter`;
+        ctx.fillStyle = '#999999';
+        ctx.font = `${Math.floor(size * 0.07)}px "Inter Variable", Inter, sans-serif`;
         ctx.fillText(options.centerSubtext, cx, cy + 12);
       }
     }
@@ -87,8 +87,8 @@ const Chart = (() => {
     const chartH = h - padding.top - padding.bottom;
 
     if (data.length === 0) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '13px Inter';
+      ctx.fillStyle = '#999999';
+      ctx.font = '13px "Inter Variable", Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('Chưa có dữ liệu', w / 2, h / 2);
@@ -103,7 +103,7 @@ const Chart = (() => {
     const gridLines = 5;
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = '#999999';
     ctx.font = '11px "JetBrains Mono"';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
@@ -126,8 +126,8 @@ const Chart = (() => {
 
       // Bar gradient
       const grad = ctx.createLinearGradient(x, y, x, padding.top + chartH);
-      grad.addColorStop(0, d.color || '#7c3aed');
-      grad.addColorStop(1, (d.color || '#7c3aed') + '40');
+      grad.addColorStop(0, d.color || '#6a4cf5');
+      grad.addColorStop(1, (d.color || '#6a4cf5') + '40');
 
       ctx.beginPath();
       ctx.roundRect(x, y, barWidth, barH, [4, 4, 0, 0]);
@@ -135,8 +135,8 @@ const Chart = (() => {
       ctx.fill();
 
       // Label
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '11px Inter';
+      ctx.fillStyle = '#999999';
+      ctx.font = '11px "Inter Variable", Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(d.label || '', x + barWidth / 2, padding.top + chartH + 8);
@@ -169,8 +169,8 @@ const Chart = (() => {
     const maxVal = Math.max(...allValues, 1) * 1.1 || 1;
 
     if (allValues.length === 0) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '13px Inter';
+      ctx.fillStyle = '#999999';
+      ctx.font = '13px "Inter Variable", Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('Chưa có dữ liệu', w / 2, h / 2);
@@ -181,7 +181,7 @@ const Chart = (() => {
     const gridLines = 5;
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = '#999999';
     ctx.font = '11px "JetBrains Mono"';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
@@ -198,8 +198,8 @@ const Chart = (() => {
 
     // X-axis labels
     const xStep = labels.length > 1 ? chartW / (labels.length - 1) : 0;
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '11px Inter';
+    ctx.fillStyle = '#999999';
+    ctx.font = '11px "Inter Variable", Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
 
@@ -223,7 +223,7 @@ const Chart = (() => {
       if (points.length === 1) {
         ctx.beginPath();
         ctx.arc(points[0].x, points[0].y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = ds.color || '#7c3aed';
+        ctx.fillStyle = ds.color || '#6a4cf5';
         ctx.fill();
         return;
       }
@@ -236,15 +236,15 @@ const Chart = (() => {
         ctx.lineTo(points[points.length - 1].x, padding.top + chartH);
         ctx.closePath();
         const grad = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
-        grad.addColorStop(0, (ds.color || '#7c3aed') + '25');
-        grad.addColorStop(1, (ds.color || '#7c3aed') + '02');
+        grad.addColorStop(0, (ds.color || '#6a4cf5') + '25');
+        grad.addColorStop(1, (ds.color || '#6a4cf5') + '02');
         ctx.fillStyle = grad;
         ctx.fill();
       }
 
       // Line
       ctx.beginPath();
-      ctx.strokeStyle = ds.color || '#7c3aed';
+      ctx.strokeStyle = ds.color || '#6a4cf5';
       ctx.lineWidth = 2;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
@@ -259,11 +259,11 @@ const Chart = (() => {
         if (i === points.length - 1 || points.length <= 15) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-          ctx.fillStyle = ds.color || '#7c3aed';
+          ctx.fillStyle = ds.color || '#6a4cf5';
           ctx.fill();
           ctx.beginPath();
           ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
-          ctx.fillStyle = '#0b0b14';
+          ctx.fillStyle = '#090909';
           ctx.fill();
         }
       });
@@ -271,7 +271,7 @@ const Chart = (() => {
   };
 
   // ── Sparkline (mini line) ──
-  const drawSparkline = (canvas, data, color = '#7c3aed') => {
+  const drawSparkline = (canvas, data, color = '#6a4cf5') => {
     if (!canvas || !data || data.length < 2) return;
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;

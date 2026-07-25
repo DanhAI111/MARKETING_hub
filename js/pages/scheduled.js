@@ -24,11 +24,11 @@ const ScheduledPage = (() => {
     return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
 
+  // The publishing queue is month-agnostic: it lists every not-yet-published
+  // post so future-dated schedules are never hidden by the reporting month.
   const getScheduledPosts = () => {
     return Store.posts.getScheduled()
       .filter(post => {
-        const monthValue = (post.date || post.scheduledAt || '').slice(0, 7);
-        if (monthValue !== currentMonth) return false;
         if (selectedStatus && post.status !== selectedStatus) return false;
         const fanpage = Store.fanpages.getById(post.fanpageId);
         if (selectedPlatform && fanpage?.platform !== selectedPlatform) return false;
@@ -41,6 +41,12 @@ const ScheduledPage = (() => {
     container = el;
     currentMonth = Utils.getReportingMonth();
     renderPage();
+    // Pull the full cross-month pending queue from the backend, then re-render.
+    if (window.RemoteStore?.available) {
+      RemoteStore.loadPending()
+        .then(() => renderPage())
+        .catch((err) => Toast.error(err.message || 'Không thể tải hàng đợi'));
+    }
   };
 
   const renderPage = () => {
@@ -86,11 +92,7 @@ const ScheduledPage = (() => {
 
       <div class="toolbar">
         <div class="toolbar-left">
-          <div class="month-picker">
-            <button class="month-picker-btn" id="scheduledPrevMonthBtn">${Utils.icons.chevronLeft}</button>
-            <span class="month-picker-label">${Utils.formatMonthYear(currentMonth)}</span>
-            <button class="month-picker-btn" id="scheduledNextMonthBtn">${Utils.icons.chevronRight}</button>
-          </div>
+          <button class="btn btn-ghost btn-sm" id="scheduledRefreshBtn">${Utils.icons.refresh} Tải lại hàng đợi</button>
           <select class="filter-select" id="scheduledStatusFilter">
             <option value="">Tất cả trạng thái</option>
             ${Object.entries(STATUS_META).map(([key, meta]) => `<option value="${key}" ${selectedStatus === key ? 'selected' : ''}>${meta.label}</option>`).join('')}
@@ -202,15 +204,14 @@ const ScheduledPage = (() => {
   `;
 
   const bindEvents = () => {
-    container.querySelector('#scheduledPrevMonthBtn')?.addEventListener('click', () => {
-      currentMonth = Utils.getPrevMonth(currentMonth);
-      Utils.setReportingMonth(currentMonth);
-      renderPage();
-    });
-
-    container.querySelector('#scheduledNextMonthBtn')?.addEventListener('click', () => {
-      currentMonth = Utils.getNextMonth(currentMonth);
-      Utils.setReportingMonth(currentMonth);
+    container.querySelector('#scheduledRefreshBtn')?.addEventListener('click', async () => {
+      if (window.RemoteStore?.available) {
+        try {
+          await RemoteStore.loadPending();
+        } catch (err) {
+          Toast.error(err.message || 'Không thể tải hàng đợi');
+        }
+      }
       renderPage();
     });
 

@@ -32,33 +32,37 @@ body {
   width: 100vw;
 }
 
-/* ── Typography ── */
+/* ── Typography (Framer: display face + aggressive negative tracking) ── */
 h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
   font-weight: var(--font-weight-medium);
-  line-height: 1.5;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
   color: var(--foreground);
 }
 
-h1 { font-size: var(--text-2xl); }
-h2 { font-size: var(--text-xl); }
-h3 { font-size: var(--text-lg); }
-h4 { font-size: var(--text-base); }
-h5 { font-size: var(--text-base); }
-h6 { font-size: var(--text-sm); }
+/* Tracking scales with size, hard — bigger = tighter (poster cadence). */
+h1 { font-size: var(--text-3xl); letter-spacing: -0.045em; line-height: 1.0; }
+h2 { font-size: var(--text-2xl); letter-spacing: -0.035em; line-height: 1.05; }
+h3 { font-size: var(--text-xl); letter-spacing: -0.03em; }
+h4 { font-size: var(--text-lg); letter-spacing: -0.02em; }
+h5 { font-size: var(--text-base); letter-spacing: -0.015em; }
+h6 { font-size: var(--text-sm); letter-spacing: -0.01em; }
 
 p {
   color: var(--muted-foreground);
   line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
 a {
-  color: var(--primary);
+  color: var(--accent); /* signal blue — links only */
   text-decoration: none;
   transition: color var(--transition-fast);
 }
 
 a:hover {
-  color: var(--primary-600);
+  color: var(--primary-300);
 }
 
 /* ── Lists ── */

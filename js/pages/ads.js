@@ -402,7 +402,7 @@ const AdsPage = (() => {
                     <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                       <span>${plat.icon}</span> ${Utils.escapeHtml(row.fp.name)}
                     </div>
-                    ${renderBar(row.stats.spend, maxSpend, '#7c3aed', Utils.formatVNDCompact(row.stats.spend))}
+                    ${renderBar(row.stats.spend, maxSpend, '#6a4cf5', Utils.formatVNDCompact(row.stats.spend))}
                   </div>
                 `;
               }).join('')}
@@ -417,7 +417,7 @@ const AdsPage = (() => {
                     <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                       <span>${plat.icon}</span> ${Utils.escapeHtml(row.fp.name)}
                     </div>
-                    ${renderBar(row.stats.reach, maxReach, '#3b82f6', Utils.formatNumberCompact(row.stats.reach))}
+                    ${renderBar(row.stats.reach, maxReach, '#0099ff', Utils.formatNumberCompact(row.stats.reach))}
                   </div>
                 `;
               }).join('')}
@@ -432,7 +432,7 @@ const AdsPage = (() => {
                     <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                       <span>${plat.icon}</span> ${Utils.escapeHtml(row.fp.name)}
                     </div>
-                    ${renderBar(row.stats.conversions, maxConversions, '#10b981', Utils.formatNumber(row.stats.conversions))}
+                    ${renderBar(row.stats.conversions, maxConversions, '#ff5577', Utils.formatNumber(row.stats.conversions))}
                   </div>
                 `;
               }).join('')}
@@ -529,7 +529,7 @@ const AdsPage = (() => {
 
     Chart.drawLine(
       canvas, 
-      [{ label: 'Chi tiêu (₫)', data: spendData, color: '#7c3aed', fill: true }], 
+      [{ label: 'Chi tiêu (₫)', data: spendData, color: '#6a4cf5', fill: true }], 
       { labels }
     );
   };

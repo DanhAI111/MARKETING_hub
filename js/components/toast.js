@@ -26,9 +26,11 @@ const Toast = (() => {
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    // Messages are always plain text (often backend error strings). Escape so a
+    // reflected value in an error message can't inject markup.
     toast.innerHTML = `
       <span class="toast-icon">${icons[type] || 'ℹ'}</span>
-      <span class="toast-message">${message}</span>
+      <span class="toast-message">${Utils.escapeHtml(message)}</span>
       <button class="toast-close">${Utils.icons.close}</button>
     `;
 

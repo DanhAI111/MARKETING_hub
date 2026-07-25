@@ -39,11 +39,174 @@ const TasksPage = (() => {
   const getUniqueAssignees = () => {
     const all = Store.tasks.getAll();
     const set = new Set(all.map(t => t.assignee).filter(Boolean));
+    Store.employees.getAll().forEach(emp => {
+      if (emp.name) set.add(emp.name);
+    });
     return [...set].sort();
   };
 
   const isOverdue = (task) => {
     return task.deadline && task.status !== 'completed' && Utils.isPast(task.deadline);
+  };
+
+  const isEventOverdue = (event) => {
+    return event.date
+      && !['completed', 'cancelled'].includes(event.status)
+      && Utils.isPast(event.date);
+  };
+
+  const getTaskTimelineState = (task) => {
+    if (task.status === 'completed') return 'completed';
+    if (isOverdue(task)) return 'overdue';
+    if (task.status === 'in-progress' || task.status === 'review') return 'active';
+    return 'upcoming';
+  };
+
+  const getEventTimelineState = (event) => {
+    if (event.status === 'completed') return 'completed';
+    if (event.status === 'cancelled') return 'cancelled';
+    if (isEventOverdue(event)) return 'overdue';
+    if (event.status === 'ongoing' || event.status === 'preparing') return 'active';
+    return 'upcoming';
+  };
+
+  const getTimelineIcon = (type, state) => {
+    if (state === 'completed') return Utils.icons.check;
+    if (state === 'overdue') return Utils.icons.warning;
+    if (type === 'event') return Utils.icons.events;
+    if (state === 'active') return Utils.icons.clock;
+    return Utils.icons.calendar;
+  };
+
+  const renderTaskTimeline = (tasks) => {
+    const events = Store.events.getAll();
+    const taskItems = tasks
+      .filter(task => task.deadline)
+      .map(task => {
+        const state = getTaskTimelineState(task);
+        const statusInfo = Utils.TASK_STATUSES[task.status] || Utils.TASK_STATUSES.pending;
+        const priorityInfo = Utils.PRIORITIES[task.priority] || Utils.PRIORITIES.medium;
+        const daysLeft = Utils.daysUntil(task.deadline);
+        const timeLabel = task.status === 'completed'
+          ? 'Đã hoàn thành'
+          : daysLeft < 0
+            ? `Quá ${Math.abs(daysLeft)} ngày`
+            : daysLeft === 0
+              ? 'Hôm nay'
+              : daysLeft === 1
+                ? 'Còn 1 ngày'
+                : `Còn ${daysLeft} ngày`;
+
+        return {
+          type: 'task',
+          id: task.id,
+          date: task.deadline,
+          title: task.title,
+          state,
+          meta: `${statusInfo.label}${task.assignee ? ` · ${task.assignee}` : ''}`,
+          statusLabel: timeLabel,
+          statusClass: priorityInfo.cssClass
+        };
+      });
+    const eventItems = events
+      .filter(event => event.date)
+      .map(event => {
+        const state = getEventTimelineState(event);
+        const statusInfo = Utils.EVENT_STATUSES[event.status] || { label: event.status || 'Sự kiện', cssClass: 'tag-neutral' };
+        const timeStr = event.startTime ? `${event.startTime}${event.endTime ? ` - ${event.endTime}` : ''}` : '';
+        const eventType = Utils.EVENT_TYPES[event.type] || 'Sự kiện';
+        const daysLeft = Utils.daysUntil(event.date);
+        const timeLabel = event.status === 'completed'
+          ? 'Đã hoàn thành'
+          : event.status === 'cancelled'
+            ? 'Đã hủy'
+            : daysLeft < 0
+              ? `Quá ${Math.abs(daysLeft)} ngày`
+              : daysLeft === 0
+                ? 'Hôm nay'
+                : daysLeft === 1
+                  ? 'Còn 1 ngày'
+                  : `Còn ${daysLeft} ngày`;
+
+        return {
+          type: 'event',
+          id: event.id,
+          date: event.date,
+          title: event.name,
+          state,
+          meta: `${eventType}${timeStr ? ` · ${timeStr}` : ''}`,
+          statusLabel: timeLabel,
+          statusClass: statusInfo.cssClass
+        };
+      });
+    const timelineItems = [...taskItems, ...eventItems].sort((a, b) => {
+      const byDate = a.date.localeCompare(b.date);
+      if (byDate) return byDate;
+      if (a.type !== b.type) return a.type === 'event' ? -1 : 1;
+      return (a.title || '').localeCompare(b.title || '');
+    });
+    const completedCount = timelineItems.filter(item => item.state === 'completed').length;
+    const overdueCount = timelineItems.filter(item => item.state === 'overdue').length;
+    const totalCount = timelineItems.length;
+    const progress = totalCount ? Math.round((completedCount / totalCount) * 100) : 0;
+    const openItems = timelineItems.filter(item => !['completed', 'cancelled'].includes(item.state));
+    const lastOpenItem = openItems[openItems.length - 1];
+    const footerText = (() => {
+      if (overdueCount > 0) return `${overdueCount} mốc quá hạn cần xử lý`;
+      if (lastOpenItem) {
+        const daysLeft = Utils.daysUntil(lastOpenItem.date);
+        if (daysLeft === 0) return `Mốc cuối đến hạn hôm nay (${Utils.formatDate(lastOpenItem.date)})`;
+        if (daysLeft === 1) return `Còn 1 ngày đến mốc cuối (${Utils.formatDate(lastOpenItem.date)})`;
+        return `Còn ${daysLeft} ngày đến mốc cuối (${Utils.formatDate(lastOpenItem.date)})`;
+      }
+      if (timelineItems.length > 0) return 'Tất cả mốc thời gian đã hoàn thành';
+      return 'Thêm hạn chót công việc hoặc sự kiện để hiển thị timeline';
+    })();
+
+    return `
+      <section class="task-timeline-card" aria-label="Timeline tổng hợp">
+        <div class="task-timeline-header">
+          <div class="task-timeline-heading">
+            <h2>Timeline tổng hợp</h2>
+            <p>Theo dõi trực quan deadline công việc và lịch sự kiện trên cùng một trục thời gian.</p>
+          </div>
+          <div class="task-timeline-summary">
+            <span class="task-timeline-pill success">${completedCount}/${totalCount} mốc hoàn thành</span>
+            <span class="task-timeline-pill danger">${overdueCount} quá hạn</span>
+            <span class="task-timeline-pill info">${tasks.length} công việc · ${events.length} sự kiện</span>
+          </div>
+        </div>
+        ${timelineItems.length > 0 ? `
+          <div class="task-timeline-scroll">
+            <div class="task-timeline-track" style="--task-timeline-progress:${progress}%;">
+              <div class="task-timeline-line" aria-hidden="true"><span></span></div>
+              ${timelineItems.map(item => `
+                  <button type="button"
+                          class="task-timeline-node ${item.type} ${item.state}"
+                          ${item.type === 'task' ? `data-timeline-task-id="${item.id}"` : `data-timeline-event-id="${item.id}"`}
+                          title="${Utils.escapeHtml(item.title)}">
+                    <span class="task-timeline-date">${Utils.formatDateShort(item.date)}</span>
+                    <span class="task-timeline-dot">${getTimelineIcon(item.type, item.state)}</span>
+                    <span class="task-timeline-kind">${item.type === 'task' ? 'Công việc' : 'Sự kiện'}</span>
+                    <span class="task-timeline-title">${Utils.escapeHtml(item.title)}</span>
+                    <span class="task-timeline-meta">${Utils.escapeHtml(item.meta)}</span>
+                    <span class="task-timeline-status ${item.statusClass}">${item.statusLabel}</span>
+                  </button>
+                `).join('')}
+            </div>
+          </div>
+        ` : `
+          <div class="task-timeline-empty">
+            ${Utils.icon('calendar', 'icon-sm')}
+            <span>Chưa có công việc hoặc sự kiện nào có mốc thời gian.</span>
+          </div>
+        `}
+        <div class="task-timeline-footer">
+          ${Utils.icon('clock', 'icon-sm')}
+          <span>${footerText}</span>
+        </div>
+      </section>
+    `;
   };
 
   // ── Render ──
@@ -61,6 +224,8 @@ const TasksPage = (() => {
     const assignees = getUniqueAssignees();
 
     container.innerHTML = `
+      ${renderTaskTimeline(allTasks)}
+
       <!-- Toolbar -->
       <div class="toolbar">
         <div class="toolbar-left">
@@ -192,10 +357,20 @@ const TasksPage = (() => {
     });
 
     // Click card to edit
-    container.querySelectorAll('.kanban-card').forEach(card => {
-      card.addEventListener('click', (e) => {
+    container.querySelectorAll('.kanban-card, .task-timeline-node').forEach(item => {
+      item.addEventListener('click', (e) => {
         if (e.target.closest('.kanban-add-btn')) return;
-        const taskId = card.dataset.taskId;
+        const eventId = item.dataset.timelineEventId;
+        if (eventId) {
+          const event = Store.events.getById(eventId);
+          if (event?.date) Utils.setReportingMonth(event.date.slice(0, 7));
+          App.navigate('events');
+          if (typeof EventsPage !== 'undefined' && EventsPage.openEventById) {
+            EventsPage.openEventById(eventId);
+          }
+          return;
+        }
+        const taskId = item.dataset.taskId || item.dataset.timelineTaskId;
         const task = Store.tasks.getById(taskId);
         if (task) openTaskModal(task);
       });
@@ -264,6 +439,11 @@ const TasksPage = (() => {
   const openTaskModal = (task = null, presetStatus = '') => {
     const isEdit = !!task;
     const title = isEdit ? 'Chỉnh sửa công việc' : 'Thêm công việc mới';
+    const employees = Store.employees.getAll();
+    const currentAssignee = isEdit ? (task.assignee || '') : '';
+    const hasCurrentAssignee = currentAssignee
+      && !employees.some(emp => emp.name === currentAssignee);
+    const findEmployeeByName = (name) => employees.find(emp => emp.name === name) || null;
 
     const content = `
       <div class="form-group">
@@ -279,8 +459,17 @@ const TasksPage = (() => {
         </div>
         <div class="form-group">
           <label class="form-label">Người thực hiện</label>
-          <input type="text" class="form-input" data-field="assignee"
-                 value="${isEdit ? Utils.escapeHtml(task.assignee || '') : ''}" placeholder="Tên người thực hiện">
+          <select class="form-select" data-field="assignee">
+            <option value="">Chưa phân công</option>
+            ${hasCurrentAssignee ? `
+              <option value="${Utils.escapeHtml(currentAssignee)}" selected>${Utils.escapeHtml(currentAssignee)} hiện tại${task.assigneeEmail ? ` · ${Utils.escapeHtml(task.assigneeEmail)}` : ''}</option>
+            ` : ''}
+            ${employees.map(emp => `
+              <option value="${Utils.escapeHtml(emp.name)}" ${currentAssignee === emp.name ? 'selected' : ''}>
+                ${Utils.escapeHtml(emp.avatar || '👤')} ${Utils.escapeHtml(emp.name)}${emp.role ? ` — ${Utils.escapeHtml(emp.role)}` : ''}${emp.email ? ` · ${Utils.escapeHtml(emp.email)}` : ''}
+              </option>
+            `).join('')}
+          </select>
         </div>
       </div>
       <div class="form-row-3">
@@ -327,6 +516,8 @@ const TasksPage = (() => {
       saveLabel: isEdit ? 'Cập nhật' : 'Tạo mới',
       onSave: () => {
         const data = Modal.getFormData();
+        const selectedEmployee = findEmployeeByName(data.assignee);
+        data.assigneeEmail = selectedEmployee?.email || (data.assignee === currentAssignee ? (task?.assigneeEmail || '') : '');
         if (!data.title || !data.title.trim()) {
           Toast.error('Vui lòng nhập tiêu đề công việc');
           return;

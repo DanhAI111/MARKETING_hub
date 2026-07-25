@@ -110,12 +110,16 @@ const SettingsPage = (() => {
     });
     content.querySelectorAll('[data-delete-fp]').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (confirm('Xóa fanpage sẽ xóa toàn bộ bài đăng và báo cáo ads liên quan. Bạn chắc chắn?')) {
-          Store.fanpages.remove(btn.dataset.deleteFp);
-          Toast.success('Đã xóa fanpage');
-          Sidebar.updateBadge();
-          renderPage();
-        }
+        Modal.confirm({
+          title: 'Xóa fanpage',
+          message: 'Xóa fanpage sẽ xóa toàn bộ bài đăng và báo cáo ads liên quan. Bạn chắc chắn?',
+          onConfirm: () => {
+            Store.fanpages.remove(btn.dataset.deleteFp);
+            Toast.success('Đã xóa fanpage');
+            Sidebar.updateBadge();
+            renderPage();
+          }
+        });
       });
     });
   };
@@ -160,6 +164,13 @@ const SettingsPage = (() => {
           <input type="url" class="form-input" id="fpImageUrl" value="${fp ? Utils.escapeHtml(fp.imageUrl || '') : ''}" placeholder="https://.../avatar.jpg">
           <div class="form-hint">Nếu đã liên kết Meta, bấm Đồng bộ ngay ở tab Lịch đăng bài để tự lấy avatar.</div>
         </div>
+        <div class="form-group" id="fpCrossPostGroup" style="display: ${(fp?.platform || 'facebook') === 'facebook' ? 'block' : 'none'};">
+          <label class="form-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="fpCrossPostInstagram" ${fp?.crossPostInstagram ? 'checked' : ''} style="width: auto;">
+            <span>📸 Đăng đồng thời sang Instagram</span>
+          </label>
+          <div class="form-hint">Khi bài đăng lên Facebook, tự động đăng luôn sang tài khoản Instagram cùng trang. Instagram yêu cầu ảnh có URL công khai (không hỗ trợ bài chỉ có chữ hay video).</div>
+        </div>
       `,
       saveLabel: fp ? 'Cập nhật' : 'Thêm mới',
       onSave: () => {
@@ -167,13 +178,14 @@ const SettingsPage = (() => {
         const platform = document.getElementById('fpPlatform')?.value;
         const link = document.getElementById('fpLink')?.value.trim();
         const imageUrl = document.getElementById('fpImageUrl')?.value.trim();
+        const crossPostInstagram = platform === 'facebook' && !!document.getElementById('fpCrossPostInstagram')?.checked;
         if (!name) { Toast.error('Vui lòng nhập tên Fanpage'); return; }
 
         if (fp) {
-          Store.fanpages.update(editId, { name, platform, link, imageUrl });
+          Store.fanpages.update(editId, { name, platform, link, imageUrl, crossPostInstagram });
           Toast.success('Đã cập nhật fanpage');
         } else {
-          Store.fanpages.create({ name, platform, link, imageUrl });
+          Store.fanpages.create({ name, platform, link, imageUrl, crossPostInstagram });
           Toast.success('Đã thêm fanpage mới');
         }
         Modal.close();
@@ -181,6 +193,15 @@ const SettingsPage = (() => {
         renderPage();
       }
     });
+
+    // Cross-post checkbox only applies to Facebook pages.
+    setTimeout(() => {
+      const platformSel = document.getElementById('fpPlatform');
+      const group = document.getElementById('fpCrossPostGroup');
+      platformSel?.addEventListener('change', () => {
+        if (group) group.style.display = platformSel.value === 'facebook' ? 'block' : 'none';
+      });
+    }, 50);
   };
 
   // ═══════════════════════════════════════════
@@ -194,7 +215,7 @@ const SettingsPage = (() => {
         <div class="settings-section-header">
           <div>
             <h3 class="settings-section-title">Danh sách nhân viên</h3>
-            <p class="settings-section-desc">Quản lý danh sách nhân viên để giao việc nhanh hơn (dropdown thay vì gõ tay).</p>
+            <p class="settings-section-desc">Quản lý nhân viên, Gmail cá nhân và vai trò để giao việc nhanh hơn.</p>
           </div>
           <button class="btn btn-primary" id="addEmployeeBtn">
             ${Utils.icons.plus}
@@ -215,7 +236,9 @@ const SettingsPage = (() => {
                 <div class="settings-list-item-icon" style="font-size: 1.5rem;">${emp.avatar || '👤'}</div>
                 <div class="settings-list-item-info">
                   <div class="settings-list-item-name">${Utils.escapeHtml(emp.name)}</div>
-                  <div class="settings-list-item-meta">${Utils.escapeHtml(emp.role || 'Nhân viên')}</div>
+                  <div class="settings-list-item-meta">
+                    ${Utils.escapeHtml(emp.role || 'Nhân viên')}${emp.email ? ` · ${Utils.escapeHtml(emp.email)}` : ''}
+                  </div>
                 </div>
                 <div class="settings-list-item-actions">
                   <button class="btn-icon" data-edit-emp="${emp.id}" title="Sửa">${Utils.icons.edit}</button>
@@ -234,11 +257,15 @@ const SettingsPage = (() => {
     });
     content.querySelectorAll('[data-delete-emp]').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (confirm('Xóa nhân viên này?')) {
-          Store.employees.remove(btn.dataset.deleteEmp);
-          Toast.success('Đã xóa nhân viên');
-          renderPage();
-        }
+        Modal.confirm({
+          title: 'Xóa nhân viên',
+          message: 'Xóa nhân viên này?',
+          onConfirm: () => {
+            Store.employees.remove(btn.dataset.deleteEmp);
+            Toast.success('Đã xóa nhân viên');
+            renderPage();
+          }
+        });
       });
     });
   };
@@ -270,19 +297,29 @@ const SettingsPage = (() => {
           <label class="form-label">Vị trí / Vai trò</label>
           <input type="text" class="form-input" id="empRole" value="${emp ? Utils.escapeHtml(emp.role || '') : ''}" placeholder="VD: Content Creator, Designer...">
         </div>
+        <div class="form-group">
+          <label class="form-label">Gmail cá nhân</label>
+          <input type="email" class="form-input" id="empEmail" value="${emp ? Utils.escapeHtml(emp.email || '') : ''}" placeholder="VD: nhanvien@gmail.com" autocomplete="email">
+          <div class="form-hint">Email này được dùng để đăng nhập Google và nhận thông báo công việc.</div>
+        </div>
       `,
       saveLabel: emp ? 'Cập nhật' : 'Thêm mới',
       onSave: () => {
         const name = document.getElementById('empName')?.value.trim();
         const role = document.getElementById('empRole')?.value.trim();
+        const email = document.getElementById('empEmail')?.value.trim();
         const avatar = document.getElementById('empAvatar')?.value || '👤';
         if (!name) { Toast.error('Vui lòng nhập tên nhân viên'); return; }
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          Toast.error('Email nhân viên không hợp lệ');
+          return;
+        }
 
         if (emp) {
-          Store.employees.update(editId, { name, role, avatar });
+          Store.employees.update(editId, { name, role, email, avatar });
           Toast.success('Đã cập nhật nhân viên');
         } else {
-          Store.employees.create({ name, role, avatar });
+          Store.employees.create({ name, role, email, avatar });
           Toast.success('Đã thêm nhân viên mới');
         }
         Modal.close();
@@ -394,7 +431,9 @@ const SettingsPage = (() => {
         <div class="settings-list" id="categoriesList">
           ${Object.entries(categories).map(([key, cat]) => `
             <div class="settings-list-item">
-              <div class="settings-list-item-icon" style="font-size: 1.5rem;">${cat.icon}</div>
+              <div class="settings-list-item-icon expense-category-icon" style="background: ${cat.color}20; color: ${cat.color}; font-size: 1.1rem;">
+                ${Utils.getExpenseCategoryIcon(key, cat)}
+              </div>
               <div class="settings-list-item-info">
                 <div class="settings-list-item-name">${Utils.escapeHtml(cat.name)}</div>
                 <div class="settings-list-item-meta">Key: ${key}</div>
@@ -430,18 +469,23 @@ const SettingsPage = (() => {
       });
     });
     content.querySelector('#resetCategoriesBtn')?.addEventListener('click', () => {
-      if (confirm('Khôi phục danh mục chi phí về mặc định?')) {
-        Store.customCategories.save(null);
-        Toast.success('Đã khôi phục mặc định');
-        renderPage();
-      }
+      Modal.confirm({
+        title: 'Khôi phục mặc định',
+        message: 'Khôi phục danh mục chi phí về mặc định?',
+        confirmClass: 'btn-primary',
+        onConfirm: () => {
+          Store.customCategories.save(null);
+          Toast.success('Đã khôi phục mặc định');
+          renderPage();
+        }
+      });
     });
   };
 
   const openCategoryModal = (editKey) => {
     const cats = Utils.getExpenseCategories();
     const cat = editKey ? cats[editKey] : null;
-    const colors = ['#7c3aed', '#3b82f6', '#ec4899', '#f59e0b', '#10b981', '#64748b', '#ef4444', '#06b6d4', '#8b5cf6', '#f97316'];
+    const colors = ['#6a4cf5', '#d44df0', '#ff7a3d', '#ff5577', '#0099ff', '#8b5cf6', '#22c55e', '#f59e0b', '#ef4444', '#999999'];
 
     Modal.open({
       title: cat ? 'Sửa danh mục' : 'Thêm danh mục mới',
@@ -477,7 +521,10 @@ const SettingsPage = (() => {
       onSave: () => {
         const icon = document.getElementById('catIcon')?.value.trim() || '📌';
         const name = document.getElementById('catName')?.value.trim();
-        const color = document.getElementById('catColor')?.value;
+        const rawColor = document.getElementById('catColor')?.value || '';
+        // Color is interpolated raw into a style attribute at render — constrain to
+        // a hex value so it can't break out of the attribute (XSS/CSS injection).
+        const color = /^#[0-9a-fA-F]{3,8}$/.test(rawColor) ? rawColor : '#64748b';
         const key = editKey || document.getElementById('catKey')?.value.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
 
         if (!name) { Toast.error('Vui lòng nhập tên danh mục'); return; }
@@ -510,6 +557,7 @@ const SettingsPage = (() => {
   // ═══════════════════════════════════════════
   const renderGeneralTab = (content) => {
     const currency = Store.settings.get('currency') || 'VND';
+    const theme = App.getTheme();
 
     content.innerHTML = `
       <div class="settings-section">
@@ -522,10 +570,10 @@ const SettingsPage = (() => {
 
         <div class="settings-form-grid" style="grid-template-columns: 1fr;">
           <div class="form-group">
-            <label class="form-label">Giao diện</label>
+            <label class="form-label">🎨 Giao diện</label>
             <select class="form-select" id="themeSelect" style="max-width: 300px;">
-              <option value="light" ${Store.settings.get('theme') === 'light' || !Store.settings.get('theme') ? 'selected' : ''}>Sáng (Light Mode)</option>
-              <option value="dark" ${Store.settings.get('theme') === 'dark' ? 'selected' : ''}>Tối (Dark Mode)</option>
+              <option value="dark" ${theme === 'dark' ? 'selected' : ''}>🌙 Tối (mặc định)</option>
+              <option value="light" ${theme === 'light' ? 'selected' : ''}>☀️ Sáng</option>
             </select>
           </div>
           <div class="form-group">
@@ -580,16 +628,16 @@ const SettingsPage = (() => {
       </div>
     `;
 
+    // Theme change
+    content.querySelector('#themeSelect')?.addEventListener('change', (e) => {
+      App.setTheme(e.target.value);
+      Toast.success('Đã đổi giao diện');
+    });
+
     // Currency change
     content.querySelector('#currencySelect')?.addEventListener('change', (e) => {
       Store.settings.set('currency', e.target.value);
       Toast.success('Đã cập nhật đơn vị tiền tệ');
-    });
-
-    // Theme change
-    content.querySelector('#themeSelect')?.addEventListener('change', (e) => {
-      App.setTheme(e.target.value);
-      Toast.success('Đã cập nhật giao diện');
     });
 
     // Backup
@@ -616,21 +664,31 @@ const SettingsPage = (() => {
 
     // Seed data
     content.querySelector('#seedDataBtn')?.addEventListener('click', () => {
-      if (confirm('Tạo dữ liệu mẫu? (Sẽ không ghi đè dữ liệu hiện có)')) {
-        Store.seedDemoData();
-        Toast.success('Đã tạo dữ liệu mẫu!');
-        Sidebar.render();
-        renderPage();
-      }
+      Modal.confirm({
+        title: 'Tạo dữ liệu mẫu',
+        message: 'Tạo dữ liệu mẫu? (Sẽ không ghi đè dữ liệu hiện có)',
+        confirmClass: 'btn-primary',
+        onConfirm: () => {
+          Store.seedDemoData();
+          Toast.success('Đã tạo dữ liệu mẫu!');
+          Sidebar.render();
+          renderPage();
+        }
+      });
     });
 
     // Clear data
     content.querySelector('#clearDataBtn')?.addEventListener('click', () => {
-      if (confirm('⚠️ XÓA TOÀN BỘ DỮ LIỆU? Hành động này không thể hoàn tác!')) {
-        localStorage.removeItem('marketing_hub_data');
-        Toast.success('Đã xóa toàn bộ dữ liệu. Đang tải lại...');
-        setTimeout(() => location.reload(), 1000);
-      }
+      Modal.confirm({
+        title: 'Xóa toàn bộ dữ liệu',
+        message: '⚠️ XÓA TOÀN BỘ DỮ LIỆU? Hành động này không thể hoàn tác!',
+        confirmLabel: 'Xóa hết',
+        onConfirm: () => {
+          localStorage.removeItem('marketing_hub_data');
+          Toast.success('Đã xóa toàn bộ dữ liệu. Đang tải lại...');
+          setTimeout(() => location.reload(), 1000);
+        }
+      });
     });
   };
 

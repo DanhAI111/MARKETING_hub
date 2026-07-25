@@ -159,7 +159,7 @@ const ExpensesPage = (() => {
           ">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2);">
               <div style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: ${a.isOver ? 'var(--danger-400)' : 'var(--warning-400)'};">
-                ${a.isOver ? '🚨' : '⚠️'} ${a.catInfo.icon} ${a.catInfo.name}
+                ${a.isOver ? '🚨' : '⚠️'} <span class="expense-inline-icon">${Utils.getExpenseCategoryIcon(a.cat, a.catInfo)}</span> ${Utils.escapeHtml(a.catInfo.name)}
                 — ${a.isOver ? 'Vượt ngân sách!' : 'Sắp hết ngân sách!'}
               </div>
               <span style="font-size: var(--text-xs); font-family: var(--font-mono); color: var(--text-secondary);">
@@ -237,13 +237,14 @@ const ExpensesPage = (() => {
         ${Object.entries(Utils.EXPENSE_CATEGORIES).map(([cat, info]) => {
           const catTotal = Store.expenses.getTotalByCategoryAndMonth(cat, currentMonth);
           const isSelected = selectedCategory === cat;
+          const categoryIcon = Utils.getExpenseCategoryIcon(cat, info);
           return `
             <div class="expense-category-card" data-category="${cat}" style="cursor: pointer; min-width: 140px; border-color: ${isSelected ? info.color : ''}; background: ${isSelected ? info.color + '10' : ''}">
               <div class="expense-category-icon" style="background: ${info.color}20; color: ${info.color}; font-size: 1.1rem; width: 36px; height: 36px; border-radius: var(--radius-md);">
-                ${info.icon}
+                ${categoryIcon}
               </div>
               <div class="expense-category-info">
-                <div class="expense-category-name" style="font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${info.name}</div>
+                <div class="expense-category-name" style="font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${Utils.escapeHtml(info.name)}</div>
                 <div class="expense-category-amount" style="font-size: var(--text-sm); font-weight: var(--weight-semibold); margin-top: 2px;">${Utils.formatVNDCompact(catTotal)}</div>
               </div>
             </div>
@@ -309,7 +310,7 @@ const ExpensesPage = (() => {
           <select class="filter-select" id="tableCategoryFilter">
             <option value="">Tất cả danh mục</option>
             ${Object.entries(Utils.EXPENSE_CATEGORIES).map(([k, v]) =>
-              `<option value="${k}" ${selectedCategory === k ? 'selected' : ''}>${v.name}</option>`
+              `<option value="${k}" ${selectedCategory === k ? 'selected' : ''}>${Utils.escapeHtml(v.name)}</option>`
             ).join('')}
           </select>
         </div>
@@ -348,13 +349,14 @@ const ExpensesPage = (() => {
               </tr>
             ` : filteredExpenses.map(e => {
               const catInfo = Utils.getCategoryInfo(e.category);
+              const categoryIcon = Utils.getExpenseCategoryIcon(e.category, catInfo);
               const hasAttachment = !!(e.attachment && e.attachment.data);
               return `
                 <tr>
                   <td style="white-space: nowrap; font-family: var(--font-mono);">${Utils.formatDateShort(e.date)}</td>
                   <td>
                     <span class="tag" style="background: ${catInfo.color}15; color: ${catInfo.color}; border: 1px solid ${catInfo.color}30; display: inline-flex; align-items: center; gap: 4px;">
-                      ${catInfo.icon} ${catInfo.name}
+                      <span class="expense-inline-icon">${categoryIcon}</span> ${Utils.escapeHtml(catInfo.name)}
                     </span>
                   </td>
                   <td style="font-weight: var(--weight-medium); color: var(--text-primary);">
@@ -434,13 +436,14 @@ const ExpensesPage = (() => {
               </tr>
             ` : templates.map(tpl => {
               const catInfo = Utils.getCategoryInfo(tpl.category);
+              const categoryIcon = Utils.getExpenseCategoryIcon(tpl.category, catInfo);
               const isActive = tpl.active !== false;
               return `
                 <tr style="${!isActive ? 'opacity: 0.5;' : ''}">
                   <td style="font-weight: var(--weight-medium); color: var(--text-primary);">${Utils.escapeHtml(tpl.description)}</td>
                   <td>
                     <span class="tag" style="background: ${catInfo.color}15; color: ${catInfo.color}; border: 1px solid ${catInfo.color}30; display: inline-flex; align-items: center; gap: 4px;">
-                      ${catInfo.icon} ${catInfo.name}
+                      <span class="expense-inline-icon">${categoryIcon}</span> ${Utils.escapeHtml(catInfo.name)}
                     </span>
                   </td>
                   <td class="text-right font-mono" style="font-weight: var(--weight-semibold); color: var(--text-primary);">${Utils.formatVND(tpl.amount)}</td>
@@ -497,7 +500,7 @@ const ExpensesPage = (() => {
       const amount = expenses.filter(e => e.category === cat).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
       if (amount > 0) {
         chartData.push({ label: info.name, value: amount, color: info.color });
-        legendItems.push({ name: info.name, icon: info.icon, color: info.color, amount });
+        legendItems.push({ name: info.name, icon: Utils.getExpenseCategoryIcon(cat, info), color: info.color, amount });
       }
     });
 
@@ -518,7 +521,7 @@ const ExpensesPage = (() => {
         legendEl.innerHTML = legendItems.map(item => `
           <div class="donut-legend-item">
             <div class="donut-legend-dot" style="background: ${item.color}"></div>
-            <span class="donut-legend-label">${item.icon} ${item.name}</span>
+            <span class="donut-legend-label"><span class="expense-inline-icon">${item.icon}</span> ${Utils.escapeHtml(item.name)}</span>
             <span class="donut-legend-value" style="margin-left: 8px;">${Utils.formatVNDCompact(item.amount)}</span>
           </div>
         `).join('');
@@ -749,7 +752,7 @@ const ExpensesPage = (() => {
           <label class="form-label">Danh mục chi phí <span style="color:var(--danger-400);">*</span></label>
           <select class="form-select" data-field="category">
             ${Object.entries(Utils.EXPENSE_CATEGORIES).map(([k, v]) =>
-              `<option value="${k}" ${(isEdit ? expense.category : 'ads') === k ? 'selected' : ''}>${v.icon} ${v.name}</option>`
+              `<option value="${k}" ${(isEdit ? expense.category : 'ads') === k ? 'selected' : ''}>${Utils.escapeHtml(v.icon)} ${Utils.escapeHtml(v.name)}</option>`
             ).join('')}
           </select>
         </div>
@@ -1014,7 +1017,7 @@ const ExpensesPage = (() => {
           <label class="form-label">Danh mục <span style="color:var(--danger-400);">*</span></label>
           <select class="form-select" data-field="category">
             ${Object.entries(Utils.EXPENSE_CATEGORIES).map(([k, v]) =>
-              `<option value="${k}" ${(isEdit ? template.category : 'other') === k ? 'selected' : ''}>${v.icon} ${v.name}</option>`
+              `<option value="${k}" ${(isEdit ? template.category : 'other') === k ? 'selected' : ''}>${Utils.escapeHtml(v.icon)} ${Utils.escapeHtml(v.name)}</option>`
             ).join('')}
           </select>
         </div>

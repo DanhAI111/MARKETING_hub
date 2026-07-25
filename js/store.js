@@ -58,12 +58,21 @@ const Store = (() => {
     }
   };
 
-  // Save data to localStorage
+  // Save data to localStorage. Returns true on success, false on failure
+  // (e.g. QuotaExceededError). Callers must not report success blindly.
   const save = (data) => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data));
+      return true;
     } catch (e) {
       console.error('Store save error:', e);
+      const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22);
+      if (typeof Toast !== 'undefined') {
+        Toast.error(quota
+          ? 'Bộ nhớ trình duyệt đã đầy — không lưu được. Hãy xoá bớt ảnh/dữ liệu cũ.'
+          : 'Không lưu được dữ liệu vào trình duyệt.');
+      }
+      return false;
     }
   };
 
@@ -83,6 +92,38 @@ const Store = (() => {
     }
     save(merged);
     return merged;
+  };
+
+  const mergeRemotePosts = (posts = [], month = '') => {
+    const data = load();
+    const incoming = Array.isArray(posts) ? posts : [];
+    if (!month) {
+      data.posts = incoming;
+    } else {
+      data.posts = [
+        ...(data.posts || []).filter(post => {
+          const postMonth = (post.date || post.scheduledAt || '').slice(0, 7);
+          return postMonth !== month;
+        }),
+        ...incoming
+      ];
+    }
+    save(data);
+    return data.posts;
+  };
+
+  // Replace the local pending set (all not-yet-published posts) with the
+  // server's, keeping published posts untouched. Used by the publishing queue,
+  // which spans every month and so can't key off a single reporting month.
+  const mergeRemotePending = (posts = []) => {
+    const data = load();
+    const incoming = Array.isArray(posts) ? posts : [];
+    data.posts = [
+      ...(data.posts || []).filter(post => post.status === 'published'),
+      ...incoming
+    ];
+    save(data);
+    return data.posts;
   };
 
   const mirrorRemote = (collection, action, payload = {}) => {
@@ -145,6 +186,7 @@ const Store = (() => {
 
   const update = (collection, id, updates) => {
     const data = load();
+    const previousItem = (data[collection] || []).find(item => item.id === id);
     data[collection] = (data[collection] || []).map(item =>
       item.id === id
         ? { ...item, ...updates, updatedAt: new Date().toISOString() }
@@ -152,7 +194,11 @@ const Store = (() => {
     );
     save(data);
     const updatedItem = data[collection].find(item => item.id === id);
-    mirrorRemote(collection, 'update', { id, updates, item: updatedItem });
+    mirrorRemote(collection, 'update', {
+      id,
+      updates: { ...updates, expectedUpdatedAt: previousItem?.updatedAt },
+      item: { ...updatedItem, expectedUpdatedAt: previousItem?.updatedAt }
+    });
     return updatedItem;
   };
 
@@ -544,6 +590,8 @@ const Store = (() => {
   return {
     getData,
     mergeRemoteData,
+    mergeRemotePosts,
+    mergeRemotePending,
     fanpages,
     posts,
     tasks,

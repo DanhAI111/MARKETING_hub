@@ -130,13 +130,15 @@ const Utils = (() => {
   const getPlatformInfo = (platform) => PLATFORMS[platform] || { name: platform, icon: '', color: '#64748b', cssClass: '' };
 
   // ── Expense Categories ──
+  // Framer gradient family (violet/magenta/orange/coral/blue) — series identity
+  // always pairs with the legend + direct labels the charts already render.
   const DEFAULT_EXPENSE_CATEGORIES = {
-    ads: { name: 'Chi phí Ads', icon: '', color: '#7c3aed' },
-    event: { name: 'Tổ chức sự kiện', icon: '', color: '#3b82f6' },
-    content: { name: 'Sản xuất nội dung', icon: '', color: '#ec4899' },
-    kol: { name: 'KOL/Influencer', icon: '', color: '#f59e0b' },
-    print: { name: 'In ấn', icon: '', color: '#10b981' },
-    other: { name: 'Phát sinh khác', icon: '', color: '#64748b' }
+    ads: { name: 'Chi phí Ads', icon: '', color: '#6a4cf5' },
+    event: { name: 'Tổ chức sự kiện', icon: '', color: '#0099ff' },
+    content: { name: 'Sản xuất nội dung', icon: '', color: '#d44df0' },
+    kol: { name: 'KOL/Influencer', icon: '', color: '#ff7a3d' },
+    print: { name: 'In ấn', icon: '', color: '#ff5577' },
+    other: { name: 'Phát sinh khác', icon: '', color: '#999999' }
   };
 
   const getExpenseCategories = () => {
@@ -319,10 +321,58 @@ const Utils = (() => {
     settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
     fileText: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
     repeat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>`,
+    megaphone: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a2 2 0 002 2h3l6 4V5L8 9H5a2 2 0 00-2 2z"/><path d="M18 9a4 4 0 010 6"/><path d="M20.5 6.5a7 7 0 010 11"/></svg>`,
+    calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/></svg>`,
+    printer: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/><path d="M18 12h.01"/></svg>`,
+    receipt: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 1 .67V2l-3 2-3-2-3 2-3-2-3 2-3-2z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>`,
+  };
+
+  const categoryIconMap = {
+    ads: icons.megaphone,
+    event: icons.calendar,
+    content: icons.image,
+    kol: icons.user,
+    print: icons.printer,
+    other: icons.receipt
+  };
+
+  const getExpenseCategoryIcon = (category, info = {}) => {
+    // Built-in icons are trusted inline SVG. A custom category's `info.icon` is
+    // free-text user input, so escape it to block stored XSS (e.g. an <img onerror>).
+    // Emoji/plain text pass through escapeHtml unchanged (only & < > are escaped).
+    if (info.icon) return escapeHtml(info.icon);
+    return categoryIconMap[category] || icons.expenses;
   };
 
   const icon = (name, className = '') => {
     return `<span class="icon ${className}">${icons[name] || ''}</span>`;
+  };
+
+  // Bind an activation handler to a non-button clickable element so keyboard
+  // users (Enter/Space) can trigger it, not just mouse clicks. Pair with
+  // tabindex="0" role="button" on the element.
+  const onActivate = (el, handler) => {
+    if (!el) return;
+    el.addEventListener('click', handler);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        handler(e);
+      }
+    });
+  };
+
+  // Sanitize a user-supplied URL for use in an href. Blocks javascript:, data:,
+  // and other dangerous schemes; forces http(s). Returns '#' when unsafe/empty.
+  // The result is still escapeHtml'd by callers before interpolation.
+  const safeUrl = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '#';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    // A bare scheme (javascript:, data:, vbscript:, mailto:, tel:, …) is unsafe here.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return '#';
+    // Scheme-less (e.g. "example.com/x") → assume https.
+    return `https://${raw}`;
   };
 
   return {
@@ -333,11 +383,11 @@ const Utils = (() => {
     isToday, isPast, daysUntil, getGreeting,
     MONTHS_VI, DAYS_VI,
     PLATFORMS, getPlatformInfo,
-    EXPENSE_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, getExpenseCategories, getCategoryInfo,
+    EXPENSE_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, getExpenseCategories, getCategoryInfo, getExpenseCategoryIcon,
     EVENT_TYPES, EVENT_STATUSES, TASK_STATUSES, PRIORITIES,
     getKpiColor,
     exportCSV, exportExcel, importCSV, downloadBlob,
-    debounce, escapeHtml,
+    debounce, escapeHtml, safeUrl, onActivate,
     icons, icon
   };
 })();

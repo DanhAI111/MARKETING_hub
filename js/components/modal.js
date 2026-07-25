@@ -4,6 +4,7 @@
 
 const Modal = (() => {
   let activeModal = null;
+  let escHandler = null;
 
   const open = ({ title, content, size = '', onSave, onClose, saveLabel = 'Lưu', showFooter = true }) => {
     close(); // Close any existing modal
@@ -13,10 +14,10 @@ const Modal = (() => {
     overlay.id = 'modalOverlay';
 
     overlay.innerHTML = `
-      <div class="modal ${size === 'lg' ? 'modal-lg' : ''}">
+      <div class="modal ${size === 'lg' ? 'modal-lg' : ''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="modal-header">
-          <h3 class="modal-title">${title}</h3>
-          <button class="modal-close" id="modalClose">
+          <h3 class="modal-title" id="modalTitle">${typeof Utils !== 'undefined' ? Utils.escapeHtml(title) : title}</h3>
+          <button class="modal-close" id="modalClose" aria-label="Đóng">
             ${Utils.icons.close}
           </button>
         </div>
@@ -67,12 +68,29 @@ const Modal = (() => {
       }
     });
 
-    // Close on Escape
-    const escHandler = (e) => {
+    // Keydown: Escape closes; Tab is trapped inside the dialog so focus can't
+    // escape to the background. Handler is removed in close() regardless of how
+    // the modal is dismissed, so the document-level listener never accumulates.
+    escHandler = (e) => {
       if (e.key === 'Escape') {
         close();
         onClose?.();
-        document.removeEventListener('keydown', escHandler);
+        return;
+      }
+      if (e.key === 'Tab' && activeModal) {
+        const focusable = activeModal.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     document.addEventListener('keydown', escHandler);
@@ -81,6 +99,10 @@ const Modal = (() => {
   };
 
   const close = () => {
+    if (escHandler) {
+      document.removeEventListener('keydown', escHandler);
+      escHandler = null;
+    }
     if (activeModal) {
       activeModal.remove();
       activeModal = null;
