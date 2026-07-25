@@ -642,6 +642,7 @@ const ContentPage = (() => {
         <label class="form-label">Ngày đăng <span style="color:var(--danger-400);">*</span></label>
         <input type="date" class="form-input" data-field="date" value="${defaultDate}">
       </div>
+      ${Utils.campaignPickerHtml('')}
     `;
 
     Modal.open({
@@ -663,7 +664,8 @@ const ContentPage = (() => {
           fanpageId: fpId,
           title: formData.title.trim(),
           date: formData.date,
-          status: 'published'
+          status: 'published',
+          campaignId: formData.campaignId || ''
         });
 
         Toast.success('Đã thêm bài viết mới');
@@ -742,6 +744,7 @@ const ContentPage = (() => {
           <input type="text" class="form-input" value="Chờ đăng tự động" disabled>
         </div>
       </div>
+      ${Utils.campaignPickerHtml('')}
       <div class="form-group">
         <label class="form-label">Media</label>
         <input type="hidden" data-field="mediaItems" id="scheduleMediaItems" value="[]">
@@ -808,7 +811,8 @@ const ContentPage = (() => {
           mediaUrl: mediaItems[0]?.url || '',
           mediaItems,
           status: 'scheduled',
-          source: 'scheduled'
+          source: 'scheduled',
+          campaignId: formData.campaignId || ''
         });
 
         if (window.RemoteStore?.available && scheduledDate <= new Date()) {

@@ -12,6 +12,7 @@ const DashboardPage = (() => {
     const totalPostKpi = fanpages.reduce((sum, fp) => sum + (parseInt(fp.kpis?.[currentMonth]) || 0), 0);
     const events = Store.events.getByMonth(currentMonth);
     const upcomingEvents = Store.events.getUpcoming(5);
+    const activeCampaigns = Store.campaigns.getAll().filter(c => c.status === 'active');
     const totalExpenses = Store.expenses.getTotalByMonth(currentMonth);
     const adAggregated = Store.adReports.getAggregatedByMonth(currentMonth);
     const allTasks = Store.tasks.getAll();
@@ -148,6 +149,19 @@ const DashboardPage = (() => {
               <div class="donut-legend" id="expenseLegend">
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Chiến Dịch Đang Chạy Widget -->
+        <div class="card span-2" id="campaignsWidget">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Chiến Dịch Đang Chạy</div>
+              <div class="card-subtitle">${activeCampaigns.length} chiến dịch đang hoạt động</div>
+            </div>
+          </div>
+          <div class="card-body">
+            ${renderActiveCampaigns(activeCampaigns)}
           </div>
         </div>
 
@@ -412,6 +426,43 @@ const DashboardPage = (() => {
     }
   };
 
+  // ── Active Campaigns ──
+  const renderActiveCampaigns = (campaigns) => {
+    if (campaigns.length === 0) {
+      return `
+        <div class="empty-state">
+          <div class="empty-state-icon"></div>
+          <div class="empty-state-title">Chưa có chiến dịch</div>
+          <div class="empty-state-desc">Tạo chiến dịch để gom bài đăng, ads & chi phí</div>
+        </div>
+      `;
+    }
+
+    return '<div class="event-widget-list">' + campaigns.slice(0, 5).map(c => {
+      const stats = Store.campaigns.getStats(c.id);
+      const budget = parseFloat(c.budget) || 0;
+      const percent = budget > 0 ? Math.round((stats.totalSpend / budget) * 100) : 0;
+      const barColor = percent > 100 ? 'var(--danger-400)' : percent > 90 ? 'var(--warning-400)' : 'var(--success-400)';
+
+      return `
+        <div class="event-widget-item" data-campaign-id="${c.id}" tabindex="0" role="button" aria-label="Xem chiến dịch">
+          <div class="event-widget-info">
+            <div class="event-widget-name">${Utils.escapeHtml(c.name)}</div>
+            <div class="event-widget-meta">
+              ${stats.postCount} bài • ${stats.adCount} ads • ${Utils.formatVNDCompact(stats.totalSpend)}${budget > 0 ? ` / ${Utils.formatVNDCompact(budget)}` : ''}
+            </div>
+            ${budget > 0 ? `
+              <div class="progress-bar-container" style="height: 5px; margin-top: 4px;">
+                <div class="progress-bar-fill" style="width: ${Math.min(percent, 100)}%; background: ${barColor};"></div>
+              </div>
+            ` : ''}
+          </div>
+          ${stats.adSpend > 0 ? `<span class="tag tag-status-ongoing">ROAS ${Utils.formatRatio(stats.roas)}</span>` : ''}
+        </div>
+      `;
+    }).join('') + '</div>';
+  };
+
   // ── Upcoming Events ──
   const renderUpcomingEvents = (events) => {
     if (events.length === 0) {
@@ -639,8 +690,13 @@ const DashboardPage = (() => {
     document.getElementById('statExpenses')?.addEventListener('click', () => App.navigate('expenses'));
 
     // Click on events to navigate
-    document.querySelectorAll('.event-widget-item').forEach(el => {
+    document.querySelectorAll('.event-widget-item[data-event-id]').forEach(el => {
       Utils.onActivate(el, () => App.navigate('events'));
+    });
+
+    // Click on campaigns to navigate
+    document.querySelectorAll('.event-widget-item[data-campaign-id]').forEach(el => {
+      Utils.onActivate(el, () => App.navigate('campaigns'));
     });
 
     // Click on tasks to navigate
