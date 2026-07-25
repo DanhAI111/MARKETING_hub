@@ -6,30 +6,58 @@ const express = require('express');
 const repo = require('./repository');
 const meta = require('./meta');
 const auth = require('./auth');
+const { assertSecurityConfig } = require('./security');
+const { rateLimit } = require('./rate-limit');
+const { sendTaskNotification, sendDailyTaskSummaryIfDue } = require('./task-notifications');
+const googleSheetsModule = import('../shared/google-sheets.mjs');
 const sheetSyncModule = import('../shared/sheet-sync.mjs');
 
 const app = express();
+assertSecurityConfig();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost');
-const PUBLIC_DIR = path.join(__dirname, '..');
+const ROOT_DIR = path.join(__dirname, '..');
+const INDEX_HTML = path.join(ROOT_DIR, 'manage_MKT.html');
 const states = new Set();
 let lastSync = null;
 let syncInFlight = null;
 let publishInFlight = false;
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const assertExpectedVersion = async (latest, expectedUpdatedAt) => {
+  if (!expectedUpdatedAt || latest?.updatedAt === expectedUpdatedAt) return;
+  const err = new Error('Dữ liệu đã thay đổi');
+  err.status = 409;
+  err.latest = latest || null;
+  throw err;
+};
+
+const writeAudit = (req, action, entityType, entityId, changes = {}) => repo.writeAuditLog({
+  actorEmail: req.user?.email || '',
+  action,
+  entityType,
+  entityId,
+  changes
+}).catch((err) => console.error('Audit log failed:', err.message));
+
+const notifyTaskChange = (req, payload) => {
+  sendTaskNotification(repo, { ...payload, actorEmail: req.user?.email || '' })
+    .catch((err) => console.error('Task notification failed:', err.message));
+};
 
 app.use(express.json({ limit: '25mb' }));
 auth.installRoutes(app);
+
 app.use(auth.middleware);
-app.use(express.static(PUBLIC_DIR, {
-  extensions: ['html'],
-  index: 'manage_MKT.html'
-}));
+// Serve only static asset dirs — never the repo root (would leak .env, DB, source).
+const staticOpts = { index: false, dotfiles: 'deny' };
+app.use('/css', express.static(path.join(ROOT_DIR, 'css'), staticOpts));
+app.use('/js', express.static(path.join(ROOT_DIR, 'js'), staticOpts));
+app.use('/assets', express.static(path.join(ROOT_DIR, 'assets'), staticOpts));
+app.get(['/', '/index.html'], (_req, res) => res.sendFile(INDEX_HTML));
 
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
-const runSync = async () => {
+const runSync = async (options = {}) => {
   if (syncInFlight) return syncInFlight;
-  syncInFlight = meta.syncAll()
+  syncInFlight = meta.syncAll(options)
     .then((result) => {
       lastSync = result;
       return result;
@@ -45,15 +73,14 @@ const processScheduledPosts = async () => {
   publishInFlight = true;
   const result = { startedAt: new Date().toISOString(), published: 0, failed: 0, posts: [] };
   try {
-    const duePosts = await repo.listDueScheduledPosts();
+    const duePosts = await repo.claimDueScheduledPosts();
     for (const post of duePosts) {
       try {
-        await repo.setPostPublishState(post.id, { status: 'publishing', publishError: '' });
         const published = await meta.publishScheduledPost(post);
         await repo.setPostPublishState(post.id, {
           ...published,
           status: 'published',
-          source: post.source || 'meta',
+          source: published.source || post.source || 'meta',
           date: new Date().toISOString().slice(0, 10),
           publishedAt: new Date().toISOString(),
           publishError: ''
@@ -70,82 +97,16 @@ const processScheduledPosts = async () => {
       }
     }
     result.finishedAt = new Date().toISOString();
+    await repo.saveState('lastPublishRun', result);
     return result;
   } finally {
     publishInFlight = false;
   }
 };
 
-const googleSheetCsvUrls = (inputUrl) => {
-  let url;
-  try {
-    url = new URL(inputUrl);
-  } catch {
-    const err = new Error('Link Google Sheets không hợp lệ');
-    err.status = 400;
-    throw err;
-  }
-
-  if (url.hostname !== 'docs.google.com') {
-    const err = new Error('Chỉ hỗ trợ link Google Sheets từ docs.google.com');
-    err.status = 400;
-    throw err;
-  }
-
-  if (url.pathname.includes('/spreadsheets/') && (url.searchParams.get('output') === 'csv' || url.searchParams.get('format') === 'csv')) {
-    return [url.toString()];
-  }
-
-  const publishedMatch = url.pathname.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/e\/([^/]+)/);
-  const regularMatch = url.pathname.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/([^/]+)/);
-  if (!publishedMatch && !regularMatch) {
-    const err = new Error('Không tìm thấy Google Sheets ID trong link');
-    err.status = 400;
-    throw err;
-  }
-
-  const hashParams = new URLSearchParams(String(url.hash || '').replace(/^#/, ''));
-  const gid = url.searchParams.get('gid') || hashParams.get('gid') || '0';
-  if (publishedMatch) {
-    const id = publishedMatch[1];
-    return [
-      `https://docs.google.com/spreadsheets/d/e/${id}/pub?output=csv&gid=${encodeURIComponent(gid)}`,
-      `https://docs.google.com/spreadsheets/d/e/${id}/pub?gid=${encodeURIComponent(gid)}&single=true&output=csv`
-    ];
-  }
-  const id = regularMatch[1];
-  return [
-    `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid)}`,
-    `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${encodeURIComponent(gid)}`,
-    `https://docs.google.com/spreadsheets/d/${id}/pub?output=csv&gid=${encodeURIComponent(gid)}`
-  ];
-};
-
-const fetchGoogleSheetCsvText = async (inputUrl, { signal } = {}) => {
-  const headers = {
-    'Accept': 'text/csv,text/plain,*/*',
-    'User-Agent': 'Mozilla/5.0 MarketingHub/1.0'
-  };
-  let lastStatus = 0;
-  let lastText = '';
-  for (const csvUrl of googleSheetCsvUrls(inputUrl)) {
-    const response = await fetch(csvUrl, { headers, signal });
-    const text = await response.text();
-    lastStatus = response.status;
-    lastText = text;
-    const contentType = response.headers.get('content-type') || '';
-    const looksLikeHtml = /^\s*<!doctype html|^\s*<html[\s>]/i.test(text);
-    if (response.ok && text.trim() && !looksLikeHtml && !contentType.includes('text/html')) {
-      return text;
-    }
-  }
-  const err = new Error(
-    lastText && /^\s*<!doctype html|^\s*<html[\s>]/i.test(lastText)
-      ? 'Google trả về trang HTML thay vì CSV. Hãy dùng File > Share > Publish to web hoặc tải CSV lên trực tiếp.'
-      : 'Không thể đọc Google Sheets. Hãy kiểm tra quyền chia sẻ hoặc publish sheet.'
-  );
-  err.status = lastStatus || 400;
-  throw err;
+const fetchGoogleSheetCsvText = async (...args) => {
+  const { fetchGoogleSheetCsvText: fetchCsv } = await googleSheetsModule;
+  return fetchCsv(...args);
 };
 
 const syncLinkedScheduleSheets = async (options = {}) => {
@@ -167,27 +128,30 @@ const syncLinkedScheduleSheets = async (options = {}) => {
   });
 };
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', asyncHandler(async (req, res) => {
   res.json({
     ok: true,
     authRequired: auth.required(),
     metaConfigured: !!(process.env.META_APP_ID && process.env.META_APP_SECRET),
-    lastSync,
+    lastSync: lastSync || await repo.getState('lastMetaSync'),
     publisher: {
+      lastRun: await repo.getState('lastPublishRun'),
       inFlight: publishInFlight
     }
   });
-});
+}));
 
 app.get('/api/bootstrap', asyncHandler(async (req, res) => {
   res.json({
     ...await repo.getBootstrapData(),
-    lastSync
+    lastSync: lastSync || await repo.getState('lastMetaSync')
   });
 }));
 
 app.post('/api/fanpages/import-local', asyncHandler(async (req, res) => {
-  res.json(await repo.importLocalData(req.body || {}));
+  const imported = await repo.importLocalData(req.body || {});
+  writeAudit(req, 'import', 'bootstrap', 'local-data');
+  res.json(imported);
 }));
 
 app.get('/api/fanpages', asyncHandler(async (req, res) => {
@@ -195,26 +159,35 @@ app.get('/api/fanpages', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/fanpages', asyncHandler(async (req, res) => {
-  res.status(201).json(await repo.upsertFanpage(req.body || {}));
+  const fanpage = await repo.upsertFanpage(req.body || {});
+  writeAudit(req, 'create', 'fanpage', fanpage.id, fanpage);
+  res.status(201).json(fanpage);
 }));
 
 app.put('/api/fanpages/:id', asyncHandler(async (req, res) => {
-  res.json(await repo.upsertFanpage({ ...(req.body || {}), id: req.params.id }));
+  const fanpage = await repo.upsertFanpage({ ...(req.body || {}), id: req.params.id });
+  writeAudit(req, 'update', 'fanpage', fanpage.id, fanpage);
+  res.json(fanpage);
 }));
 
 app.delete('/api/fanpages/:id', asyncHandler(async (req, res) => {
   await repo.deleteFanpage(req.params.id);
+  writeAudit(req, 'delete', 'fanpage', req.params.id);
   res.status(204).end();
 }));
 
 app.get('/api/posts', asyncHandler(async (req, res) => {
-  const month = req.query.month;
-  const posts = (await repo.listPosts()).filter((post) => !month || post.date.startsWith(month));
-  res.json(posts);
+  res.json(await repo.listPosts({
+    month: req.query.month || '',
+    pending: req.query.pending === '1',
+    limit: Number(req.query.limit || 500),
+    offset: Number(req.query.offset || 0)
+  }));
 }));
 
 app.post('/api/posts', asyncHandler(async (req, res) => {
   const post = await repo.upsertPost(req.body || {});
+  writeAudit(req, 'create', 'post', post.id, post);
   if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
     setTimeout(() => processScheduledPosts().catch((err) => console.error('Immediate publish failed:', err.message)), 100).unref();
   }
@@ -222,7 +195,13 @@ app.post('/api/posts', asyncHandler(async (req, res) => {
 }));
 
 app.put('/api/posts/:id', asyncHandler(async (req, res) => {
-  const post = await repo.upsertPost({ ...(req.body || {}), id: req.params.id });
+  await assertExpectedVersion(
+    req.body?.expectedUpdatedAt ? await repo.getPost(req.params.id) : null,
+    req.body?.expectedUpdatedAt
+  );
+  const { expectedUpdatedAt, ...updates } = req.body || {};
+  const post = await repo.upsertPost({ ...updates, id: req.params.id });
+  writeAudit(req, 'update', 'post', post.id, post);
   if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
     setTimeout(() => processScheduledPosts().catch((err) => console.error('Immediate publish failed:', err.message)), 100).unref();
   }
@@ -231,6 +210,7 @@ app.put('/api/posts/:id', asyncHandler(async (req, res) => {
 
 app.delete('/api/posts/:id', asyncHandler(async (req, res) => {
   await repo.deletePost(req.params.id);
+  writeAudit(req, 'delete', 'post', req.params.id);
   res.status(204).end();
 }));
 
@@ -239,15 +219,43 @@ app.get('/api/collections/:collection', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/collections/:collection', asyncHandler(async (req, res) => {
-  res.status(201).json(await repo.upsertAppItem(req.params.collection, req.body || {}));
+  const item = await repo.upsertAppItem(req.params.collection, req.body || {});
+  writeAudit(req, 'create', req.params.collection, item.id, item);
+  if (req.params.collection === 'tasks') {
+    notifyTaskChange(req, { action: 'created', task: item });
+  }
+  res.status(201).json(item);
 }));
 
 app.put('/api/collections/:collection/:id', asyncHandler(async (req, res) => {
-  res.json(await repo.upsertAppItem(req.params.collection, { ...(req.body || {}), id: req.params.id }));
+  const previous = req.params.collection === 'tasks' || req.body?.expectedUpdatedAt
+    ? await repo.getAppItem(req.params.collection, req.params.id)
+    : null;
+  await assertExpectedVersion(
+    req.body?.expectedUpdatedAt ? previous : null,
+    req.body?.expectedUpdatedAt
+  );
+  const { expectedUpdatedAt, ...updates } = req.body || {};
+  const item = await repo.upsertAppItem(req.params.collection, {
+    ...updates,
+    id: req.params.id
+  });
+  writeAudit(req, 'update', req.params.collection, item.id, item);
+  if (req.params.collection === 'tasks') {
+    notifyTaskChange(req, { action: 'updated', task: item, previousTask: previous });
+  }
+  res.json(item);
 }));
 
 app.delete('/api/collections/:collection/:id', asyncHandler(async (req, res) => {
+  const previous = req.params.collection === 'tasks'
+    ? await repo.getAppItem(req.params.collection, req.params.id)
+    : null;
   await repo.deleteAppItem(req.params.collection, req.params.id);
+  writeAudit(req, 'delete', req.params.collection, req.params.id);
+  if (req.params.collection === 'tasks' && previous) {
+    notifyTaskChange(req, { action: 'deleted', task: previous, previousTask: previous });
+  }
   res.status(204).end();
 }));
 
@@ -256,17 +264,27 @@ app.get('/api/singletons/:key', asyncHandler(async (req, res) => {
 }));
 
 app.put('/api/singletons/:key', asyncHandler(async (req, res) => {
-  res.json({ value: await repo.saveSingleton(req.params.key, req.body?.value ?? null) });
+  const value = await repo.saveSingleton(req.params.key, req.body?.value ?? null);
+  writeAudit(req, 'update', 'singleton', req.params.key, { value });
+  res.json({ value });
 }));
 
-app.post('/api/sync', asyncHandler(async (req, res) => {
-  res.json(await runSync());
+app.post('/api/sync', rateLimit('sync', { limit: 60, windowSeconds: 60 }), asyncHandler(async (req, res) => {
+  res.json(await runSync({
+    cursor: Object.prototype.hasOwnProperty.call(req.query, 'cursor') ? req.query.cursor : null,
+    maxFanpages: Object.prototype.hasOwnProperty.call(req.query, 'maxFanpages') ? Number(req.query.maxFanpages) : null,
+    postLimit: Number(req.query.postLimit || 100)
+  }));
 }));
 
 app.post('/api/publish-due', asyncHandler(async (req, res) => {
-  const sheetSync = req.query.syncSheets === '1' ? await syncLinkedScheduleSheets() : null;
+  // Run sheet sync in the background (see worker/index.js) so a slow/hanging
+  // Google Sheets fetch can't stall or fail the publish response.
+  if (req.query.syncSheets === '1') {
+    syncLinkedScheduleSheets().catch((err) => console.error('Background sheet sync failed:', err.message));
+  }
   const publisher = await processScheduledPosts();
-  res.json(sheetSync ? { ...publisher, sheetSync } : publisher);
+  res.json(publisher);
 }));
 
 app.post('/api/sheet-schedules/sync', asyncHandler(async (req, res) => {
@@ -278,7 +296,7 @@ app.post('/api/sheet-schedules/sync', asyncHandler(async (req, res) => {
   res.json(await syncLinkedScheduleSheets(req.body));
 }));
 
-app.post('/api/google-sheets/csv', asyncHandler(async (req, res) => {
+app.post('/api/google-sheets/csv', rateLimit('google-sheets-csv', { limit: 60, windowSeconds: 60 }), asyncHandler(async (req, res) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
@@ -294,9 +312,9 @@ app.post('/api/google-sheets/csv', asyncHandler(async (req, res) => {
   }
 }));
 
-app.get('/api/sync/status', (req, res) => {
-  res.json({ inFlight: !!syncInFlight, lastSync });
-});
+app.get('/api/sync/status', asyncHandler(async (req, res) => {
+  res.json({ inFlight: !!syncInFlight, lastSync: lastSync || await repo.getState('lastMetaSync') });
+}));
 
 app.get('/auth/meta/start', asyncHandler(async (req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
@@ -331,7 +349,8 @@ app.get('/auth/meta/callback', asyncHandler(async (req, res) => {
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(err.status || 500).json({
-    error: err.message || 'Internal server error'
+    error: err.message || 'Internal server error',
+    ...(err.status === 409 ? { latest: err.latest || null } : {})
   });
 });
 
@@ -344,8 +363,13 @@ const startSchedulers = () => {
     processScheduledPosts().catch((err) => console.error('Scheduled publish failed:', err.message));
   }, 60 * 1000).unref();
 
+  setInterval(() => {
+    sendDailyTaskSummaryIfDue().catch((err) => console.error('Daily task summary failed:', err.message));
+  }, 60 * 1000).unref();
+
   setTimeout(() => {
     processScheduledPosts().catch((err) => console.error('Startup publish failed:', err.message));
+    sendDailyTaskSummaryIfDue().catch((err) => console.error('Startup task summary failed:', err.message));
   }, 2000).unref();
 };
 

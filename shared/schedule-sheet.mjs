@@ -47,9 +47,16 @@ const getRowValue = (row, aliases) => {
   return entry ? String(entry[1] || '').trim() : '';
 };
 
+// Header cells are short labels. A data row's content blob can be thousands of
+// chars long and coincidentally contain alias substrings ("post", "page",
+// "content"…), which would let a data row outscore the real header and shift
+// every column. Only allow fuzzy substring matching on header-length cells.
+const HEADER_CELL_MAXLEN = 40;
 const scoreHeaders = (headers, aliases) => {
   const normalizedAliases = aliases.map(normalizeKey);
-  return headers.some((header) => normalizedAliases.some((alias) => header === alias || (alias.length >= 4 && header.includes(alias)))) ? 1 : 0;
+  return headers.some((header) => normalizedAliases.some((alias) =>
+    header === alias || (alias.length >= 4 && header.length <= HEADER_CELL_MAXLEN && header.includes(alias))
+  )) ? 1 : 0;
 };
 
 const parseRecords = (text, delimiter) => {

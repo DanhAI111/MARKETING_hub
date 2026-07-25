@@ -108,11 +108,56 @@ const getGoogleDriveFileId = (rawUrl) => {
   }
 };
 
+const getGoogleDriveFolderId = (rawUrl) => {
+  try {
+    const url = new URL(rawUrl);
+    if (!/(^|\.)drive\.google\.com$/i.test(url.hostname)) return '';
+    return url.pathname.match(/\/drive\/folders\/([^/]+)/)?.[1] || '';
+  } catch {
+    return '';
+  }
+};
+
 const normalizeMediaUrl = (rawUrl) => {
   const fileId = getGoogleDriveFileId(rawUrl);
   return fileId
     ? `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`
     : rawUrl;
+};
+
+const googleDriveThumbnailUrl = (fileId) =>
+  `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w1600`;
+
+const decodeHtml = (value = '') => value
+  .replace(/&amp;/g, '&')
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, "'")
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>');
+
+const listGoogleDriveFolderMedia = async (folderId) => {
+  const url = `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}#grid`;
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`Không thể đọc folder Google Drive (HTTP ${response.status}). Hãy bật quyền "Anyone with the link".`);
+  }
+  const html = await response.text();
+  const entries = [];
+  const pattern = /<div class="flip-entry"[^>]*id="entry-([^"]+)"[\s\S]*?<div class="flip-entry-title">([^<]+)<\/div>/g;
+  for (const match of html.matchAll(pattern)) {
+    const name = decodeHtml(match[2]).trim();
+    if (!/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name)) continue;
+    entries.push({
+      type: 'image',
+      url: googleDriveThumbnailUrl(match[1]),
+      name
+    });
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  if (!entries.length) {
+    throw new Error('Folder Google Drive không có ảnh hợp lệ hoặc chưa được chia sẻ công khai.');
+  }
+  return entries.slice(0, 10);
 };
 
 const filenameFromDisposition = (value = '') => {
@@ -127,11 +172,13 @@ const isVideoName = (value = '') => /\.(mp4|mov|m4v|avi|webm|mkv)(?:$|[?#])/i.te
 
 const resolveMediaItem = async (media) => {
   const originalUrl = media?.url || '';
+  const driveFolderId = getGoogleDriveFolderId(originalUrl);
+  if (driveFolderId) return listGoogleDriveFolderMedia(driveFolderId);
   const driveFileId = getGoogleDriveFileId(originalUrl);
   const resolved = { ...media, url: normalizeMediaUrl(originalUrl) };
   if (!driveFileId) {
     if (media?.type === 'video' || isVideoName(originalUrl) || isVideoName(media?.name)) resolved.type = 'video';
-    return resolved;
+    return [resolved];
   }
 
   const response = await fetch(resolved.url, { method: 'HEAD', redirect: 'follow' });
@@ -142,7 +189,8 @@ const resolveMediaItem = async (media) => {
   const contentType = response.headers.get('content-type') || '';
   resolved.name = filename || resolved.name;
   resolved.type = contentType.startsWith('video/') || isVideoName(filename) ? 'video' : 'image';
-  return resolved;
+  if (resolved.type === 'image') resolved.url = googleDriveThumbnailUrl(driveFileId);
+  return [resolved];
 };
 
 const getPostMessage = (post) => (post.content || post.title || '').trim();
@@ -153,6 +201,16 @@ const getMediaItems = (post) => {
   }
   return post.mediaUrl ? [{ type: 'image', url: post.mediaUrl }] : [];
 };
+
+const resolveMediaItems = async (post) => {
+  const groups = await Promise.all(getMediaItems(post).map(resolveMediaItem));
+  return groups.flat().slice(0, 10);
+};
+
+const getOldestSyncDate = (dates = []) => dates
+  .filter(Boolean)
+  .map((value) => String(value).slice(0, 10))
+  .sort()[0] || '';
 
 const addFacebookPhoto = async ({ pageId, token, media, caption = '', published = true }) => {
   const dataBlob = dataUrlToBlob(media.url);
@@ -186,7 +244,7 @@ const publishFacebookPost = async (fanpage, post) => {
   }
 
   const message = getPostMessage(post);
-  const mediaItems = await Promise.all(getMediaItems(post).map(resolveMediaItem));
+  const mediaItems = await resolveMediaItems(post);
   if (!mediaItems.length) {
     const result = await graphPost(`${fanpage.metaPageId}/feed`, {
       access_token: token,
@@ -217,12 +275,18 @@ const publishFacebookPost = async (fanpage, post) => {
       pageId: fanpage.metaPageId,
       token,
       media: mediaItems[0],
-      caption: message,
-      published: true
+      caption: '',
+      published: false
+    });
+    if (!result.id) throw new Error('Không thể tải ảnh lên Facebook.');
+    const feedResult = await graphPost(`${fanpage.metaPageId}/feed`, {
+      access_token: token,
+      message,
+      attached_media: JSON.stringify([{ media_fbid: result.id }])
     });
     return {
-      externalPostId: result.post_id || result.id || '',
-      permalink: result.post_id ? `https://www.facebook.com/${result.post_id}` : '',
+      externalPostId: feedResult.id || '',
+      permalink: feedResult.id ? `https://www.facebook.com/${feedResult.id}` : '',
       mediaUrl: mediaItems[0].url || ''
     };
   }
@@ -262,7 +326,7 @@ const publishInstagramPost = async (fanpage, post) => {
     throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
   }
 
-  const media = await resolveMediaItem(getMediaItems(post)[0]);
+  const media = (await resolveMediaItem(getMediaItems(post)[0]))[0];
   if (!media?.url) {
     throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
   }
@@ -299,10 +363,35 @@ const publishScheduledPost = async (post) => {
   if (!fanpage.connected) throw new Error('Fanpage chưa liên kết Meta.');
 
   if (fanpage.platform === 'facebook') {
-    return publishFacebookPost(fanpage, post);
+    // Publish to Facebook. Skip if this is a retry where FB already succeeded
+    // (post.externalPostId set) but the cross-post to Instagram failed — this
+    // keeps retries idempotent so FB isn't posted twice.
+    let fbResult;
+    if (post.externalPostId) {
+      fbResult = {
+        externalPostId: post.externalPostId,
+        permalink: post.permalink || '',
+        mediaUrl: post.mediaUrl || ''
+      };
+    } else {
+      fbResult = await publishFacebookPost(fanpage, post);
+    }
+
+    if (fanpage.crossPostInstagram) {
+      const igPage = await repo.getInstagramSiblingFanpage(fanpage.metaPageId);
+      if (igPage) {
+        // Persist the FB result before attempting IG so a failed IG post marks
+        // the row 'failed' without losing the FB post id (retry skips FB above).
+        if (!post.externalPostId) {
+          await repo.setPostPublishState(post.id, { ...fbResult, source: 'facebook' });
+        }
+        await publishInstagramPost(igPage, post);
+      }
+    }
+    return { ...fbResult, source: 'facebook' };
   }
   if (fanpage.platform === 'instagram') {
-    return publishInstagramPost(fanpage, post);
+    return { ...await publishInstagramPost(fanpage, post), source: 'instagram' };
   }
   throw new Error(`Chưa hỗ trợ đăng tự động cho nền tảng ${fanpage.platform}.`);
 };
@@ -419,7 +508,7 @@ const connectPages = async (userAccessToken) => {
 
 const fetchFacebookPostBatch = async (fanpage, token, limit = 100) => {
   const postEdges = ['published_posts', 'posts', 'feed'];
-  const fieldSets = ['id,message,created_time,updated_time,permalink_url', 'id,created_time,updated_time'];
+  const fieldSets = ['id,message,created_time,updated_time,permalink_url,full_picture', 'id,created_time,updated_time'];
   const edgeErrors = [];
   for (const edge of postEdges) {
     for (const fields of fieldSets) {
@@ -442,13 +531,17 @@ const fetchFacebookPostBatch = async (fanpage, token, limit = 100) => {
   return { posts: [], edge: '', fields: '', edgeErrors };
 };
 
-const syncFacebookPosts = async (fanpage) => {
+const syncFacebookPosts = async (fanpage, { limit = 100 } = {}) => {
   const token = repo.decryptPageToken(fanpage);
   if (!token || !fanpage.metaPageId) return 0;
-  const { posts } = await fetchFacebookPostBatch(fanpage, token);
+  const { posts } = await fetchFacebookPostBatch(fanpage, token, limit);
   let count = 0;
+  const syncedIds = [];
+  const syncedDates = [];
   for (const post of posts) {
     const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
+    syncedIds.push(post.id);
+    syncedDates.push(publishedAt);
     await repo.upsertPost({
       fanpageId: fanpage.id,
       externalPostId: post.id,
@@ -463,24 +556,36 @@ const syncFacebookPosts = async (fanpage) => {
     });
     count++;
   }
+  if (repo.markMissingSyncedPostsDeleted) {
+    await repo.markMissingSyncedPostsDeleted({
+      fanpageId: fanpage.id,
+      source: 'facebook',
+      externalPostIds: syncedIds,
+      sinceDate: getOldestSyncDate(syncedDates)
+    });
+  }
   return count;
 };
 
-const syncInstagramMedia = async (fanpage) => {
+const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
   const token = repo.decryptPageToken(fanpage);
   if (!token || !fanpage.instagramBusinessId) return 0;
   const media = await graphGet(`${fanpage.instagramBusinessId}/media`, {
     access_token: token,
-    limit: 100,
+    limit,
     fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url'
   }).catch(() => graphGet(`${fanpage.instagramBusinessId}/media`, {
     access_token: token,
-    limit: 100,
+    limit,
     fields: 'id,timestamp'
   }));
   let count = 0;
+  const syncedIds = [];
+  const syncedDates = [];
   for (const item of media.data || []) {
     const publishedAt = item.timestamp || new Date().toISOString();
+    syncedIds.push(item.id);
+    syncedDates.push(publishedAt);
     await repo.upsertPost({
       fanpageId: fanpage.id,
       externalPostId: item.id,
@@ -494,14 +599,39 @@ const syncInstagramMedia = async (fanpage) => {
     });
     count++;
   }
+  if (repo.markMissingSyncedPostsDeleted) {
+    await repo.markMissingSyncedPostsDeleted({
+      fanpageId: fanpage.id,
+      source: 'instagram',
+      externalPostIds: syncedIds,
+      sinceDate: getOldestSyncDate(syncedDates)
+    });
+  }
   return count;
 };
 
-const syncAll = async () => {
-  const fanpages = await repo.getConnectedFanpages();
-  const result = { startedAt: new Date().toISOString(), fanpages: [], totalPosts: 0 };
+const syncAll = async ({ cursor = null, maxFanpages = null, postLimit = 100 } = {}) => {
+  const fanpages = (await repo.getConnectedFanpages())
+    .sort((a, b) => `${a.name || ''}:${a.id}`.localeCompare(`${b.name || ''}:${b.id}`));
+  const isBatched = cursor !== null || maxFanpages !== null;
+  const savedCursor = isBatched ? await repo.getState('lastMetaSyncCursor') : 0;
+  const startIndex = Math.max(0, Math.min(
+    isBatched && cursor === null ? Number(savedCursor || 0) : Number(cursor || 0),
+    Math.max(fanpages.length - 1, 0)
+  ));
+  const batchSize = isBatched
+    ? Math.max(1, Math.min(Number(maxFanpages || 1), fanpages.length || 1))
+    : Math.max(fanpages.length, 1);
+  const selectedFanpages = fanpages.slice(startIndex, startIndex + batchSize);
+  const result = {
+    startedAt: new Date().toISOString(),
+    cursor: startIndex,
+    fanpageCount: fanpages.length,
+    fanpages: [],
+    totalPosts: 0
+  };
 
-  for (const fanpage of fanpages) {
+  for (const fanpage of selectedFanpages) {
     try {
       await repo.setFanpageSyncStatus(fanpage.id, 'syncing');
       const refreshed = await refreshFanpageProfile(fanpage).catch(() => fanpage);
@@ -510,8 +640,8 @@ const syncAll = async () => {
         pageAccessTokenEncrypted: fanpage.pageAccessTokenEncrypted
       };
       const count = syncFanpage.platform === 'instagram'
-        ? await syncInstagramMedia(syncFanpage)
-        : await syncFacebookPosts(syncFanpage);
+        ? await syncInstagramMedia(syncFanpage, { limit: postLimit })
+        : await syncFacebookPosts(syncFanpage, { limit: postLimit });
       await repo.setFanpageSyncStatus(refreshed.id, 'synced');
       result.fanpages.push({ id: refreshed.id, name: refreshed.name, platform: refreshed.platform, count, status: 'synced' });
       result.totalPosts += count;
@@ -521,7 +651,12 @@ const syncAll = async () => {
     }
   }
 
+  const nextCursor = startIndex + selectedFanpages.length;
+  result.nextCursor = nextCursor < fanpages.length ? nextCursor : 0;
+  result.hasMore = nextCursor < fanpages.length;
   result.finishedAt = new Date().toISOString();
+  await repo.saveState('lastMetaSyncCursor', result.nextCursor);
+  await repo.saveState('lastMetaSync', result);
   return result;
 };
 

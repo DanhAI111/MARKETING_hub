@@ -1,14 +1,17 @@
 const crypto = require('node:crypto');
+const { readRequiredSecret } = require('./security');
 
 const COOKIE_NAME = 'mh_session';
+const CSRF_COOKIE_NAME = 'mh_csrf';
 const ONE_WEEK_SECONDS = 60 * 60 * 24 * 7;
 const states = new Map();
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const required = () => process.env.AUTH_REQUIRED === '1' || !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 const configured = () => !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 const baseUrl = () => process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || 3000}`;
 const callbackUrl = () => process.env.GOOGLE_CALLBACK_URL || `${baseUrl()}/auth/google/callback`;
-const sessionSecret = () => process.env.SESSION_SECRET || process.env.TOKEN_ENCRYPTION_KEY || 'local-dev-session-secret';
+const sessionSecret = () => readRequiredSecret('SESSION_SECRET', process.env.TOKEN_ENCRYPTION_KEY || 'local-dev-session-secret');
 
 const splitList = (value) => String(value || '')
   .split(',')
@@ -48,13 +51,13 @@ const readSession = (req) => {
   }
 };
 
-const cookieOptions = () => {
+const cookieOptions = ({ httpOnly = true, maxAge = ONE_WEEK_SECONDS } = {}) => {
   const secure = baseUrl().startsWith('https://') || process.env.NODE_ENV === 'production';
   return [
-    'HttpOnly',
+    httpOnly ? 'HttpOnly' : '',
     'Path=/',
     'SameSite=Lax',
-    `Max-Age=${ONE_WEEK_SECONDS}`,
+    `Max-Age=${maxAge}`,
     secure ? 'Secure' : ''
   ].filter(Boolean).join('; ');
 };
@@ -65,20 +68,50 @@ const setSession = (res, user) => {
     createdAt: Date.now(),
     expiresAt: Date.now() + ONE_WEEK_SECONDS * 1000
   }));
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${payload}.${sign(payload)}; ${cookieOptions()}`);
+  const csrfToken = crypto.randomBytes(24).toString('base64url');
+  res.setHeader('Set-Cookie', [
+    `${COOKIE_NAME}=${payload}.${sign(payload)}; ${cookieOptions({ httpOnly: true })}`,
+    `${CSRF_COOKIE_NAME}=${encodeURIComponent(csrfToken)}; ${cookieOptions({ httpOnly: false })}`
+  ]);
 };
 
 const clearSession = (res) => {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
+  res.setHeader('Set-Cookie', [
+    `${COOKIE_NAME}=; ${cookieOptions({ httpOnly: true, maxAge: 0 })}`,
+    `${CSRF_COOKIE_NAME}=; ${cookieOptions({ httpOnly: false, maxAge: 0 })}`
+  ]);
+};
+
+const verifyCsrf = (req) => {
+  if (!MUTATING_METHODS.has(req.method) || !req.path.startsWith('/api/')) {
+    return true;
+  }
+  const cookies = parseCookies(req);
+  const cookieToken = cookies[CSRF_COOKIE_NAME] || '';
+  const headerToken = String(req.headers['x-csrf-token'] || '');
+  const valid = cookieToken && headerToken
+    && Buffer.byteLength(cookieToken) === Buffer.byteLength(headerToken)
+    && crypto.timingSafeEqual(Buffer.from(cookieToken), Buffer.from(headerToken));
+  if (valid) return true;
+  const error = new Error('CSRF token không hợp lệ');
+  error.status = 403;
+  throw error;
 };
 
 const isAllowedUser = (email) => {
   const normalized = String(email || '').toLowerCase();
   const allowedEmails = splitList(process.env.ALLOWED_EMAILS);
   const allowedDomains = splitList(process.env.ALLOWED_EMAIL_DOMAINS);
-  if (!allowedEmails.length && !allowedDomains.length) return true;
+  const allowEmployeeEmails = process.env.ALLOW_EMPLOYEE_EMAILS === '1';
   const domain = normalized.split('@')[1] || '';
-  return allowedEmails.includes(normalized) || allowedDomains.includes(domain);
+  if (allowedEmails.includes(normalized) || allowedDomains.includes(domain)) return true;
+  if (allowEmployeeEmails) {
+    return require('./repository').listAppItems('employees')
+      .then((employees) => employees.some((employee) => String(employee.email || '').trim().toLowerCase() === normalized))
+      .catch(() => false);
+  }
+  if (!allowedEmails.length && !allowedDomains.length) return true;
+  return false;
 };
 
 const publicPath = (path) => (
@@ -114,7 +147,7 @@ const html = (error = '', next = '/') => `<!doctype html>
 <body>
   <main>
     <h1>Marketing Hub</h1>
-    <p>Đăng nhập bằng tài khoản Google công ty để sử dụng dữ liệu chung.</p>
+    <p>Đăng nhập bằng Gmail cá nhân hoặc tài khoản Google được cấp quyền để sử dụng dữ liệu chung.</p>
     ${error ? `<div class="error">${error}</div>` : ''}
     ${configured()
       ? `<a href="/auth/google/start?next=${encodeURIComponent(next)}">Đăng nhập với Google</a>`
@@ -179,7 +212,7 @@ const installRoutes = (app) => {
       const profile = await userRes.json().catch(() => ({}));
       if (!userRes.ok || !profile.email) throw new Error('Không thể đọc thông tin tài khoản Google.');
       if (profile.email_verified === false) throw new Error('Email Google chưa được xác minh.');
-      if (!isAllowedUser(profile.email)) throw new Error('Tài khoản này không nằm trong danh sách được phép truy cập.');
+      if (!(await isAllowedUser(profile.email))) throw new Error('Tài khoản này không nằm trong danh sách được phép truy cập.');
 
       setSession(res, {
         email: profile.email,
@@ -202,6 +235,7 @@ const middleware = (req, res, next) => {
   const user = readSession(req);
   req.user = user;
   if (!required() || user || publicPath(req.path)) {
+    if (user) verifyCsrf(req);
     next();
     return;
   }
@@ -217,5 +251,6 @@ module.exports = {
   middleware,
   required,
   configured,
-  readSession
+  readSession,
+  verifyCsrf
 };

@@ -73,6 +73,7 @@ const initPostgres = async () => {
       "syncStatus" TEXT,
       "syncError" TEXT,
       kpis TEXT,
+      "deletedAt" TEXT,
       "createdAt" TEXT NOT NULL,
       "updatedAt" TEXT NOT NULL
     );
@@ -99,6 +100,7 @@ const initPostgres = async () => {
       "sheetDefaultFanpageId" TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
       status TEXT NOT NULL DEFAULT 'published',
+      "deletedAt" TEXT,
       "createdAt" TEXT NOT NULL,
       "updatedAt" TEXT NOT NULL
     );
@@ -110,6 +112,9 @@ const initPostgres = async () => {
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetUrl" TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetRowKey" TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetDefaultFanpageId" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
+    ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
+    ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "crossPostInstagram" BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row
       ON posts("sheetUrl", "sheetRowKey")
@@ -125,10 +130,32 @@ const initPostgres = async () => {
       collection TEXT NOT NULL,
       id TEXT NOT NULL,
       data TEXT NOT NULL,
+      "deletedAt" TEXT,
       "createdAt" TEXT NOT NULL,
       "updatedAt" TEXT NOT NULL,
       PRIMARY KEY (collection, id)
     );
+
+    ALTER TABLE app_items ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
+
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 0,
+      "windowStart" INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id TEXT PRIMARY KEY,
+      "actorEmail" TEXT,
+      action TEXT NOT NULL,
+      "entityType" TEXT NOT NULL,
+      "entityId" TEXT NOT NULL,
+      changes TEXT,
+      "createdAt" TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_entity
+      ON audit_log("entityType", "entityId", "createdAt");
   `);
 };
 
@@ -151,10 +178,12 @@ const fanpageFromRow = (row, { includeToken = false } = {}) => {
     metaPageId: row.metaPageId || '',
     instagramBusinessId: row.instagramBusinessId || '',
     connected: !!row.connected,
+    crossPostInstagram: !!row.crossPostInstagram,
     lastSyncedAt: row.lastSyncedAt || '',
     syncStatus: row.syncStatus || '',
     syncError: row.syncError || '',
     kpis: parseJson(row.kpis, {}),
+    deletedAt: row.deletedAt || '',
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
@@ -180,6 +209,7 @@ const postFromRow = (row) => row && ({
   sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
   source: row.source,
   status: row.status,
+  deletedAt: row.deletedAt || '',
   createdAt: row.createdAt,
   updatedAt: row.updatedAt
 });
@@ -204,18 +234,74 @@ const assertAppSingleton = (key) => {
 
 const listFanpages = async () => {
   if (usePostgres) {
-    const rows = await pgQuery('SELECT * FROM fanpages ORDER BY LOWER(name)');
+    const rows = await pgQuery('SELECT * FROM fanpages WHERE "deletedAt" IS NULL OR "deletedAt" = \'\' ORDER BY LOWER(name)');
     return rows.map((row) => fanpageFromRow(row));
   }
-  return getSqlite().prepare('SELECT * FROM fanpages ORDER BY name COLLATE NOCASE').all().map((row) => fanpageFromRow(row));
+  return getSqlite().prepare('SELECT * FROM fanpages WHERE deletedAt IS NULL OR deletedAt = \'\' ORDER BY name COLLATE NOCASE').all().map((row) => fanpageFromRow(row));
 };
 
-const listPosts = async () => {
+const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 } = {}) => {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 500, 1), 1000);
+  const normalizedOffset = Math.max(Number(offset) || 0, 0);
+  const monthPrefix = String(month || '').trim();
+  // Publishing queue: all not-yet-published posts across every month.
+  if (pending) {
+    if (usePostgres) {
+      const rows = await pgQuery(`
+        SELECT * FROM posts
+        WHERE ("deletedAt" IS NULL OR "deletedAt" = '')
+          AND status != 'published'
+        ORDER BY "scheduledAt" ASC, "updatedAt" DESC
+        LIMIT $1 OFFSET $2
+      `, [normalizedLimit, normalizedOffset]);
+      return rows.map(postFromRow);
+    }
+    return getSqlite().prepare(`
+      SELECT * FROM posts
+      WHERE (deletedAt IS NULL OR deletedAt = '')
+        AND status != 'published'
+      ORDER BY scheduledAt ASC, updatedAt DESC
+      LIMIT ? OFFSET ?
+    `).all(normalizedLimit, normalizedOffset).map(postFromRow);
+  }
   if (usePostgres) {
-    const rows = await pgQuery('SELECT * FROM posts ORDER BY date DESC, "updatedAt" DESC');
+    const rows = monthPrefix
+      ? await pgQuery(`
+        SELECT * FROM posts
+        WHERE ("deletedAt" IS NULL OR "deletedAt" = '')
+          AND (date LIKE $1 OR "scheduledAt" LIKE $2)
+        ORDER BY date DESC, "updatedAt" DESC
+        LIMIT $3 OFFSET $4
+      `, [`${monthPrefix}%`, `${monthPrefix}%`, normalizedLimit, normalizedOffset])
+      : await pgQuery('SELECT * FROM posts WHERE "deletedAt" IS NULL OR "deletedAt" = \'\' ORDER BY date DESC, "updatedAt" DESC LIMIT $1 OFFSET $2', [normalizedLimit, normalizedOffset]);
     return rows.map(postFromRow);
   }
-  return getSqlite().prepare('SELECT * FROM posts ORDER BY date DESC, updatedAt DESC').all().map(postFromRow);
+  return monthPrefix
+    ? getSqlite().prepare(`
+      SELECT * FROM posts
+      WHERE (deletedAt IS NULL OR deletedAt = '')
+        AND (date LIKE ? OR scheduledAt LIKE ?)
+      ORDER BY date DESC, updatedAt DESC
+      LIMIT ? OFFSET ?
+    `).all(`${monthPrefix}%`, `${monthPrefix}%`, normalizedLimit, normalizedOffset).map(postFromRow)
+    : getSqlite().prepare('SELECT * FROM posts WHERE deletedAt IS NULL OR deletedAt = \'\' ORDER BY date DESC, updatedAt DESC LIMIT ? OFFSET ?')
+      .all(normalizedLimit, normalizedOffset).map(postFromRow);
+};
+
+const listSheetSyncPosts = async () => {
+  if (usePostgres) {
+    const rows = await pgQuery(`
+      SELECT * FROM posts
+      WHERE "deletedAt" IS NULL OR "deletedAt" = '' OR ("sheetUrl" IS NOT NULL AND "sheetUrl" != '')
+      ORDER BY date DESC, "updatedAt" DESC
+    `);
+    return rows.map(postFromRow);
+  }
+  return getSqlite().prepare(`
+    SELECT * FROM posts
+    WHERE deletedAt IS NULL OR deletedAt = '' OR (sheetUrl IS NOT NULL AND sheetUrl != '')
+    ORDER BY date DESC, updatedAt DESC
+  `).all().map(postFromRow);
 };
 
 const listDueScheduledPosts = async () => {
@@ -223,6 +309,7 @@ const listDueScheduledPosts = async () => {
     const rows = await pgQuery(`
       SELECT * FROM posts
       WHERE status = 'scheduled'
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
         AND "scheduledAt" IS NOT NULL
         AND "scheduledAt" != ''
         AND "scheduledAt" <= $1
@@ -233,11 +320,62 @@ const listDueScheduledPosts = async () => {
   return getSqlite().prepare(`
     SELECT * FROM posts
     WHERE status = 'scheduled'
+      AND (deletedAt IS NULL OR deletedAt = '')
       AND scheduledAt IS NOT NULL
       AND scheduledAt != ''
       AND scheduledAt <= ?
     ORDER BY scheduledAt ASC
   `).all(now()).map(postFromRow);
+};
+
+const getPost = async (postId) => {
+  const row = usePostgres
+    ? (await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]
+    : getSqlite().prepare('SELECT * FROM posts WHERE id = ?').get(postId);
+  return postFromRow(row);
+};
+
+const claimDueScheduledPosts = async (limit = 10) => {
+  const timestamp = now();
+  if (usePostgres) {
+    const rows = await pgQuery(`
+      WITH due_posts AS (
+        SELECT id FROM posts
+        WHERE status = 'scheduled'
+          AND ("deletedAt" IS NULL OR "deletedAt" = '')
+          AND "scheduledAt" IS NOT NULL
+          AND "scheduledAt" != ''
+          AND "scheduledAt" <= $1
+        ORDER BY "scheduledAt" ASC
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE posts
+      SET status = 'publishing',
+          "publishError" = '',
+          "updatedAt" = $1
+      WHERE id IN (SELECT id FROM due_posts)
+      RETURNING *
+    `, [timestamp, limit]);
+    return rows.map(postFromRow);
+  }
+  return getSqlite().prepare(`
+    UPDATE posts
+    SET status = 'publishing',
+        publishError = '',
+        updatedAt = ?
+    WHERE id IN (
+      SELECT id FROM posts
+      WHERE status = 'scheduled'
+        AND (deletedAt IS NULL OR deletedAt = '')
+        AND scheduledAt IS NOT NULL
+        AND scheduledAt != ''
+        AND scheduledAt <= ?
+      ORDER BY scheduledAt ASC
+      LIMIT ?
+    )
+    RETURNING *
+  `).all(timestamp, timestamp, limit).map(postFromRow);
 };
 
 const getFanpage = async (fanpageId) => {
@@ -248,13 +386,31 @@ const getFanpage = async (fanpageId) => {
   return fanpageFromRow(getSqlite().prepare('SELECT * FROM fanpages WHERE id = ?').get(fanpageId), { includeToken: true });
 };
 
+// Instagram fanpage sharing this Facebook page (same metaPageId), for cross-posting.
+const getInstagramSiblingFanpage = async (metaPageId) => {
+  if (!metaPageId) return null;
+  if (usePostgres) {
+    const rows = await pgQuery(
+      'SELECT * FROM fanpages WHERE "metaPageId" = $1 AND platform = $2 AND ("deletedAt" IS NULL OR "deletedAt" = \'\') LIMIT 1',
+      [metaPageId, 'instagram']
+    );
+    return fanpageFromRow(rows[0], { includeToken: true });
+  }
+  return fanpageFromRow(
+    getSqlite()
+      .prepare('SELECT * FROM fanpages WHERE metaPageId = ? AND platform = ? AND (deletedAt IS NULL OR deletedAt = \'\') LIMIT 1')
+      .get(metaPageId, 'instagram'),
+    { includeToken: true }
+  );
+};
+
 const getConnectedFanpages = async () => {
   if (usePostgres) {
-    const rows = await pgQuery('SELECT * FROM fanpages WHERE connected = TRUE');
+    const rows = await pgQuery('SELECT * FROM fanpages WHERE connected = TRUE AND ("deletedAt" IS NULL OR "deletedAt" = \'\')');
     return rows.map((row) => fanpageFromRow(row, { includeToken: true }));
   }
   return getSqlite()
-    .prepare('SELECT * FROM fanpages WHERE connected = 1')
+    .prepare('SELECT * FROM fanpages WHERE connected = 1 AND (deletedAt IS NULL OR deletedAt = \'\')')
     .all()
     .map((row) => fanpageFromRow(row, { includeToken: true }));
 };
@@ -262,10 +418,10 @@ const getConnectedFanpages = async () => {
 const listAppItems = async (collection) => {
   assertAppCollection(collection);
   if (usePostgres) {
-    const rows = await pgQuery('SELECT * FROM app_items WHERE collection = $1 ORDER BY "updatedAt" DESC', [collection]);
+    const rows = await pgQuery('SELECT * FROM app_items WHERE collection = $1 AND ("deletedAt" IS NULL OR "deletedAt" = \'\') ORDER BY "updatedAt" DESC', [collection]);
     return rows.map(appItemFromRow).filter(Boolean);
   }
-  return getSqlite().prepare('SELECT * FROM app_items WHERE collection = ? ORDER BY updatedAt DESC')
+  return getSqlite().prepare('SELECT * FROM app_items WHERE collection = ? AND (deletedAt IS NULL OR deletedAt = \'\') ORDER BY updatedAt DESC')
     .all(collection)
     .map(appItemFromRow)
     .filter(Boolean);
@@ -274,10 +430,10 @@ const listAppItems = async (collection) => {
 const getAppItem = async (collection, itemId) => {
   assertAppCollection(collection);
   if (usePostgres) {
-    const rows = await pgQuery('SELECT * FROM app_items WHERE collection = $1 AND id = $2', [collection, itemId]);
+    const rows = await pgQuery('SELECT * FROM app_items WHERE collection = $1 AND id = $2 AND ("deletedAt" IS NULL OR "deletedAt" = \'\')', [collection, itemId]);
     return appItemFromRow(rows[0]);
   }
-  return appItemFromRow(getSqlite().prepare('SELECT * FROM app_items WHERE collection = ? AND id = ?').get(collection, itemId));
+  return appItemFromRow(getSqlite().prepare('SELECT * FROM app_items WHERE collection = ? AND id = ? AND (deletedAt IS NULL OR deletedAt = \'\')').get(collection, itemId));
 };
 
 const upsertAppItem = async (collection, item = {}) => {
@@ -322,11 +478,28 @@ const upsertAppItem = async (collection, item = {}) => {
 
 const deleteAppItem = async (collection, itemId) => {
   assertAppCollection(collection);
+  const timestamp = now();
   if (usePostgres) {
-    await pgQuery('DELETE FROM app_items WHERE collection = $1 AND id = $2', [collection, itemId]);
+    await pgQuery('UPDATE app_items SET "deletedAt" = $1, "updatedAt" = $2 WHERE collection = $3 AND id = $4', [timestamp, timestamp, collection, itemId]);
     return;
   }
-  getSqlite().prepare('DELETE FROM app_items WHERE collection = ? AND id = ?').run(collection, itemId);
+  getSqlite().prepare('UPDATE app_items SET deletedAt = ?, updatedAt = ? WHERE collection = ? AND id = ?').run(timestamp, timestamp, collection, itemId);
+};
+
+const writeAuditLog = async ({ actorEmail = '', action, entityType, entityId, changes = {} }) => {
+  const timestamp = now();
+  const auditId = id();
+  if (usePostgres) {
+    await pgQuery(`
+      INSERT INTO audit_log (id, "actorEmail", action, "entityType", "entityId", changes, "createdAt")
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [auditId, actorEmail || null, action, entityType, entityId, JSON.stringify(changes || {}), timestamp]);
+    return;
+  }
+  getSqlite().prepare(`
+    INSERT INTO audit_log (id, actorEmail, action, entityType, entityId, changes, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(auditId, actorEmail || null, action, entityType, entityId, JSON.stringify(changes || {}), timestamp);
 };
 
 const saveSingleton = async (key, value) => {
@@ -354,6 +527,37 @@ const saveSingleton = async (key, value) => {
 
 const getSingleton = async (key) => {
   assertAppSingleton(key);
+  if (usePostgres) {
+    const rows = await pgQuery('SELECT value FROM sync_state WHERE key = $1', [key]);
+    return rows[0] ? parseJson(rows[0].value, null) : null;
+  }
+  const row = getSqlite().prepare('SELECT value FROM sync_state WHERE key = ?').get(key);
+  return row ? parseJson(row.value, null) : null;
+};
+
+const saveState = async (key, value) => {
+  const timestamp = now();
+  if (usePostgres) {
+    await pgQuery(`
+      INSERT INTO sync_state (key, value, "updatedAt")
+      VALUES ($1, $2, $3)
+      ON CONFLICT(key) DO UPDATE SET
+        value = EXCLUDED.value,
+        "updatedAt" = EXCLUDED."updatedAt"
+    `, [key, JSON.stringify(value), timestamp]);
+    return value;
+  }
+  getSqlite().prepare(`
+    INSERT INTO sync_state (key, value, updatedAt)
+    VALUES (@key, @value, @updatedAt)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updatedAt = excluded.updatedAt
+  `).run({ key, value: JSON.stringify(value), updatedAt: timestamp });
+  return value;
+};
+
+const getState = async (key) => {
   if (usePostgres) {
     const rows = await pgQuery('SELECT value FROM sync_state WHERE key = $1', [key]);
     return rows[0] ? parseJson(rows[0].value, null) : null;
@@ -408,6 +612,7 @@ const upsertFanpage = async (fanpage = {}) => {
     instagramBusinessId: fanpage.instagramBusinessId || existing?.instagramBusinessId || null,
     pageAccessTokenEncrypted: encryptedToken || existing?.pageAccessTokenEncrypted || null,
     connected: fanpage.connected === undefined ? !!existing?.connected : !!fanpage.connected,
+    crossPostInstagram: fanpage.crossPostInstagram === undefined ? !!existing?.crossPostInstagram : !!fanpage.crossPostInstagram,
     lastSyncedAt: fanpage.lastSyncedAt || existing?.lastSyncedAt || null,
     syncStatus: fanpage.syncStatus || existing?.syncStatus || null,
     syncError: fanpage.syncError || '',
@@ -420,10 +625,10 @@ const upsertFanpage = async (fanpage = {}) => {
     await pgQuery(`
       INSERT INTO fanpages (
         id, platform, name, link, "imageUrl", "metaPageId", "instagramBusinessId", "pageAccessTokenEncrypted",
-        connected, "lastSyncedAt", "syncStatus", "syncError", kpis, "createdAt", "updatedAt"
+        connected, "lastSyncedAt", "syncStatus", "syncError", kpis, "createdAt", "updatedAt", "crossPostInstagram"
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14, $15
+        $9, $10, $11, $12, $13, $14, $15, $16
       )
       ON CONFLICT(id) DO UPDATE SET
         platform = EXCLUDED.platform,
@@ -438,11 +643,12 @@ const upsertFanpage = async (fanpage = {}) => {
         "syncStatus" = COALESCE(EXCLUDED."syncStatus", fanpages."syncStatus"),
         "syncError" = EXCLUDED."syncError",
         kpis = EXCLUDED.kpis,
-        "updatedAt" = EXCLUDED."updatedAt"
+        "updatedAt" = EXCLUDED."updatedAt",
+        "crossPostInstagram" = EXCLUDED."crossPostInstagram"
     `, [
       data.id, data.platform, data.name, data.link, data.imageUrl, data.metaPageId, data.instagramBusinessId,
       data.pageAccessTokenEncrypted, data.connected, data.lastSyncedAt, data.syncStatus, data.syncError,
-      data.kpis, data.createdAt, data.updatedAt
+      data.kpis, data.createdAt, data.updatedAt, data.crossPostInstagram
     ]);
     return fanpageFromRow((await pgQuery('SELECT * FROM fanpages WHERE id = $1', [fanpageId]))[0]);
   }
@@ -450,10 +656,10 @@ const upsertFanpage = async (fanpage = {}) => {
   getSqlite().prepare(`
     INSERT INTO fanpages (
       id, platform, name, link, imageUrl, metaPageId, instagramBusinessId, pageAccessTokenEncrypted,
-      connected, lastSyncedAt, syncStatus, syncError, kpis, createdAt, updatedAt
+      connected, lastSyncedAt, syncStatus, syncError, kpis, createdAt, updatedAt, crossPostInstagram
     ) VALUES (
       @id, @platform, @name, @link, @imageUrl, @metaPageId, @instagramBusinessId, @pageAccessTokenEncrypted,
-      @connected, @lastSyncedAt, @syncStatus, @syncError, @kpis, @createdAt, @updatedAt
+      @connected, @lastSyncedAt, @syncStatus, @syncError, @kpis, @createdAt, @updatedAt, @crossPostInstagram
     )
     ON CONFLICT(id) DO UPDATE SET
       platform = excluded.platform,
@@ -468,8 +674,9 @@ const upsertFanpage = async (fanpage = {}) => {
       syncStatus = COALESCE(excluded.syncStatus, fanpages.syncStatus),
       syncError = excluded.syncError,
       kpis = excluded.kpis,
-      updatedAt = excluded.updatedAt
-  `).run({ ...data, connected: data.connected ? 1 : 0 });
+      updatedAt = excluded.updatedAt,
+      crossPostInstagram = excluded.crossPostInstagram
+  `).run({ ...data, connected: data.connected ? 1 : 0, crossPostInstagram: data.crossPostInstagram ? 1 : 0 });
   return fanpageFromRow(getSqlite().prepare('SELECT * FROM fanpages WHERE id = ?').get(fanpageId));
 };
 
@@ -478,28 +685,149 @@ const deleteFanpage = async (fanpageId) => {
   await Promise.all(reports
     .filter((report) => report.fanpageId === fanpageId)
     .map((report) => deleteAppItem('adReports', report.id)));
+  const timestamp = now();
   if (usePostgres) {
-    await pgQuery('DELETE FROM fanpages WHERE id = $1', [fanpageId]);
+    await pgQuery('UPDATE fanpages SET "deletedAt" = $1, "updatedAt" = $2 WHERE id = $3', [timestamp, timestamp, fanpageId]);
+    await pgQuery('UPDATE posts SET "deletedAt" = $1, "updatedAt" = $2 WHERE "fanpageId" = $3', [timestamp, timestamp, fanpageId]);
     return;
   }
-  getSqlite().prepare('DELETE FROM fanpages WHERE id = ?').run(fanpageId);
+  getSqlite().prepare('UPDATE fanpages SET deletedAt = ?, updatedAt = ? WHERE id = ?').run(timestamp, timestamp, fanpageId);
+  getSqlite().prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE fanpageId = ?').run(timestamp, timestamp, fanpageId);
 };
 
 const findPostRow = async (post) => {
   if (!post) return null;
+  const hasSheetKey = post.sheetUrl && post.sheetRowKey;
+  const isMetaSource = ['facebook', 'instagram'].includes(post.source);
   if (usePostgres) {
-    if (post.id) return (await pgQuery('SELECT * FROM posts WHERE id = $1', [post.id]))[0] || null;
+    if (hasSheetKey) {
+      const row = (await pgQuery('SELECT * FROM posts WHERE "sheetUrl" = $1 AND "sheetRowKey" = $2', [post.sheetUrl, post.sheetRowKey]))[0] || null;
+      if (row) return row;
+    }
+    if (post.id) {
+      const row = (await pgQuery('SELECT * FROM posts WHERE id = $1', [post.id]))[0] || null;
+      if (row) return row;
+    }
     if (post.externalPostId) {
-      return (await pgQuery('SELECT * FROM posts WHERE source = $1 AND "externalPostId" = $2', [post.source || 'manual', post.externalPostId]))[0] || null;
+      const row = (await pgQuery('SELECT * FROM posts WHERE source = $1 AND "externalPostId" = $2', [post.source || 'manual', post.externalPostId]))[0] || null;
+      if (row) return row;
+      if (isMetaSource && post.fanpageId) {
+        const identityRow = (await pgQuery(`
+          SELECT * FROM posts
+          WHERE "externalPostId" = $1
+            AND "fanpageId" = $2
+            AND ("deletedAt" IS NULL OR "deletedAt" = '')
+          ORDER BY
+            CASE WHEN "sheetUrl" IS NOT NULL AND "sheetUrl" != '' THEN 0 ELSE 1 END,
+            "updatedAt" ASC
+          LIMIT 1
+        `, [post.externalPostId, post.fanpageId]))[0] || null;
+        if (identityRow) return identityRow;
+      }
     }
     return null;
   }
   const db = getSqlite();
-  return post.id
-    ? db.prepare('SELECT * FROM posts WHERE id = ?').get(post.id)
-    : post.externalPostId
-      ? db.prepare('SELECT * FROM posts WHERE source = ? AND externalPostId = ?').get(post.source || 'manual', post.externalPostId)
-      : null;
+  if (hasSheetKey) {
+    const row = db.prepare('SELECT * FROM posts WHERE sheetUrl = ? AND sheetRowKey = ?').get(post.sheetUrl, post.sheetRowKey);
+    if (row) return row;
+  }
+  if (post.id) {
+    const row = db.prepare('SELECT * FROM posts WHERE id = ?').get(post.id);
+    if (row) return row;
+  }
+  if (post.externalPostId) {
+    const row = db.prepare('SELECT * FROM posts WHERE source = ? AND externalPostId = ?').get(post.source || 'manual', post.externalPostId);
+    if (row) return row;
+    if (isMetaSource && post.fanpageId) {
+      const identityRow = db.prepare(`
+        SELECT * FROM posts
+        WHERE externalPostId = ?
+          AND fanpageId = ?
+          AND (deletedAt IS NULL OR deletedAt = '')
+        ORDER BY
+          CASE WHEN sheetUrl IS NOT NULL AND sheetUrl != '' THEN 0 ELSE 1 END,
+          updatedAt ASC
+        LIMIT 1
+      `).get(post.externalPostId, post.fanpageId);
+      if (identityRow) return identityRow;
+    }
+  }
+  return null;
+};
+
+const pruneDuplicatePublishedPosts = async (post) => {
+  if (!post?.id || !post.externalPostId || !post.fanpageId || post.status !== 'published') return post;
+  if (!['facebook', 'instagram'].includes(post.source)) return post;
+  const timestamp = now();
+  if (usePostgres) {
+    const duplicates = await pgQuery(`
+      SELECT * FROM posts
+      WHERE id != $1
+        AND "fanpageId" = $2
+        AND "externalPostId" = $3
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
+    `, [post.id, post.fanpageId, post.externalPostId]);
+    if (!duplicates.length) return post;
+    const sheetSource = duplicates.find((row) => row.sheetUrl || row.sheetRowKey || row.sheetDefaultFanpageId);
+    await pgQuery(`
+      UPDATE posts
+      SET "deletedAt" = $1,
+          "updatedAt" = $1,
+          "sheetUrl" = NULL,
+          "sheetRowKey" = NULL,
+          "sheetDefaultFanpageId" = NULL
+      WHERE id != $2
+        AND "fanpageId" = $3
+        AND "externalPostId" = $4
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
+    `, [timestamp, post.id, post.fanpageId, post.externalPostId]);
+    if (sheetSource && (!post.sheetUrl || !post.sheetRowKey)) {
+      await pgQuery(`
+        UPDATE posts
+        SET "sheetUrl" = COALESCE(NULLIF("sheetUrl", ''), $1),
+            "sheetRowKey" = COALESCE(NULLIF("sheetRowKey", ''), $2),
+            "sheetDefaultFanpageId" = COALESCE(NULLIF("sheetDefaultFanpageId", ''), $3),
+            "updatedAt" = $4
+        WHERE id = $5
+      `, [sheetSource.sheetUrl || null, sheetSource.sheetRowKey || null, sheetSource.sheetDefaultFanpageId || null, timestamp, post.id]);
+    }
+    return getPost(post.id);
+  }
+
+  const db = getSqlite();
+  const duplicates = db.prepare(`
+    SELECT * FROM posts
+    WHERE id != ?
+      AND fanpageId = ?
+      AND externalPostId = ?
+      AND (deletedAt IS NULL OR deletedAt = '')
+  `).all(post.id, post.fanpageId, post.externalPostId);
+  if (!duplicates.length) return post;
+  const sheetSource = duplicates.find((row) => row.sheetUrl || row.sheetRowKey || row.sheetDefaultFanpageId);
+  db.prepare(`
+    UPDATE posts
+    SET deletedAt = ?,
+        updatedAt = ?,
+        sheetUrl = NULL,
+        sheetRowKey = NULL,
+        sheetDefaultFanpageId = NULL
+    WHERE id != ?
+      AND fanpageId = ?
+      AND externalPostId = ?
+      AND (deletedAt IS NULL OR deletedAt = '')
+  `).run(timestamp, timestamp, post.id, post.fanpageId, post.externalPostId);
+  if (sheetSource && (!post.sheetUrl || !post.sheetRowKey)) {
+    db.prepare(`
+      UPDATE posts
+      SET sheetUrl = COALESCE(NULLIF(sheetUrl, ''), ?),
+          sheetRowKey = COALESCE(NULLIF(sheetRowKey, ''), ?),
+          sheetDefaultFanpageId = COALESCE(NULLIF(sheetDefaultFanpageId, ''), ?),
+          updatedAt = ?
+      WHERE id = ?
+    `).run(sheetSource.sheetUrl || null, sheetSource.sheetRowKey || null, sheetSource.sheetDefaultFanpageId || null, timestamp, post.id);
+  }
+  return getPost(post.id);
 };
 
 const upsertPost = async (post = {}) => {
@@ -526,18 +854,31 @@ const upsertPost = async (post = {}) => {
       : (existing?.sheetDefaultFanpageId || null),
     source: post.source || existing?.source || 'manual',
     status: post.status || existing?.status || 'published',
+    deletedAt: post.deletedAt !== undefined
+      ? post.deletedAt
+      : ((post.sheetUrl && post.sheetRowKey) || (post.externalPostId && ['facebook', 'instagram'].includes(post.source))
+        ? null
+        : (existing?.deletedAt || null)),
     createdAt: existing?.createdAt || post.createdAt || timestamp,
     updatedAt: timestamp
   };
+
+  // Match worker/repository.js: reject early with 400 instead of letting a NULL
+  // hit the NOT NULL column and surface as an opaque 500.
+  if (!data.fanpageId || !data.date) {
+    const error = new Error('fanpageId and date are required for posts.');
+    error.status = 400;
+    throw error;
+  }
 
   if (usePostgres) {
     await pgQuery(`
       INSERT INTO posts (
         id, "fanpageId", "externalPostId", title, content, date, "scheduledAt", "publishedAt", permalink, "mediaUrl",
-        "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", source, status, "createdAt", "updatedAt"
+        "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", source, status, "deletedAt", "createdAt", "updatedAt"
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
       )
       ON CONFLICT(id) DO UPDATE SET
         "fanpageId" = EXCLUDED."fanpageId",
@@ -556,23 +897,24 @@ const upsertPost = async (post = {}) => {
         "sheetDefaultFanpageId" = EXCLUDED."sheetDefaultFanpageId",
         source = EXCLUDED.source,
         status = EXCLUDED.status,
+        "deletedAt" = EXCLUDED."deletedAt",
         "updatedAt" = EXCLUDED."updatedAt"
     `, [
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date, data.scheduledAt,
       data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems, data.publishError,
       data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId, data.source,
-      data.status, data.createdAt, data.updatedAt
+      data.status, data.deletedAt, data.createdAt, data.updatedAt
     ]);
-    return postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]);
+    return pruneDuplicatePublishedPosts(postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]));
   }
 
   getSqlite().prepare(`
     INSERT INTO posts (
       id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
-      mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, createdAt, updatedAt
+      mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, deletedAt, createdAt, updatedAt
     ) VALUES (
       @id, @fanpageId, @externalPostId, @title, @content, @date, @scheduledAt, @publishedAt, @permalink, @mediaUrl,
-      @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @source, @status, @createdAt, @updatedAt
+      @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @source, @status, @deletedAt, @createdAt, @updatedAt
     )
     ON CONFLICT(source, externalPostId) WHERE externalPostId IS NOT NULL DO UPDATE SET
       fanpageId = excluded.fanpageId,
@@ -589,6 +931,7 @@ const upsertPost = async (post = {}) => {
       sheetRowKey = excluded.sheetRowKey,
       sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
       status = excluded.status,
+      deletedAt = excluded.deletedAt,
       updatedAt = excluded.updatedAt
     ON CONFLICT(id) DO UPDATE SET
       fanpageId = excluded.fanpageId,
@@ -607,17 +950,79 @@ const upsertPost = async (post = {}) => {
       sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
       source = excluded.source,
       status = excluded.status,
+      deletedAt = excluded.deletedAt,
       updatedAt = excluded.updatedAt
   `).run(data);
-  return postFromRow(getSqlite().prepare('SELECT * FROM posts WHERE id = ?').get(postId));
+  return pruneDuplicatePublishedPosts(postFromRow(getSqlite().prepare('SELECT * FROM posts WHERE id = ?').get(postId)));
+};
+
+const markMissingSyncedPostsDeleted = async ({ fanpageId, source, externalPostIds = [], sinceDate = '' }) => {
+  const timestamp = now();
+  const ids = [...new Set((externalPostIds || []).filter(Boolean))];
+  // Guard: empty id set means the sync batch returned nothing (transient Meta
+  // hiccup). Without an id list the NOT IN clause is dropped and every published
+  // post would be soft-deleted. Never prune on an empty batch.
+  if (ids.length === 0) return 0;
+  if (usePostgres) {
+    const params = [timestamp, fanpageId, source];
+    const clauses = [
+      '"fanpageId" = $2',
+      'source = $3',
+      '"externalPostId" IS NOT NULL',
+      '("deletedAt" IS NULL OR "deletedAt" = \'\')',
+      'status = \'published\''
+    ];
+    if (sinceDate) {
+      params.push(sinceDate);
+      clauses.push(`date >= $${params.length}`);
+    }
+    if (ids.length) {
+      const placeholders = ids.map((value) => {
+        params.push(value);
+        return `$${params.length}`;
+      }).join(', ');
+      clauses.push(`"externalPostId" NOT IN (${placeholders})`);
+    }
+    const rows = await pgQuery(`
+      UPDATE posts
+      SET "deletedAt" = $1, "updatedAt" = $1
+      WHERE ${clauses.join(' AND ')}
+      RETURNING id
+    `, params);
+    return rows.length;
+  }
+
+  const params = [timestamp, fanpageId, source];
+  const clauses = [
+    'fanpageId = ?',
+    'source = ?',
+    'externalPostId IS NOT NULL',
+    '(deletedAt IS NULL OR deletedAt = \'\')',
+    "status = 'published'"
+  ];
+  if (sinceDate) {
+    clauses.push('date >= ?');
+    params.push(sinceDate);
+  }
+  if (ids.length) {
+    clauses.push(`externalPostId NOT IN (${ids.map(() => '?').join(', ')})`);
+    params.push(...ids);
+  }
+  const result = getSqlite().prepare(`
+    UPDATE posts
+    SET deletedAt = ?, updatedAt = ?
+    WHERE ${clauses.join(' AND ')}
+  `).run(timestamp, ...params);
+  return result.changes || 0;
 };
 
 const deletePost = async (postId) => {
+  const timestamp = now();
   if (usePostgres) {
-    await pgQuery('DELETE FROM posts WHERE id = $1', [postId]);
+    await pgQuery('UPDATE posts SET "deletedAt" = $1, "updatedAt" = $2 WHERE id = $3', [timestamp, timestamp, postId]);
     return;
   }
-  getSqlite().prepare('DELETE FROM posts WHERE id = ?').run(postId);
+  getSqlite().prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE id = ?').run(timestamp, timestamp, postId);
 };
 
 const setPostPublishState = async (postId, updates = {}) => {
@@ -717,19 +1122,27 @@ module.exports = {
   close,
   listFanpages,
   listPosts,
+  listSheetSyncPosts,
   listDueScheduledPosts,
+  getPost,
+  claimDueScheduledPosts,
   getFanpage,
+  getInstagramSiblingFanpage,
   getConnectedFanpages,
   getBootstrapData,
   listAppItems,
   getAppItem,
   upsertAppItem,
   deleteAppItem,
+  writeAuditLog,
   getSingleton,
   saveSingleton,
+  getState,
+  saveState,
   upsertFanpage,
   deleteFanpage,
   upsertPost,
+  markMissingSyncedPostsDeleted,
   deletePost,
   setPostPublishState,
   saveMetaAccount,

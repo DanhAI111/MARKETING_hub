@@ -36,6 +36,7 @@ db.exec(`
     syncStatus TEXT,
     syncError TEXT,
     kpis TEXT,
+    deletedAt TEXT,
     createdAt TEXT NOT NULL,
     updatedAt TEXT NOT NULL
   );
@@ -58,6 +59,7 @@ db.exec(`
     sheetDefaultFanpageId TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     status TEXT NOT NULL DEFAULT 'published',
+    deletedAt TEXT,
     createdAt TEXT NOT NULL,
     updatedAt TEXT NOT NULL,
     FOREIGN KEY (fanpageId) REFERENCES fanpages(id) ON DELETE CASCADE
@@ -77,10 +79,30 @@ db.exec(`
     collection TEXT NOT NULL,
     id TEXT NOT NULL,
     data TEXT NOT NULL,
+    deletedAt TEXT,
     createdAt TEXT NOT NULL,
     updatedAt TEXT NOT NULL,
     PRIMARY KEY (collection, id)
   );
+
+  CREATE TABLE IF NOT EXISTS rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 0,
+    windowStart INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    actorEmail TEXT,
+    action TEXT NOT NULL,
+    entityType TEXT NOT NULL,
+    entityId TEXT NOT NULL,
+    changes TEXT,
+    createdAt TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_audit_log_entity
+    ON audit_log(entityType, entityId, createdAt);
 `);
 
 const ensureColumn = (table, column, definition) => {
@@ -98,6 +120,10 @@ ensureColumn('posts', 'publishError', 'TEXT');
 ensureColumn('posts', 'sheetUrl', 'TEXT');
 ensureColumn('posts', 'sheetRowKey', 'TEXT');
 ensureColumn('posts', 'sheetDefaultFanpageId', 'TEXT');
+ensureColumn('posts', 'deletedAt', 'TEXT');
+ensureColumn('app_items', 'deletedAt', 'TEXT');
+ensureColumn('fanpages', 'deletedAt', 'TEXT');
+ensureColumn('fanpages', 'crossPostInstagram', 'INTEGER NOT NULL DEFAULT 0');
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row

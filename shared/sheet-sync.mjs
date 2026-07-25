@@ -12,14 +12,22 @@ const sourceConfigsFromPosts = (posts) => {
   return [...configs.values()];
 };
 
+const scheduleMatches = (post, item) =>
+  post.fanpageId === item.fanpageId
+  && post.title === item.title
+  && String(post.content || '').trim() === item.content
+  && post.scheduledAt === item.scheduledAt
+  && JSON.stringify(post.mediaItems || []) === JSON.stringify(item.mediaItems || []);
+
 export const syncScheduleSheets = async ({
   repo,
   fetchCsv,
   sourceUrl = '',
   defaultFanpageId = '',
-  timezoneOffset = '+07:00'
+  timezoneOffset = '+07:00',
+  nowIso = new Date().toISOString()
 }) => {
-  const posts = await repo.listPosts();
+  const posts = await (repo.listSheetSyncPosts ? repo.listSheetSyncPosts() : repo.listPosts());
   const configs = sourceUrl
     ? [{ sourceUrl, defaultFanpageId }]
     : sourceConfigsFromPosts(posts);
@@ -38,7 +46,7 @@ export const syncScheduleSheets = async ({
         defaultFanpageId: config.defaultFanpageId,
         timezoneOffset
       });
-      const detail = { sourceUrl: config.sourceUrl, rows: items.length, created: 0, updated: 0, skipped: 0, invalid: 0 };
+      const detail = { sourceUrl: config.sourceUrl, rows: items.length, created: 0, updated: 0, skipped: 0, invalid: 0, warnings: [] };
 
       for (const item of items) {
         if (!item.valid) {
@@ -48,13 +56,23 @@ export const syncScheduleSheets = async ({
         }
         const key = `${config.sourceUrl}\n${item.sheetRowKey}`;
         const linked = linkedPosts.get(key);
-        const matchingLegacy = !linked && posts.find((post) =>
+        const legacyMatches = linked ? [] : posts.filter((post) =>
           !post.sheetUrl
           && !adoptedPostIds.has(post.id)
           && post.fanpageId === item.fanpageId
           && post.scheduledAt === item.scheduledAt
           && String(post.content || '').trim() === item.content
         );
+        if (legacyMatches.length > 1) {
+          detail.skipped++;
+          result.skipped++;
+          detail.warnings.push({
+            rowKey: item.sheetRowKey,
+            warning: 'Bỏ qua adopt legacy vì có nhiều bài cũ trùng fanpage/nội dung/thời gian.'
+          });
+          continue;
+        }
+        const matchingLegacy = legacyMatches[0] || null;
         const adoptable = matchingLegacy && !['published', 'publishing'].includes(matchingLegacy.status)
           ? matchingLegacy
           : null;
@@ -72,8 +90,37 @@ export const syncScheduleSheets = async ({
           result.skipped++;
           continue;
         }
-        const existing = linked || adoptable;
+        let existing = linked || adoptable;
+        let effectiveKey = item.sheetRowKey;
         if (existing && ['published', 'publishing'].includes(existing.status)) {
+          // A post with this sheet row id (STT) was already published. If the
+          // scheduled time is unchanged it's that same row → skip. If the time
+          // differs, the STT was reused for a brand-new post (users recycle STT
+          // numbers across batches); key the new post by row id + time so it
+          // becomes its own queue entry instead of being blocked by the old one.
+          if (existing.scheduledAt === item.scheduledAt) {
+            detail.skipped++;
+            result.skipped++;
+            continue;
+          }
+          effectiveKey = `${item.sheetRowKey}@${item.scheduledAt}`;
+          existing = linkedPosts.get(`${config.sourceUrl}\n${effectiveKey}`) || null;
+          if (existing && ['published', 'publishing'].includes(existing.status)) {
+            detail.skipped++;
+            result.skipped++;
+            continue;
+          }
+        }
+        if (existing?.status === 'failed' && scheduleMatches(existing, item)) {
+          detail.skipped++;
+          result.skipped++;
+          continue;
+        }
+        // Never import a brand-new row whose scheduled time is already past: it
+        // would be claimed and published immediately, re-posting old content.
+        // Only future rows enter the queue as new posts; existing posts (any
+        // time) may still be updated in place.
+        if (!existing && item.scheduledAt && item.scheduledAt <= nowIso) {
           detail.skipped++;
           result.skipped++;
           continue;
@@ -91,13 +138,13 @@ export const syncScheduleSheets = async ({
           mediaItems: item.mediaItems,
           publishError: '',
           sheetUrl: config.sourceUrl,
-          sheetRowKey: item.sheetRowKey,
+          sheetRowKey: effectiveKey,
           sheetDefaultFanpageId: config.defaultFanpageId || '',
           source: 'scheduled-sheet',
           status: 'scheduled'
         });
         if (adoptable) adoptedPostIds.add(adoptable.id);
-        linkedPosts.set(key, saved);
+        linkedPosts.set(`${config.sourceUrl}\n${effectiveKey}`, saved);
         if (existing) {
           detail.updated++;
           result.updated++;

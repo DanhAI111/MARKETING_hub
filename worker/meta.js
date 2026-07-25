@@ -37,11 +37,56 @@ const getGoogleDriveFileId = (rawUrl) => {
   }
 };
 
+const getGoogleDriveFolderId = (rawUrl) => {
+  try {
+    const url = new URL(rawUrl);
+    if (!/(^|\.)drive\.google\.com$/i.test(url.hostname)) return '';
+    return url.pathname.match(/\/drive\/folders\/([^/]+)/)?.[1] || '';
+  } catch {
+    return '';
+  }
+};
+
 const normalizeMediaUrl = (rawUrl) => {
   const fileId = getGoogleDriveFileId(rawUrl);
   return fileId
     ? `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`
     : rawUrl;
+};
+
+const googleDriveThumbnailUrl = (fileId) =>
+  `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w1600`;
+
+const decodeHtml = (value = '') => value
+  .replace(/&amp;/g, '&')
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, "'")
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>');
+
+const listGoogleDriveFolderMedia = async (folderId) => {
+  const url = `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}#grid`;
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`Không thể đọc folder Google Drive (HTTP ${response.status}). Hãy bật quyền "Anyone with the link".`);
+  }
+  const html = await response.text();
+  const entries = [];
+  const pattern = /<div class="flip-entry"[^>]*id="entry-([^"]+)"[\s\S]*?<div class="flip-entry-title">([^<]+)<\/div>/g;
+  for (const match of html.matchAll(pattern)) {
+    const name = decodeHtml(match[2]).trim();
+    if (!/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name)) continue;
+    entries.push({
+      type: 'image',
+      url: googleDriveThumbnailUrl(match[1]),
+      name
+    });
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  if (!entries.length) {
+    throw new Error('Folder Google Drive không có ảnh hợp lệ hoặc chưa được chia sẻ công khai.');
+  }
+  return entries.slice(0, 10);
 };
 
 const filenameFromDisposition = (value = '') => {
@@ -56,11 +101,13 @@ const isVideoName = (value = '') => /\.(mp4|mov|m4v|avi|webm|mkv)(?:$|[?#])/i.te
 
 const resolveMediaItem = async (media) => {
   const originalUrl = media?.url || '';
+  const driveFolderId = getGoogleDriveFolderId(originalUrl);
+  if (driveFolderId) return listGoogleDriveFolderMedia(driveFolderId);
   const driveFileId = getGoogleDriveFileId(originalUrl);
   const resolved = { ...media, url: normalizeMediaUrl(originalUrl) };
   if (!driveFileId) {
     if (media?.type === 'video' || isVideoName(originalUrl) || isVideoName(media?.name)) resolved.type = 'video';
-    return resolved;
+    return [resolved];
   }
 
   const response = await fetch(resolved.url, { method: 'HEAD', redirect: 'follow' });
@@ -71,8 +118,19 @@ const resolveMediaItem = async (media) => {
   const contentType = response.headers.get('content-type') || '';
   resolved.name = filename || resolved.name;
   resolved.type = contentType.startsWith('video/') || isVideoName(filename) ? 'video' : 'image';
-  return resolved;
+  if (resolved.type === 'image') resolved.url = googleDriveThumbnailUrl(driveFileId);
+  return [resolved];
 };
+
+const resolveMediaItems = async (post) => {
+  const groups = await Promise.all(getMediaItems(post).map(resolveMediaItem));
+  return groups.flat().slice(0, 10);
+};
+
+const getOldestSyncDate = (dates = []) => dates
+  .filter(Boolean)
+  .map((value) => String(value).slice(0, 10))
+  .sort()[0] || '';
 
 const getPostMessage = (post) => (post.content || post.title || '').trim();
 const getMediaItems = (post) => {
@@ -186,7 +244,7 @@ export class MetaService {
       throw new Error('Fanpage Facebook chưa có Page access token. Vui lòng liên kết Meta lại.');
     }
     const message = getPostMessage(post);
-    const mediaItems = await Promise.all(getMediaItems(post).map(resolveMediaItem));
+    const mediaItems = await resolveMediaItems(post);
     if (!mediaItems.length) {
       const result = await this.graphPost(`${fanpage.metaPageId}/feed`, { access_token: token, message });
       return {
@@ -213,12 +271,18 @@ export class MetaService {
         pageId: fanpage.metaPageId,
         token,
         media: mediaItems[0],
-        caption: message,
-        published: true
+        caption: '',
+        published: false
+      });
+      if (!result.id) throw new Error('Không thể tải ảnh lên Facebook.');
+      const feedResult = await this.graphPost(`${fanpage.metaPageId}/feed`, {
+        access_token: token,
+        message,
+        attached_media: JSON.stringify([{ media_fbid: result.id }])
       });
       return {
-        externalPostId: result.post_id || result.id || '',
-        permalink: result.post_id ? `https://www.facebook.com/${result.post_id}` : '',
+        externalPostId: feedResult.id || '',
+        permalink: feedResult.id ? `https://www.facebook.com/${feedResult.id}` : '',
         mediaUrl: mediaItems[0].url || ''
       };
     }
@@ -254,7 +318,7 @@ export class MetaService {
     if (!token || !fanpage.instagramBusinessId) {
       throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
     }
-    const media = await resolveMediaItem(getMediaItems(post)[0]);
+    const media = (await resolveMediaItem(getMediaItems(post)[0]))[0];
     if (!media?.url) throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
     if (!/^https?:\/\//i.test(media.url)) {
       throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
@@ -285,8 +349,26 @@ export class MetaService {
     const fanpage = await this.repo.getFanpage(post.fanpageId);
     if (!fanpage) throw new Error('Không tìm thấy fanpage để đăng bài.');
     if (!fanpage.connected) throw new Error('Fanpage chưa liên kết Meta.');
-    if (fanpage.platform === 'facebook') return this.publishFacebookPost(fanpage, post);
-    if (fanpage.platform === 'instagram') return this.publishInstagramPost(fanpage, post);
+    if (fanpage.platform === 'facebook') {
+      // Retry-idempotent: if FB already published (post.externalPostId set) but the
+      // Instagram cross-post failed, reuse the FB result instead of posting twice.
+      const fbResult = post.externalPostId
+        ? { externalPostId: post.externalPostId, permalink: post.permalink || '', mediaUrl: post.mediaUrl || '' }
+        : await this.publishFacebookPost(fanpage, post);
+
+      if (fanpage.crossPostInstagram) {
+        const igPage = await this.repo.getInstagramSiblingFanpage(fanpage.metaPageId);
+        if (igPage) {
+          // Persist FB result before IG attempt so a failed IG keeps the FB id.
+          if (!post.externalPostId) {
+            await this.repo.setPostPublishState(post.id, { ...fbResult, source: 'facebook' });
+          }
+          await this.publishInstagramPost(igPage, post);
+        }
+      }
+      return { ...fbResult, source: 'facebook' };
+    }
+    if (fanpage.platform === 'instagram') return { ...await this.publishInstagramPost(fanpage, post), source: 'instagram' };
     throw new Error(`Chưa hỗ trợ đăng tự động cho nền tảng ${fanpage.platform}.`);
   }
 
@@ -392,7 +474,7 @@ export class MetaService {
 
   async fetchFacebookPostBatch(fanpage, token, limit = 100) {
     const postEdges = ['published_posts', 'posts', 'feed'];
-    const fieldSets = ['id,message,created_time,updated_time,permalink_url', 'id,created_time,updated_time'];
+    const fieldSets = ['id,message,created_time,updated_time,permalink_url,full_picture', 'id,created_time,updated_time'];
     const edgeErrors = [];
     for (const edge of postEdges) {
       for (const fields of fieldSets) {
@@ -420,8 +502,12 @@ export class MetaService {
     if (!token || !fanpage.metaPageId) return 0;
     const { posts } = await this.fetchFacebookPostBatch(fanpage, token, limit);
     let count = 0;
+    const syncedIds = [];
+    const syncedDates = [];
     for (const post of posts) {
       const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
+      syncedIds.push(post.id);
+      syncedDates.push(publishedAt);
       await this.repo.upsertPost({
         fanpageId: fanpage.id,
         externalPostId: post.id,
@@ -436,6 +522,12 @@ export class MetaService {
       });
       count++;
     }
+    await this.repo.markMissingSyncedPostsDeleted?.({
+      fanpageId: fanpage.id,
+      source: 'facebook',
+      externalPostIds: syncedIds,
+      sinceDate: getOldestSyncDate(syncedDates)
+    });
     return count;
   }
 
@@ -452,8 +544,12 @@ export class MetaService {
       fields: 'id,timestamp'
     }));
     let count = 0;
+    const syncedIds = [];
+    const syncedDates = [];
     for (const item of media.data || []) {
       const publishedAt = item.timestamp || new Date().toISOString();
+      syncedIds.push(item.id);
+      syncedDates.push(publishedAt);
       await this.repo.upsertPost({
         fanpageId: fanpage.id,
         externalPostId: item.id,
@@ -467,6 +563,12 @@ export class MetaService {
       });
       count++;
     }
+    await this.repo.markMissingSyncedPostsDeleted?.({
+      fanpageId: fanpage.id,
+      source: 'instagram',
+      externalPostIds: syncedIds,
+      sinceDate: getOldestSyncDate(syncedDates)
+    });
     return count;
   }
 

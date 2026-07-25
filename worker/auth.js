@@ -1,7 +1,10 @@
 import { fromBase64Url, safeEqual, sign, toBase64Url } from './crypto.js';
+import { readRequiredSecret } from './security.js';
 
 const COOKIE_NAME = 'mh_session';
+const CSRF_COOKIE_NAME = 'mh_csrf';
 const ONE_WEEK_SECONDS = 60 * 60 * 24 * 7;
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const splitList = (value) => String(value || '')
   .split(',')
@@ -49,7 +52,17 @@ export class AuthService {
   }
 
   sessionSecret() {
-    return this.env.SESSION_SECRET || this.env.TOKEN_ENCRYPTION_KEY || 'local-dev-session-secret';
+    return readRequiredSecret(this.env, 'SESSION_SECRET', this.env.TOKEN_ENCRYPTION_KEY || 'local-dev-session-secret');
+  }
+
+  cookieOptions({ httpOnly = true, maxAge = ONE_WEEK_SECONDS } = {}) {
+    return [
+      httpOnly ? 'HttpOnly' : '',
+      'Secure',
+      'Path=/',
+      'SameSite=Lax',
+      `Max-Age=${maxAge}`
+    ].filter(Boolean).join('; ');
   }
 
   safeNext(value) {
@@ -57,13 +70,19 @@ export class AuthService {
     return next.startsWith('/') && !next.startsWith('//') ? next : '/';
   }
 
-  isAllowedUser(email) {
+  async isAllowedUser(email) {
     const normalized = String(email || '').toLowerCase();
     const allowedEmails = splitList(this.env.ALLOWED_EMAILS);
     const allowedDomains = splitList(this.env.ALLOWED_EMAIL_DOMAINS);
-    if (!allowedEmails.length && !allowedDomains.length) return true;
+    const allowEmployeeEmails = this.env.ALLOW_EMPLOYEE_EMAILS === '1';
     const domain = normalized.split('@')[1] || '';
-    return allowedEmails.includes(normalized) || allowedDomains.includes(domain);
+    if (allowedEmails.includes(normalized) || allowedDomains.includes(domain)) return true;
+    if (allowEmployeeEmails) {
+      const employees = await this.repo.listAppItems('employees').catch(() => []);
+      return employees.some((employee) => String(employee.email || '').trim().toLowerCase() === normalized);
+    }
+    if (!allowedEmails.length && !allowedDomains.length) return true;
+    return false;
   }
 
   async readSession() {
@@ -90,11 +109,38 @@ export class AuthService {
       expiresAt: Date.now() + ONE_WEEK_SECONDS * 1000
     }));
     const signature = await sign(payload, this.sessionSecret());
-    return `${COOKIE_NAME}=${payload}.${signature}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=${ONE_WEEK_SECONDS}`;
+    return `${COOKIE_NAME}=${payload}.${signature}; ${this.cookieOptions({ httpOnly: true })}`;
+  }
+
+  csrfToken() {
+    return crypto.randomUUID().replace(/-/g, '');
+  }
+
+  csrfCookie(token = this.csrfToken()) {
+    return `${CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; ${this.cookieOptions({ httpOnly: false })}`;
   }
 
   clearCookie() {
-    return `${COOKIE_NAME}=; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=0`;
+    return `${COOKIE_NAME}=; ${this.cookieOptions({ httpOnly: true, maxAge: 0 })}`;
+  }
+
+  clearCsrfCookie() {
+    return `${CSRF_COOKIE_NAME}=; ${this.cookieOptions({ httpOnly: false, maxAge: 0 })}`;
+  }
+
+  verifyCsrf() {
+    const method = this.request.method.toUpperCase();
+    const path = new URL(this.request.url).pathname;
+    if (!MUTATING_METHODS.has(method) || !path.startsWith('/api/')) {
+      return true;
+    }
+    const cookies = parseCookies(this.request);
+    const cookieToken = cookies[CSRF_COOKIE_NAME] || '';
+    const headerToken = this.request.headers.get('x-csrf-token') || '';
+    if (cookieToken && headerToken && safeEqual(cookieToken, headerToken)) return true;
+    const error = new Error('CSRF token không hợp lệ');
+    error.status = 403;
+    throw error;
   }
 
   loginHtml(error = '', next = '/') {
@@ -121,7 +167,7 @@ export class AuthService {
 <body>
   <main>
     <h1>Marketing Hub</h1>
-    <p>Đăng nhập bằng tài khoản Google công ty để sử dụng dữ liệu chung.</p>
+    <p>Đăng nhập bằng Gmail cá nhân hoặc tài khoản Google được cấp quyền để sử dụng dữ liệu chung.</p>
     ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
     ${this.env.ADMIN_PASSWORD ? `
       <form method="post" action="/login">
@@ -170,6 +216,7 @@ export class AuthService {
     }
     const headers = new Headers({ Location: new URL(this.safeNext(form.get('next')), this.origin).toString() });
     headers.append('Set-Cookie', await this.sessionCookie({ email: 'admin@marketing-hub.local', name: 'Administrator', picture: '' }));
+    headers.append('Set-Cookie', this.csrfCookie());
     return new Response(null, { status: 302, headers });
   }
 
@@ -197,7 +244,7 @@ export class AuthService {
       const profile = await userResponse.json().catch(() => ({}));
       if (!userResponse.ok || !profile.email) throw new Error('Không thể đọc thông tin tài khoản Google.');
       if (profile.email_verified === false) throw new Error('Email Google chưa được xác minh.');
-      if (!this.isAllowedUser(profile.email)) {
+      if (!(await this.isAllowedUser(profile.email))) {
         throw new Error('Tài khoản này không nằm trong danh sách được phép truy cập.');
       }
       const headers = new Headers({ Location: new URL(state.next || '/', this.origin).toString() });
@@ -206,6 +253,7 @@ export class AuthService {
         name: profile.name || profile.email,
         picture: profile.picture || ''
       }));
+      headers.append('Set-Cookie', this.csrfCookie());
       return new Response(null, { status: 302, headers });
     } catch (error) {
       return Response.redirect(`${this.origin}/login?error=${encodeURIComponent(error.message || 'Không thể đăng nhập bằng Google')}`, 302);

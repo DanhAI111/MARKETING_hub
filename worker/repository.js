@@ -1,4 +1,5 @@
 import { decrypt, encrypt } from './crypto.js';
+import { readRequiredSecret } from './security.js';
 
 const APP_COLLECTIONS = [
   'tasks',
@@ -28,10 +29,12 @@ const fanpageFromRow = (row, { includeToken = false } = {}) => {
     metaPageId: row.metaPageId || '',
     instagramBusinessId: row.instagramBusinessId || '',
     connected: !!row.connected,
+    crossPostInstagram: !!row.crossPostInstagram,
     lastSyncedAt: row.lastSyncedAt || '',
     syncStatus: row.syncStatus || '',
     syncError: row.syncError || '',
     kpis: parseJson(row.kpis, {}),
+    deletedAt: row.deletedAt || '',
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
@@ -57,6 +60,7 @@ const postFromRow = (row) => row && ({
   sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
   source: row.source,
   status: row.status,
+  deletedAt: row.deletedAt || '',
   createdAt: row.createdAt,
   updatedAt: row.updatedAt
 });
@@ -66,7 +70,7 @@ const appItemFromRow = (row) => row && parseJson(row.data, null);
 export class Repository {
   constructor(env) {
     this.db = env.DB;
-    this.tokenSecret = env.TOKEN_ENCRYPTION_KEY || 'dev-only-marketing-hub-token-key';
+    this.tokenSecret = readRequiredSecret(env, 'TOKEN_ENCRYPTION_KEY', 'dev-only-marketing-hub-token-key');
   }
 
   assertCollection(collection) {
@@ -86,12 +90,53 @@ export class Repository {
   }
 
   async listFanpages() {
-    const { results } = await this.db.prepare('SELECT * FROM fanpages ORDER BY name COLLATE NOCASE').all();
+    const { results } = await this.db.prepare(`
+      SELECT * FROM fanpages
+      WHERE deletedAt IS NULL OR deletedAt = ''
+      ORDER BY name COLLATE NOCASE
+    `).all();
     return results.map((row) => fanpageFromRow(row));
   }
 
-  async listPosts() {
-    const { results } = await this.db.prepare('SELECT * FROM posts ORDER BY date DESC, updatedAt DESC').all();
+  async listPosts({ month = '', pending = false, limit = 500, offset = 0 } = {}) {
+    const normalizedLimit = Math.min(Math.max(Number(limit) || 500, 1), 1000);
+    const normalizedOffset = Math.max(Number(offset) || 0, 0);
+    // Publishing queue: every post not yet published, regardless of month, so
+    // future-dated schedules are never hidden by the reporting-month filter.
+    if (pending) {
+      const { results } = await this.db.prepare(
+        `SELECT * FROM posts
+          WHERE (deletedAt IS NULL OR deletedAt = '')
+            AND status != 'published'
+          ORDER BY scheduledAt ASC, updatedAt DESC
+          LIMIT ? OFFSET ?`
+      ).bind(normalizedLimit, normalizedOffset).all();
+      return results.map(postFromRow);
+    }
+    const monthPrefix = String(month || '').trim();
+    const sql = monthPrefix
+      ? `SELECT * FROM posts
+          WHERE (deletedAt IS NULL OR deletedAt = '')
+            AND (date LIKE ? OR scheduledAt LIKE ?)
+          ORDER BY date DESC, updatedAt DESC
+          LIMIT ? OFFSET ?`
+      : `SELECT * FROM posts
+          WHERE deletedAt IS NULL OR deletedAt = ''
+          ORDER BY date DESC, updatedAt DESC
+          LIMIT ? OFFSET ?`;
+    const statement = this.db.prepare(sql);
+    const { results } = monthPrefix
+      ? await statement.bind(`${monthPrefix}%`, `${monthPrefix}%`, normalizedLimit, normalizedOffset).all()
+      : await statement.bind(normalizedLimit, normalizedOffset).all();
+    return results.map(postFromRow);
+  }
+
+  async listSheetSyncPosts() {
+    const { results } = await this.db.prepare(`
+      SELECT * FROM posts
+      WHERE deletedAt IS NULL OR deletedAt = '' OR (sheetUrl IS NOT NULL AND sheetUrl != '')
+      ORDER BY date DESC, updatedAt DESC
+    `).all();
     return results.map(postFromRow);
   }
 
@@ -99,6 +144,7 @@ export class Repository {
     const { results } = await this.db.prepare(`
       SELECT * FROM posts
       WHERE status = 'scheduled'
+        AND (deletedAt IS NULL OR deletedAt = '')
         AND scheduledAt IS NOT NULL
         AND scheduledAt != ''
         AND scheduledAt <= ?
@@ -108,6 +154,32 @@ export class Repository {
     return results.map(postFromRow);
   }
 
+  async claimDueScheduledPosts(limit = 10) {
+    const timestamp = now();
+    const { results } = await this.db.prepare(`
+      UPDATE posts
+      SET status = 'publishing',
+          publishError = '',
+          updatedAt = ?
+      WHERE id IN (
+        SELECT id FROM posts
+        WHERE status = 'scheduled'
+          AND (deletedAt IS NULL OR deletedAt = '')
+          AND scheduledAt IS NOT NULL
+          AND scheduledAt != ''
+          AND scheduledAt <= ?
+        ORDER BY scheduledAt ASC
+        LIMIT ?
+      )
+      RETURNING *
+    `).bind(timestamp, timestamp, limit).all();
+    return results.map(postFromRow);
+  }
+
+  async getPost(postId) {
+    return postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first());
+  }
+
   async getFanpage(fanpageId) {
     return fanpageFromRow(
       await this.db.prepare('SELECT * FROM fanpages WHERE id = ?').bind(fanpageId).first(),
@@ -115,15 +187,32 @@ export class Repository {
     );
   }
 
+  async getInstagramSiblingFanpage(metaPageId) {
+    if (!metaPageId) return null;
+    return fanpageFromRow(
+      await this.db.prepare(
+        "SELECT * FROM fanpages WHERE metaPageId = ? AND platform = 'instagram' AND (deletedAt IS NULL OR deletedAt = '') LIMIT 1"
+      ).bind(metaPageId).first(),
+      { includeToken: true }
+    );
+  }
+
   async getConnectedFanpages() {
-    const { results } = await this.db.prepare('SELECT * FROM fanpages WHERE connected = 1').all();
+    const { results } = await this.db.prepare(`
+      SELECT * FROM fanpages
+      WHERE connected = 1
+        AND (deletedAt IS NULL OR deletedAt = '')
+    `).all();
     return results.map((row) => fanpageFromRow(row, { includeToken: true }));
   }
 
   async listAppItems(collection) {
     this.assertCollection(collection);
     const { results } = await this.db.prepare(
-      'SELECT * FROM app_items WHERE collection = ? ORDER BY updatedAt DESC'
+      `SELECT * FROM app_items
+       WHERE collection = ?
+         AND (deletedAt IS NULL OR deletedAt = '')
+       ORDER BY updatedAt DESC`
     ).bind(collection).all();
     return results.map(appItemFromRow).filter(Boolean);
   }
@@ -131,7 +220,9 @@ export class Repository {
   async getAppItem(collection, itemId) {
     this.assertCollection(collection);
     return appItemFromRow(await this.db.prepare(
-      'SELECT * FROM app_items WHERE collection = ? AND id = ?'
+      `SELECT * FROM app_items
+       WHERE collection = ? AND id = ?
+         AND (deletedAt IS NULL OR deletedAt = '')`
     ).bind(collection, itemId).first());
   }
 
@@ -159,8 +250,43 @@ export class Repository {
 
   async deleteAppItem(collection, itemId) {
     this.assertCollection(collection);
-    await this.db.prepare('DELETE FROM app_items WHERE collection = ? AND id = ?')
-      .bind(collection, itemId).run();
+    const timestamp = now();
+    await this.db.prepare('UPDATE app_items SET deletedAt = ?, updatedAt = ? WHERE collection = ? AND id = ?')
+      .bind(timestamp, timestamp, collection, itemId).run();
+  }
+
+  async writeAuditLog({ actorEmail = '', action, entityType, entityId, changes = {} }) {
+    await this.db.prepare(`
+      INSERT INTO audit_log (id, actorEmail, action, entityType, entityId, changes, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      actorEmail || null,
+      action,
+      entityType,
+      entityId,
+      JSON.stringify(changes || {}),
+      now()
+    ).run();
+  }
+
+  async checkRateLimit(key, { limit, windowSeconds }) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const windowStart = nowSeconds - (nowSeconds % windowSeconds);
+    const row = await this.db.prepare(`
+      INSERT INTO rate_limits (key, count, windowStart)
+      VALUES (?, 1, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        count = CASE
+          WHEN rate_limits.windowStart = excluded.windowStart THEN rate_limits.count + 1
+          ELSE 1
+        END,
+        windowStart = excluded.windowStart
+      RETURNING count, windowStart
+    `).bind(key, windowStart).first();
+    const count = Number(row?.count || 1);
+    const retryAfter = Math.max(1, windowStart + windowSeconds - nowSeconds);
+    return { allowed: count <= limit, limit, count, retryAfter };
   }
 
   async saveSingleton(key, value) {
@@ -242,6 +368,7 @@ export class Repository {
       instagramBusinessId: fanpage.instagramBusinessId || existing?.instagramBusinessId || null,
       pageAccessTokenEncrypted: encryptedToken || existing?.pageAccessTokenEncrypted || null,
       connected: fanpage.connected === undefined ? !!existing?.connected : !!fanpage.connected,
+      crossPostInstagram: fanpage.crossPostInstagram === undefined ? !!existing?.crossPostInstagram : !!fanpage.crossPostInstagram,
       lastSyncedAt: fanpage.lastSyncedAt || existing?.lastSyncedAt || null,
       syncStatus: fanpage.syncStatus || existing?.syncStatus || null,
       syncError: fanpage.syncError || '',
@@ -252,8 +379,8 @@ export class Repository {
     await this.db.prepare(`
       INSERT INTO fanpages (
         id, platform, name, link, imageUrl, metaPageId, instagramBusinessId, pageAccessTokenEncrypted,
-        connected, lastSyncedAt, syncStatus, syncError, kpis, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        connected, lastSyncedAt, syncStatus, syncError, kpis, createdAt, updatedAt, crossPostInstagram
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         platform = excluded.platform,
         name = excluded.name,
@@ -267,11 +394,13 @@ export class Repository {
         syncStatus = COALESCE(excluded.syncStatus, fanpages.syncStatus),
         syncError = excluded.syncError,
         kpis = excluded.kpis,
-        updatedAt = excluded.updatedAt
+        updatedAt = excluded.updatedAt,
+        crossPostInstagram = excluded.crossPostInstagram
     `).bind(
       data.id, data.platform, data.name, data.link, data.imageUrl, data.metaPageId,
       data.instagramBusinessId, data.pageAccessTokenEncrypted, data.connected ? 1 : 0,
-      data.lastSyncedAt, data.syncStatus, data.syncError, data.kpis, data.createdAt, data.updatedAt
+      data.lastSyncedAt, data.syncStatus, data.syncError, data.kpis, data.createdAt, data.updatedAt,
+      data.crossPostInstagram ? 1 : 0
     ).run();
     return fanpageFromRow(await this.db.prepare('SELECT * FROM fanpages WHERE id = ?').bind(fanpageId).first());
   }
@@ -281,17 +410,88 @@ export class Repository {
     await Promise.all(reports
       .filter((report) => report.fanpageId === fanpageId)
       .map((report) => this.deleteAppItem('adReports', report.id)));
-    await this.db.prepare('DELETE FROM fanpages WHERE id = ?').bind(fanpageId).run();
+    const timestamp = now();
+    await this.db.prepare('UPDATE fanpages SET deletedAt = ?, updatedAt = ? WHERE id = ?')
+      .bind(timestamp, timestamp, fanpageId).run();
+    await this.db.prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE fanpageId = ?')
+      .bind(timestamp, timestamp, fanpageId).run();
   }
 
   async findPostRow(post) {
     if (!post) return null;
-    if (post.id) return this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(post.id).first();
+    const isMetaSource = ['facebook', 'instagram'].includes(post.source);
+    if (post.sheetUrl && post.sheetRowKey) {
+      const row = await this.db.prepare('SELECT * FROM posts WHERE sheetUrl = ? AND sheetRowKey = ?')
+        .bind(post.sheetUrl, post.sheetRowKey).first();
+      if (row) return row;
+    }
+    if (post.id) {
+      const row = await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(post.id).first();
+      if (row) return row;
+    }
     if (post.externalPostId) {
-      return this.db.prepare('SELECT * FROM posts WHERE source = ? AND externalPostId = ?')
+      const row = await this.db.prepare('SELECT * FROM posts WHERE source = ? AND externalPostId = ?')
         .bind(post.source || 'manual', post.externalPostId).first();
+      if (row) return row;
+      if (isMetaSource && post.fanpageId) {
+        const identityRow = await this.db.prepare(`
+          SELECT * FROM posts
+          WHERE externalPostId = ?
+            AND fanpageId = ?
+            AND (deletedAt IS NULL OR deletedAt = '')
+          ORDER BY
+            CASE WHEN sheetUrl IS NOT NULL AND sheetUrl != '' THEN 0 ELSE 1 END,
+            updatedAt ASC
+          LIMIT 1
+        `).bind(post.externalPostId, post.fanpageId).first();
+        if (identityRow) return identityRow;
+      }
     }
     return null;
+  }
+
+  async pruneDuplicatePublishedPosts(post) {
+    if (!post?.id || !post.externalPostId || !post.fanpageId || post.status !== 'published') return post;
+    if (!['facebook', 'instagram'].includes(post.source)) return post;
+    const { results } = await this.db.prepare(`
+      SELECT * FROM posts
+      WHERE id != ?
+        AND fanpageId = ?
+        AND externalPostId = ?
+        AND (deletedAt IS NULL OR deletedAt = '')
+    `).bind(post.id, post.fanpageId, post.externalPostId).all();
+    if (!results.length) return post;
+    const timestamp = now();
+    const sheetSource = results.find((row) => row.sheetUrl || row.sheetRowKey || row.sheetDefaultFanpageId);
+    await this.db.prepare(`
+      UPDATE posts
+      SET deletedAt = ?,
+          updatedAt = ?,
+          sheetUrl = NULL,
+          sheetRowKey = NULL,
+          sheetDefaultFanpageId = NULL
+      WHERE id != ?
+        AND fanpageId = ?
+        AND externalPostId = ?
+        AND (deletedAt IS NULL OR deletedAt = '')
+    `).bind(timestamp, timestamp, post.id, post.fanpageId, post.externalPostId).run();
+    if (sheetSource && (!post.sheetUrl || !post.sheetRowKey)) {
+      await this.db.prepare(`
+        UPDATE posts
+        SET sheetUrl = COALESCE(NULLIF(sheetUrl, ''), ?),
+            sheetRowKey = COALESCE(NULLIF(sheetRowKey, ''), ?),
+            sheetDefaultFanpageId = COALESCE(NULLIF(sheetDefaultFanpageId, ''), ?),
+            updatedAt = ?
+        WHERE id = ?
+      `).bind(
+        sheetSource.sheetUrl || null,
+        sheetSource.sheetRowKey || null,
+        sheetSource.sheetDefaultFanpageId || null,
+        timestamp,
+        post.id
+      ).run();
+    }
+    return this.getPost(post.id);
   }
 
   async upsertPost(post = {}) {
@@ -318,6 +518,11 @@ export class Repository {
         : (existing?.sheetDefaultFanpageId || null),
       source: post.source || existing?.source || 'manual',
       status: post.status || existing?.status || 'published',
+      deletedAt: post.deletedAt !== undefined
+        ? post.deletedAt
+        : ((post.sheetUrl && post.sheetRowKey) || (post.externalPostId && ['facebook', 'instagram'].includes(post.source))
+          ? null
+          : (existing?.deletedAt || null)),
       createdAt: existing?.createdAt || post.createdAt || timestamp,
       updatedAt: timestamp
     };
@@ -329,8 +534,8 @@ export class Repository {
     await this.db.prepare(`
       INSERT INTO posts (
         id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
-        mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, deletedAt, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         fanpageId = excluded.fanpageId,
         externalPostId = excluded.externalPostId,
@@ -348,18 +553,51 @@ export class Repository {
         sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
         source = excluded.source,
         status = excluded.status,
+        deletedAt = excluded.deletedAt,
         updatedAt = excluded.updatedAt
     `).bind(
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date,
       data.scheduledAt, data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems,
       data.publishError, data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId,
-      data.source, data.status, data.createdAt, data.updatedAt
+      data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ).run();
-    return postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first());
+    return this.pruneDuplicatePublishedPosts(postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()));
+  }
+
+  async markMissingSyncedPostsDeleted({ fanpageId, source, externalPostIds = [], sinceDate = '' }) {
+    const timestamp = now();
+    const ids = [...new Set((externalPostIds || []).filter(Boolean))];
+    // Guard: empty id set (transient Meta hiccup returning no posts) would drop
+    // the NOT IN clause and soft-delete every published post. Never prune then.
+    if (ids.length === 0) return 0;
+    const params = [timestamp, timestamp, fanpageId, source];
+    const clauses = [
+      'fanpageId = ?',
+      'source = ?',
+      'externalPostId IS NOT NULL',
+      '(deletedAt IS NULL OR deletedAt = \'\')',
+      "status = 'published'"
+    ];
+    if (sinceDate) {
+      clauses.push('date >= ?');
+      params.push(sinceDate);
+    }
+    if (ids.length) {
+      clauses.push(`externalPostId NOT IN (${ids.map(() => '?').join(', ')})`);
+      params.push(...ids);
+    }
+    const result = await this.db.prepare(`
+      UPDATE posts
+      SET deletedAt = ?, updatedAt = ?
+      WHERE ${clauses.join(' AND ')}
+    `).bind(...params).run();
+    return result.meta?.changes || 0;
   }
 
   async deletePost(postId) {
-    await this.db.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
+    const timestamp = now();
+    await this.db.prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE id = ?')
+      .bind(timestamp, timestamp, postId).run();
   }
 
   async setPostPublishState(postId, updates = {}) {
