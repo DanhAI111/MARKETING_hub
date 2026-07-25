@@ -25,15 +25,23 @@ const SettingsPage = (() => {
     if (!container) return;
 
     container.innerHTML = `
-      <div class="settings-tabs">
-        ${TABS.map(tab => `
-          <button class="settings-tab ${activeTab === tab.id ? 'active' : ''}" data-tab="${tab.id}">
-            ${tab.icon ? '<span>' + tab.icon + '</span>' : ''}
-            <span>${tab.label}</span>
-          </button>
-        `).join('')}
+      <div class="settings-shell">
+        <aside class="settings-tabs">
+          <div class="settings-nav-label">Không gian làm việc</div>
+          ${TABS.map((tab, index) => `
+            <button class="settings-tab ${activeTab === tab.id ? 'active' : ''}" data-tab="${tab.id}">
+              <span class="settings-tab-index">0${index + 1}</span>
+              <span>${tab.label}</span>
+              ${Utils.icons.chevronRight}
+            </button>
+          `).join('')}
+          <div class="settings-nav-note">
+            <span class="status-pulse"></span>
+            Mọi thay đổi được lưu trong không gian làm việc hiện tại.
+          </div>
+        </aside>
+        <div class="settings-content" id="settingsContent"></div>
       </div>
-      <div class="settings-content" id="settingsContent"></div>
     `;
 
     // Render active tab content
@@ -167,7 +175,7 @@ const SettingsPage = (() => {
         <div class="form-group" id="fpCrossPostGroup" style="display: ${(fp?.platform || 'facebook') === 'facebook' ? 'block' : 'none'};">
           <label class="form-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
             <input type="checkbox" id="fpCrossPostInstagram" ${fp?.crossPostInstagram ? 'checked' : ''} style="width: auto;">
-            <span>📸 Đăng đồng thời sang Instagram</span>
+            <span class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.image}</span>Đăng đồng thời sang Instagram</span>
           </label>
           <div class="form-hint">Khi bài đăng lên Facebook, tự động đăng luôn sang tài khoản Instagram cùng trang. Instagram yêu cầu ảnh có URL công khai (không hỗ trợ bài chỉ có chữ hay video).</div>
         </div>
@@ -233,7 +241,7 @@ const SettingsPage = (() => {
           <div class="settings-list">
             ${employees.map(emp => `
               <div class="settings-list-item">
-                <div class="settings-list-item-icon" style="font-size: 1.5rem;">${emp.avatar || '👤'}</div>
+                <div class="settings-list-item-icon">${Utils.icons.user}</div>
                 <div class="settings-list-item-info">
                   <div class="settings-list-item-name">${Utils.escapeHtml(emp.name)}</div>
                   <div class="settings-list-item-meta">
@@ -272,23 +280,10 @@ const SettingsPage = (() => {
 
   const openEmployeeModal = (editId) => {
     const emp = editId ? Store.employees.getById(editId) : null;
-    const avatars = ['👤', '👩', '👨', '🧑', '👩‍💼', '👨‍💼', '👩‍💻', '👨‍💻', '🧑‍🎨', '🧑‍💼'];
 
     Modal.open({
       title: emp ? 'Sửa nhân viên' : 'Thêm nhân viên mới',
       content: `
-        <div class="form-group">
-          <label class="form-label">Avatar</label>
-          <div id="avatarPicker" style="display: flex; gap: 8px; flex-wrap: wrap;">
-            ${avatars.map(a => `
-              <button type="button" class="avatar-pick ${(emp?.avatar || '👤') === a ? 'selected' : ''}" data-avatar="${a}" 
-                style="font-size: 1.5rem; padding: 6px 10px; border-radius: var(--radius-md); border: 2px solid ${(emp?.avatar || '👤') === a ? 'var(--primary-500)' : 'var(--border-default)'}; background: var(--bg-input); cursor: pointer; transition: all 0.15s;">
-                ${a}
-              </button>
-            `).join('')}
-          </div>
-          <input type="hidden" id="empAvatar" value="${emp?.avatar || '👤'}">
-        </div>
         <div class="form-group">
           <label class="form-label">Tên nhân viên <span style="color:var(--danger-400);">*</span></label>
           <input type="text" class="form-input" id="empName" value="${emp ? Utils.escapeHtml(emp.name) : ''}" placeholder="VD: Nguyễn Văn A">
@@ -308,7 +303,6 @@ const SettingsPage = (() => {
         const name = document.getElementById('empName')?.value.trim();
         const role = document.getElementById('empRole')?.value.trim();
         const email = document.getElementById('empEmail')?.value.trim();
-        const avatar = document.getElementById('empAvatar')?.value || '👤';
         if (!name) { Toast.error('Vui lòng nhập tên nhân viên'); return; }
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           Toast.error('Email nhân viên không hợp lệ');
@@ -316,10 +310,10 @@ const SettingsPage = (() => {
         }
 
         if (emp) {
-          Store.employees.update(editId, { name, role, email, avatar });
+          Store.employees.update(editId, { name, role, email, avatar: '' });
           Toast.success('Đã cập nhật nhân viên');
         } else {
-          Store.employees.create({ name, role, email, avatar });
+          Store.employees.create({ name, role, email, avatar: '' });
           Toast.success('Đã thêm nhân viên mới');
         }
         Modal.close();
@@ -327,16 +321,6 @@ const SettingsPage = (() => {
       }
     });
 
-    // Avatar picker interactions
-    setTimeout(() => {
-      document.querySelectorAll('.avatar-pick').forEach(btn => {
-        btn.addEventListener('click', () => {
-          document.querySelectorAll('.avatar-pick').forEach(b => b.style.borderColor = 'var(--border-default)');
-          btn.style.borderColor = 'var(--primary-500)';
-          document.getElementById('empAvatar').value = btn.dataset.avatar;
-        });
-      });
-    }, 100);
   };
 
   // ═══════════════════════════════════════════
@@ -357,31 +341,31 @@ const SettingsPage = (() => {
 
         <div class="settings-form-grid">
           <div class="form-group">
-            <label class="form-label">🎯 Ngân sách tổng (₫)</label>
+            <label class="form-label">Ngân sách tổng (₫)</label>
             <input type="number" class="form-input" id="targetTotalBudget" value="${targets.totalBudget || ''}" placeholder="VD: 100000000">
             <div class="form-hint">Tổng ngân sách marketing tháng này</div>
           </div>
           <div class="form-group">
-            <label class="form-label">📢 Budget Ads (₫)</label>
+            <label class="form-label">Budget Ads (₫)</label>
             <input type="number" class="form-input" id="targetAdsBudget" value="${targets.adsBudget || ''}" placeholder="VD: 50000000">
             <div class="form-hint">Ngân sách dành cho quảng cáo</div>
           </div>
           <div class="form-group">
-            <label class="form-label">🎪 Budget Sự kiện (₫)</label>
+            <label class="form-label">Budget Sự kiện (₫)</label>
             <input type="number" class="form-input" id="targetEventBudget" value="${targets.eventBudget || ''}" placeholder="VD: 30000000">
             <div class="form-hint">Ngân sách tổ chức sự kiện</div>
           </div>
           <div class="form-group">
-            <label class="form-label">📝 Số bài đăng mục tiêu</label>
+            <label class="form-label">Số bài đăng mục tiêu</label>
             <input type="number" class="form-input" id="targetPostsCount" value="${targets.postsCount || ''}" placeholder="VD: 100">
             <div class="form-hint">Tổng số bài đăng trên tất cả fanpage</div>
           </div>
           <div class="form-group">
-            <label class="form-label">🎪 Số sự kiện mục tiêu</label>
+            <label class="form-label">Số sự kiện mục tiêu</label>
             <input type="number" class="form-input" id="targetEventsCount" value="${targets.eventsCount || ''}" placeholder="VD: 3">
           </div>
           <div class="form-group">
-            <label class="form-label">💰 Doanh thu mục tiêu (₫)</label>
+            <label class="form-label">Doanh thu mục tiêu (₫)</label>
             <input type="number" class="form-input" id="targetRevenue" value="${targets.revenue || ''}" placeholder="VD: 200000000">
           </div>
         </div>
@@ -491,10 +475,6 @@ const SettingsPage = (() => {
       title: cat ? 'Sửa danh mục' : 'Thêm danh mục mới',
       content: `
         <div class="form-group">
-          <label class="form-label">Icon (emoji)</label>
-          <input type="text" class="form-input" id="catIcon" value="${cat?.icon || '📌'}" placeholder="📌" style="font-size: 1.5rem; text-align: center; width: 60px;">
-        </div>
-        <div class="form-group">
           <label class="form-label">Tên danh mục <span style="color:var(--danger-400);">*</span></label>
           <input type="text" class="form-input" id="catName" value="${cat ? Utils.escapeHtml(cat.name) : ''}" placeholder="VD: Phí đi lại">
         </div>
@@ -519,7 +499,6 @@ const SettingsPage = (() => {
       `,
       saveLabel: cat ? 'Cập nhật' : 'Thêm mới',
       onSave: () => {
-        const icon = document.getElementById('catIcon')?.value.trim() || '📌';
         const name = document.getElementById('catName')?.value.trim();
         const rawColor = document.getElementById('catColor')?.value || '';
         // Color is interpolated raw into a style attribute at render — constrain to
@@ -531,7 +510,7 @@ const SettingsPage = (() => {
         if (!key) { Toast.error('Vui lòng nhập mã danh mục'); return; }
 
         const allCats = { ...Utils.getExpenseCategories() };
-        allCats[key] = { name, icon, color };
+        allCats[key] = { name, icon: '', color };
         Store.customCategories.save(allCats);
 
         Modal.close();
@@ -570,14 +549,14 @@ const SettingsPage = (() => {
 
         <div class="settings-form-grid" style="grid-template-columns: 1fr;">
           <div class="form-group">
-            <label class="form-label">🎨 Giao diện</label>
+            <label class="form-label ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.settings}</span>Giao diện</label>
             <select class="form-select" id="themeSelect" style="max-width: 300px;">
-              <option value="dark" ${theme === 'dark' ? 'selected' : ''}>🌙 Tối (mặc định)</option>
-              <option value="light" ${theme === 'light' ? 'selected' : ''}>☀️ Sáng</option>
+              <option value="dark" ${theme === 'dark' ? 'selected' : ''}>Tối (mặc định)</option>
+              <option value="light" ${theme === 'light' ? 'selected' : ''}>Sáng</option>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">💱 Đơn vị tiền tệ</label>
+            <label class="form-label ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.expenses}</span>Đơn vị tiền tệ</label>
             <select class="form-select" id="currencySelect" style="max-width: 300px;">
               <option value="VND" ${currency === 'VND' ? 'selected' : ''}>VNĐ (₫)</option>
               <option value="USD" ${currency === 'USD' ? 'selected' : ''}>USD ($)</option>
@@ -619,10 +598,11 @@ const SettingsPage = (() => {
 
         <div style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
           <button class="btn btn-secondary" id="seedDataBtn">
-            🎲 Tạo dữ liệu mẫu
+            ${Utils.icons.dashboard}
+            <span>Tạo dữ liệu mẫu</span>
           </button>
           <button class="btn btn-secondary" id="clearDataBtn" style="color: var(--danger-400); border-color: rgba(239, 68, 68, 0.25);">
-            🗑️ Xóa toàn bộ dữ liệu
+            Xóa toàn bộ dữ liệu
           </button>
         </div>
       </div>
@@ -681,7 +661,7 @@ const SettingsPage = (() => {
     content.querySelector('#clearDataBtn')?.addEventListener('click', () => {
       Modal.confirm({
         title: 'Xóa toàn bộ dữ liệu',
-        message: '⚠️ XÓA TOÀN BỘ DỮ LIỆU? Hành động này không thể hoàn tác!',
+        message: 'XÓA TOÀN BỘ DỮ LIỆU? Hành động này không thể hoàn tác!',
         confirmLabel: 'Xóa hết',
         onConfirm: () => {
           localStorage.removeItem('marketing_hub_data');

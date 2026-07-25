@@ -222,66 +222,119 @@ const TasksPage = (() => {
 
     const allTasks = getFilteredTasks();
     const assignees = getUniqueAssignees();
+    const upcomingEvents = Store.events.getAll()
+      .filter(event => event.date)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 4);
+    const activeCampaigns = Store.campaigns.getAll()
+      .filter(campaign => campaign.status === 'active')
+      .slice(0, 3);
 
     container.innerHTML = `
-      ${renderTaskTimeline(allTasks)}
+      <div class="task-workspace-grid">
+        <div class="task-workspace-main">
+          ${renderTaskTimeline(allTasks)}
 
-      <!-- Toolbar -->
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <div class="search-input-wrapper">
-            ${Utils.icons.search}
-            <input type="text" class="search-input" id="taskSearch"
-                   placeholder="Tìm công việc..." value="${Utils.escapeHtml(filters.search)}">
-          </div>
-          <select class="filter-select" id="taskPriorityFilter">
-            <option value="">Tất cả ưu tiên</option>
-            ${Object.entries(Utils.PRIORITIES).map(([k, v]) =>
-              `<option value="${k}" ${filters.priority === k ? 'selected' : ''}>${v.label}</option>`
-            ).join('')}
-          </select>
-          <select class="filter-select" id="taskAssigneeFilter">
-            <option value="">Tất cả người</option>
-            ${assignees.map(a =>
-              `<option value="${Utils.escapeHtml(a)}" ${filters.assignee === a ? 'selected' : ''}>${Utils.escapeHtml(a)}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div class="toolbar-right">
-          <button class="btn btn-primary" id="addTaskBtn">
-            ${Utils.icons.plus}
-            <span>Thêm công việc</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Kanban Board -->
-      <div class="kanban-board" id="kanbanBoard">
-        ${COLUMNS.map(col => {
-          const colTasks = allTasks.filter(t => t.status === col.status);
-          return `
-            <div class="kanban-column" data-status="${col.status}">
-              <div class="kanban-column-header">
-                <div class="kanban-column-title">
-                  <span class="kanban-column-dot ${col.dotClass}"></span>
-                  <span>${col.label}</span>
-                </div>
-                <span class="kanban-column-count">${colTasks.length}</span>
+          <!-- Toolbar -->
+          <div class="toolbar workspace-toolbar">
+            <div class="toolbar-left">
+              <div class="search-input-wrapper">
+                ${Utils.icons.search}
+                <input type="text" class="search-input" id="taskSearch"
+                       placeholder="Tìm công việc..." value="${Utils.escapeHtml(filters.search)}">
               </div>
-              <div class="kanban-column-body" data-status="${col.status}">
-                ${colTasks.map(task => renderCard(task)).join('')}
-                <button class="kanban-add-btn" data-add-status="${col.status}">
-                  ${Utils.icons.plus}
-                  <span>Thêm</span>
-                </button>
-              </div>
+              <select class="filter-select" id="taskPriorityFilter">
+                <option value="">Tất cả ưu tiên</option>
+                ${Object.entries(Utils.PRIORITIES).map(([k, v]) =>
+                  `<option value="${k}" ${filters.priority === k ? 'selected' : ''}>${v.label}</option>`
+                ).join('')}
+              </select>
+              <select class="filter-select" id="taskAssigneeFilter">
+                <option value="">Tất cả người</option>
+                ${assignees.map(a =>
+                  `<option value="${Utils.escapeHtml(a)}" ${filters.assignee === a ? 'selected' : ''}>${Utils.escapeHtml(a)}</option>`
+                ).join('')}
+              </select>
             </div>
-          `;
-        }).join('')}
+            <div class="toolbar-right">
+              <button class="btn btn-primary" id="addTaskBtn">
+                ${Utils.icons.plus}
+                <span>Thêm công việc</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Kanban Board -->
+          <div class="kanban-board" id="kanbanBoard">
+            ${COLUMNS.map(col => {
+              const colTasks = allTasks.filter(t => t.status === col.status);
+              return `
+                <div class="kanban-column" data-status="${col.status}">
+                  <div class="kanban-column-header">
+                    <div class="kanban-column-title">
+                      <span class="kanban-column-dot ${col.dotClass}"></span>
+                      <span>${col.label}</span>
+                    </div>
+                    <span class="kanban-column-count">${colTasks.length}</span>
+                  </div>
+                  <div class="kanban-column-body" data-status="${col.status}">
+                    ${colTasks.map(task => renderCard(task)).join('')}
+                    <button class="kanban-add-btn" data-add-status="${col.status}">
+                      ${Utils.icons.plus}
+                      <span>Thêm</span>
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <aside class="context-rail task-context-rail">
+          <div class="context-rail-heading">
+            <span>Ngữ cảnh liên quan</span>
+            <span class="live-indicator">Live</span>
+          </div>
+          <section class="context-block">
+            <div class="context-block-title">Sự kiện sắp tới</div>
+            ${upcomingEvents.length ? upcomingEvents.map(event => `
+              <button class="context-row" data-context-event="${event.id}">
+                <span class="context-date">${Utils.formatDateShort(event.date)}</span>
+                <span>${Utils.escapeHtml(event.name || 'Sự kiện')}</span>
+              </button>
+            `).join('') : '<div class="context-empty">Chưa có sự kiện sắp tới.</div>'}
+          </section>
+          <section class="context-block">
+            <div class="context-block-title">Chiến dịch đang chạy</div>
+            ${activeCampaigns.length ? activeCampaigns.map(campaign => `
+              <button class="context-row" data-context-campaign="${campaign.id}">
+                <span class="status-pulse"></span>
+                <span>${Utils.escapeHtml(campaign.name)}</span>
+              </button>
+            `).join('') : '<div class="context-empty">Chưa có chiến dịch đang chạy.</div>'}
+          </section>
+          <section class="context-block context-summary">
+            <div>
+              <span>Đang xử lý</span>
+              <strong>${allTasks.filter(task => task.status === 'in-progress').length}</strong>
+            </div>
+            <div>
+              <span>Chờ duyệt</span>
+              <strong>${allTasks.filter(task => task.status === 'review').length}</strong>
+            </div>
+          </section>
+        </aside>
       </div>
     `;
 
     bindEvents();
+
+    container.querySelectorAll('[data-context-event]').forEach(btn => {
+      btn.addEventListener('click', () => App.navigate('events'));
+    });
+    container.querySelectorAll('[data-context-campaign]').forEach(btn => {
+      btn.addEventListener('click', () => App.navigate('campaigns'));
+    });
   };
 
   const renderCard = (task) => {
@@ -466,7 +519,7 @@ const TasksPage = (() => {
             ` : ''}
             ${employees.map(emp => `
               <option value="${Utils.escapeHtml(emp.name)}" ${currentAssignee === emp.name ? 'selected' : ''}>
-                ${Utils.escapeHtml(emp.avatar || '👤')} ${Utils.escapeHtml(emp.name)}${emp.role ? ` — ${Utils.escapeHtml(emp.role)}` : ''}${emp.email ? ` · ${Utils.escapeHtml(emp.email)}` : ''}
+                ${Utils.escapeHtml(emp.name)}${emp.role ? ` — ${Utils.escapeHtml(emp.role)}` : ''}${emp.email ? ` · ${Utils.escapeHtml(emp.email)}` : ''}
               </option>
             `).join('')}
           </select>
@@ -543,7 +596,7 @@ const TasksPage = (() => {
           Modal.confirm({
             title: 'Xóa công việc',
             message: `Bạn có chắc muốn xóa công việc "${Utils.escapeHtml(task.title)}"?`,
-            icon: '🗑️',
+            icon: Utils.icons.trash,
             onConfirm: () => {
               Store.tasks.remove(task.id);
               Toast.success('Đã xóa công việc');

@@ -50,7 +50,38 @@ const EventsPage = (() => {
         </div>
       </div>
 
-      ${renderEventCalendar(events)}
+      <div class="events-workspace-grid">
+        ${renderEventCalendar(events)}
+        <aside class="context-rail event-context-rail">
+          <div class="context-rail-heading">
+            <span>Nhịp sự kiện</span>
+            <span class="live-indicator">Live</span>
+          </div>
+          <section class="context-block">
+            <div class="context-block-title">Sắp diễn ra</div>
+            ${events.filter(event => event.date && !['completed', 'cancelled'].includes(event.status)).slice(0, 5).map(event => {
+              const status = Utils.EVENT_STATUSES[event.status] || { label: event.status || 'Sự kiện', cssClass: 'tag-neutral' };
+              return `
+                <button class="event-agenda-row" data-agenda-event="${event.id}">
+                  <span class="event-agenda-date">
+                    <strong>${(event.date || '').slice(8, 10) || '—'}</strong>
+                    <small>${(event.date || '').slice(5, 7) ? `T${Number((event.date || '').slice(5, 7))}` : ''}</small>
+                  </span>
+                  <span class="event-agenda-main">
+                    <strong>${Utils.escapeHtml(event.name || 'Sự kiện')}</strong>
+                    <small>${Utils.escapeHtml(event.address || Utils.EVENT_TYPES[event.type] || '')}</small>
+                  </span>
+                  <span class="tag ${status.cssClass}">${Utils.escapeHtml(status.label)}</span>
+                </button>
+              `;
+            }).join('') || '<div class="context-empty">Chưa có sự kiện sắp diễn ra.</div>'}
+          </section>
+          <section class="context-block context-summary">
+            <div><span>Kinh phí</span><strong>${Utils.formatVNDCompact(stats.totalBudget)}</strong></div>
+            <div><span>Khách dự kiến</span><strong>${Utils.formatNumber(stats.totalAttendees)}</strong></div>
+          </section>
+        </aside>
+      </div>
 
       <!-- Toolbar -->
       <div class="toolbar">
@@ -100,6 +131,12 @@ const EventsPage = (() => {
     `;
 
     bindEvents();
+    container.querySelectorAll('[data-agenda-event]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const event = Store.events.getById(btn.dataset.agendaEvent);
+        if (event) openEventModal(event);
+      });
+    });
   };
 
   // ── Helpers ──
@@ -350,8 +387,8 @@ const EventsPage = (() => {
               <div class="timeline-card" data-event-id="${e.id}" tabindex="0" role="button" aria-label="Sửa sự kiện ${Utils.escapeHtml(e.name)}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-2); flex-wrap: wrap; gap: var(--space-2);">
                   <div style="font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-tertiary); display: flex; align-items: center; gap: 8px;">
-                    <span>📅 ${dateStr}</span>
-                    ${timeStr ? `<span>⏰ ${timeStr}</span>` : ''}
+                    <span class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.calendar}</span>${dateStr}</span>
+                    ${timeStr ? `<span class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.clock}</span>${timeStr}</span>` : ''}
                   </div>
                   <div style="display: flex; gap: var(--space-2);">
                     <span class="tag ${statusInfo.cssClass}">${statusInfo.label}</span>
@@ -362,9 +399,9 @@ const EventsPage = (() => {
                   ${Utils.escapeHtml(e.name)}
                 </h3>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); margin-bottom: var(--space-2);">
-                  <div>📍 Địa điểm: ${Utils.escapeHtml(e.address || 'Chưa xác định')}</div>
-                  <div>💰 Kinh phí: <strong class="font-mono" style="color: var(--text-primary);">${Utils.formatVND(e.budget)}</strong></div>
-                  <div>👥 Khách dự kiến: <strong class="font-mono" style="color: var(--text-primary);">${Utils.formatNumber(e.attendeeCount)} người</strong></div>
+                  <div class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.mapPin}</span>Địa điểm: ${Utils.escapeHtml(e.address || 'Chưa xác định')}</div>
+                  <div class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.expenses}</span>Kinh phí: <strong class="font-mono" style="color: var(--text-primary);">${Utils.formatVND(e.budget)}</strong></div>
+                  <div class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.events}</span>Khách dự kiến: <strong class="font-mono" style="color: var(--text-primary);">${Utils.formatNumber(e.attendeeCount)} người</strong></div>
                 </div>
                 ${e.plan ? `
                   <div style="background: rgba(255,255,255,0.02); border-left: 3px solid var(--border-default); padding: var(--space-2) var(--space-3); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: var(--text-xs); color: var(--text-tertiary); max-height: 50px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;">
@@ -634,7 +671,7 @@ const EventsPage = (() => {
           Modal.confirm({
             title: 'Xóa sự kiện',
             message: `Bạn có chắc chắn muốn xóa sự kiện "${Utils.escapeHtml(event.name)}"? Điều này cũng sẽ tự động xóa khoản chi phí liên quan.`,
-            icon: '🗑️',
+            icon: Utils.icons.trash,
             onConfirm: () => {
               // Remove expense linked
               const expenses = Store.expenses.getAll();

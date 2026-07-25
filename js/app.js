@@ -11,7 +11,8 @@ const escapeForError = (value) => String(value ?? '')
 window.onerror = (msg, src, line, col, err) => {
   const el = document.getElementById('mainContent');
   if (el) {
-    el.innerHTML += `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;'>⚠ JavaScript Error</b>\n\n${escapeForError(msg)}\n\nFile: ${escapeForError(src)}\nLine: ${line}:${col}\n${escapeForError(err?.stack || '')}</div>`;
+    const warningIcon = typeof Utils !== 'undefined' ? Utils.icons.warning : '';
+    el.innerHTML += `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;display:flex;align-items:center;gap:8px;'><span class="ui-inline-icon">${warningIcon}</span>JavaScript Error</b>\n\n${escapeForError(msg)}\n\nFile: ${escapeForError(src)}\nLine: ${line}:${col}\n${escapeForError(err?.stack || '')}</div>`;
   }
   console.error('App Error:', msg, src, line, col, err);
 };
@@ -34,6 +35,7 @@ const App = (() => {
     }
 
     currentPage = pageId;
+    document.documentElement.dataset.page = pageId;
     Store.settings.set('currentPage', pageId);
     window.location.hash = pageId;
 
@@ -47,14 +49,14 @@ const App = (() => {
     // Render page
     const mainContent = document.getElementById('mainContent');
     if (mainContent) {
-      mainContent.innerHTML = '<div class="page" id="pageContainer"></div>';
+      mainContent.innerHTML = `<div class="page workspace-page workspace-${pageId}" id="pageContainer"></div>`;
       const container = document.getElementById('pageContainer');
       if (pages[pageId]?.render) {
         try {
           pages[pageId].render(container);
         } catch (err) {
           console.error(`Error rendering page "${pageId}":`, err);
-          container.innerHTML = `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;'>⚠ Page Render Error: ${escapeForError(pageId)}</b>\n\n${escapeForError(err.message)}\n\n${escapeForError(err.stack || '')}</div>`;
+          container.innerHTML = `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;display:flex;align-items:center;gap:8px;'><span class="ui-inline-icon">${Utils.icons.warning}</span>Page Render Error: ${escapeForError(pageId)}</b>\n\n${escapeForError(err.message)}\n\n${escapeForError(err.stack || '')}</div>`;
         }
       }
     }
@@ -166,21 +168,21 @@ const App = (() => {
     // Search tasks
     Store.tasks.getAll().forEach(t => {
       if ((t.title || '').toLowerCase().includes(query) || (t.assignee || '').toLowerCase().includes(query)) {
-        results.push({ type: 'tasks', icon: '✅', label: t.title, sub: t.assignee || '', page: 'tasks' });
+        results.push({ type: 'tasks', iconName: 'tasks', label: t.title, sub: t.assignee || '', page: 'tasks' });
       }
     });
 
     // Search events
     Store.events.getAll().forEach(e => {
       if ((e.name || '').toLowerCase().includes(query) || (e.address || '').toLowerCase().includes(query)) {
-        results.push({ type: 'events', icon: '🎪', label: e.name, sub: Utils.formatDate(e.date), page: 'events' });
+        results.push({ type: 'events', iconName: 'calendar', label: e.name, sub: Utils.formatDate(e.date), page: 'events' });
       }
     });
 
     // Search expenses
     Store.expenses.getAll().forEach(e => {
       if ((e.description || '').toLowerCase().includes(query)) {
-        results.push({ type: 'expenses', icon: '💰', label: e.description, sub: Utils.formatVND(e.amount), page: 'expenses' });
+        results.push({ type: 'expenses', iconName: 'expenses', label: e.description, sub: Utils.formatVND(e.amount), page: 'expenses' });
       }
     });
 
@@ -188,14 +190,14 @@ const App = (() => {
     Store.posts.getAll().forEach(p => {
       if ((p.title || '').toLowerCase().includes(query)) {
         const fp = Store.fanpages.getById(p.fanpageId);
-        results.push({ type: 'posts', icon: '📝', label: p.title, sub: fp?.name || '', page: 'content' });
+        results.push({ type: 'posts', iconName: 'content', label: p.title, sub: fp?.name || '', page: 'content' });
       }
     });
 
     // Search fanpages
     Store.fanpages.getAll().forEach(f => {
       if ((f.name || '').toLowerCase().includes(query)) {
-        results.push({ type: 'fanpages', icon: Utils.getPlatformInfo(f.platform).icon, label: f.name, sub: Utils.getPlatformInfo(f.platform).name, page: 'content' });
+        results.push({ type: 'fanpages', iconName: 'megaphone', label: f.name, sub: Utils.getPlatformInfo(f.platform).name, page: 'content' });
       }
     });
 
@@ -205,7 +207,7 @@ const App = (() => {
     } else {
       container.innerHTML = limited.map((r, i) => `
         <div class="search-result-item" data-page="${r.page}" data-index="${i}" tabindex="0" role="button">
-          <span class="search-result-icon">${r.icon}</span>
+          <span class="search-result-icon">${Utils.icons[r.iconName] || Utils.icons.search}</span>
           <div class="search-result-info">
             <div class="search-result-label">${Utils.escapeHtml(r.label)}</div>
             <div class="search-result-sub">${Utils.escapeHtml(r.sub)}</div>
@@ -302,7 +304,34 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   }
+
+  // Local preview helper for reversible UI sample data. The query switch is
+  // intentionally restricted to localhost so it cannot seed a deployed app.
+  let sampleAction = null;
+  const sampleRequest = new URLSearchParams(window.location.search).get('sampleData');
+  const isLocalPreview = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  if (isLocalPreview && sampleRequest === 'add') {
+    sampleAction = { type: 'add', ...Store.uiSampleData.seed() };
+  } else if (isLocalPreview && sampleRequest === 'clear') {
+    sampleAction = { type: 'clear', ...Store.uiSampleData.clear() };
+  }
+  if (isLocalPreview && sampleRequest) {
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('sampleData');
+    window.history.replaceState(null, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+  }
+
   App.init();
+
+  if (sampleAction && typeof Toast !== 'undefined') {
+    if (sampleAction.type === 'add') {
+      Toast.success(sampleAction.added > 0
+        ? `Đã nạp ${sampleAction.added} bản ghi mẫu để kiểm tra giao diện.`
+        : 'Bộ dữ liệu mẫu đã có sẵn.');
+    } else {
+      Toast.success(`Đã xoá ${sampleAction.removed} bản ghi mẫu.`);
+    }
+  }
 
   if (hydrated && window.RemoteStore?.currentUser) {
     window.setTimeout(async () => {

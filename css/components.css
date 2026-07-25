@@ -710,6 +710,12 @@
   flex-shrink: 0;
 }
 
+.toast-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
 .toast-message {
   font-size: var(--text-sm);
   color: var(--text-primary);
@@ -982,8 +988,85 @@
 }
 
 .confirm-icon {
-  font-size: 2.5rem;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-inline: auto;
   margin-bottom: var(--space-4);
+  color: var(--warning-400);
+}
+
+.confirm-icon svg {
+  width: 32px;
+  height: 32px;
+  display: block;
+}
+
+.ui-inline-icon {
+  width: 1em;
+  height: 1em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.ui-inline-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ui-label-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ui-icon-button {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ui-icon-button:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.ui-icon-button svg,
+.search-result-icon svg,
+.settings-list-item-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.attachment-file-icon,
+.import-dropzone-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto var(--space-3);
+  color: var(--primary-400);
+}
+
+.attachment-file-icon svg,
+.import-dropzone-icon svg {
+  width: 32px;
+  height: 32px;
+  display: block;
 }
 
 .confirm-text {

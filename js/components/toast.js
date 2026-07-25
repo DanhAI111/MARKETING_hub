@@ -18,10 +18,10 @@ const Toast = (() => {
     init();
 
     const icons = {
-      success: '✓',
-      error: '✕',
-      warning: '⚠',
-      info: 'ℹ'
+      success: Utils.icons.check,
+      error: Utils.icons.close,
+      warning: Utils.icons.warning,
+      info: Utils.icons.info
     };
 
     const toast = document.createElement('div');
@@ -29,7 +29,7 @@ const Toast = (() => {
     // Messages are always plain text (often backend error strings). Escape so a
     // reflected value in an error message can't inject markup.
     toast.innerHTML = `
-      <span class="toast-icon">${icons[type] || 'ℹ'}</span>
+      <span class="toast-icon">${icons[type] || Utils.icons.info}</span>
       <span class="toast-message">${Utils.escapeHtml(message)}</span>
       <button class="toast-close">${Utils.icons.close}</button>
     `;

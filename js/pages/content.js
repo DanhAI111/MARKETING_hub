@@ -54,94 +54,144 @@ const ContentPage = (() => {
     });
     const totalPercent = totalKpi > 0 ? Math.round((totalPosted / totalKpi) * 100) : 0;
     const progressColorClass = Utils.getKpiColor(totalPercent);
+    const filteredFanpageIds = new Set(filteredFanpages.map(fp => fp.id));
+    const monthPosts = Store.posts.getAll()
+      .filter(post => {
+        if (!filteredFanpageIds.has(post.fanpageId)) return false;
+        const date = post.status === 'published' ? post.date : (post.scheduledAt || post.date);
+        return (date || '').slice(0, 7) === currentMonth;
+      })
+      .sort((a, b) => (b.scheduledAt || b.publishedAt || b.date || '').localeCompare(a.scheduledAt || a.publishedAt || a.date || ''));
+    const pendingTasks = Store.tasks.getAll()
+      .filter(task => task.status !== 'completed')
+      .sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'))
+      .slice(0, 4);
+    const activeCampaigns = Store.campaigns.getAll()
+      .filter(campaign => campaign.status === 'active')
+      .slice(0, 3);
 
     container.innerHTML = `
       ${renderIntegrationPanel()}
 
-      <!-- Summary Row -->
-      <div class="quick-stats" style="grid-template-columns: repeat(4, 1fr); margin-bottom: var(--space-5);">
-        <div class="stat-card">
-          <div class="stat-card-icon" style="background: rgba(124, 58, 237, 0.12); color: var(--primary-400);">
-            ${Utils.icons.target}
-          </div>
-          <div class="stat-card-label">Tổng mục tiêu KPI tháng</div>
-          <div class="stat-card-value">${totalKpi} bài</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-icon" style="background: rgba(59, 130, 246, 0.12); color: var(--info-400);">
-            ${Utils.icons.content}
-          </div>
-          <div class="stat-card-label">Tổng bài đã đăng</div>
-          <div class="stat-card-value">${totalPosted} bài</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-icon" style="background: rgba(16, 185, 129, 0.12); color: var(--success-400);">
-            ${Utils.icons.check}
-          </div>
-          <div class="stat-card-label">Tỷ lệ hoàn thành</div>
-          <div class="stat-card-value ${progressColorClass}">${totalPercent}%</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card-icon" style="background: rgba(245, 158, 11, 0.12); color: var(--warning-400);">
-            ${Utils.icons.clock}
-          </div>
-          <div class="stat-card-label">Đang chờ / lỗi đăng</div>
-          <div class="stat-card-value">${totalScheduled}/${totalFailed}</div>
-        </div>
-      </div>
-
-      <!-- Toolbar -->
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <!-- Month Picker -->
+      <div class="content-command-grid">
+        <aside class="content-control-rail">
+          <div class="panel-kicker">Điều khiển lịch</div>
           <div class="month-picker">
-            <button class="month-picker-btn" id="prevMonthBtn">
-              ${Utils.icons.chevronLeft}
-            </button>
-            <span class="month-picker-label" id="currentMonthLabel">
-              ${Utils.formatMonthYear(currentMonth)}
-            </span>
-            <button class="month-picker-btn" id="nextMonthBtn">
-              ${Utils.icons.chevronRight}
-            </button>
+            <button class="month-picker-btn" id="prevMonthBtn">${Utils.icons.chevronLeft}</button>
+            <span class="month-picker-label" id="currentMonthLabel">${Utils.formatMonthYear(currentMonth)}</span>
+            <button class="month-picker-btn" id="nextMonthBtn">${Utils.icons.chevronRight}</button>
           </div>
-          
-          <!-- Platform Filter -->
           <select class="filter-select" id="platformFilterSelect">
             <option value="">Tất cả nền tảng</option>
-            ${Object.entries(Utils.PLATFORMS).map(([k, v]) => 
+            ${Object.entries(Utils.PLATFORMS).map(([k, v]) =>
               `<option value="${k}" ${selectedPlatform === k ? 'selected' : ''}>${v.name}</option>`
             ).join('')}
           </select>
-        </div>
-        
-        <div class="toolbar-right">
-          <button class="btn btn-secondary" id="syncMetaBtn" ${window.RemoteStore?.available ? '' : 'disabled'}>
-            ${Utils.icons.refresh || Utils.icons.upload}
-            <span>Đồng bộ ngay</span>
-          </button>
-          <button class="btn btn-secondary" id="connectMetaBtn" ${window.RemoteStore?.available ? '' : 'disabled'}>
-            ${Utils.icons.link || Utils.icons.plus}
-            <span>Liên kết Meta</span>
-          </button>
-          <button class="btn btn-primary" id="schedulePostBtn">
-            ${Utils.icons.clock}
-            <span>Lên lịch đăng</span>
-          </button>
-          <button class="btn btn-primary" id="addFanpageBtn">
-            ${Utils.icons.plus}
-            <span>Thêm Fanpage</span>
-          </button>
-        </div>
-      </div>
 
-      <!-- Fanpages Grid -->
-      <div class="fanpage-grid">
-        ${filteredFanpages.length === 0 ? renderEmptyState() : filteredFanpages.map(fp => renderFanpageCard(fp)).join('')}
+          <div class="content-kpi-overview">
+            <div class="content-kpi-ring" style="--progress:${Math.min(totalPercent, 100)}">
+              <strong class="${progressColorClass}">${totalPercent}%</strong>
+              <span>hoàn thành</span>
+            </div>
+            <div class="content-kpi-numbers">
+              <div><span>Mục tiêu</span><strong>${totalKpi}</strong></div>
+              <div><span>Đã đăng</span><strong>${totalPosted}</strong></div>
+              <div><span>Chờ / lỗi</span><strong>${totalScheduled}/${totalFailed}</strong></div>
+            </div>
+          </div>
+
+          <div class="panel-section-title">
+            <span>Kênh nội dung</span>
+            <button class="btn btn-icon btn-ghost btn-sm" id="addFanpageBtn" data-tooltip="Thêm Fanpage">${Utils.icons.plus}</button>
+          </div>
+          <div class="fanpage-control-list">
+            ${filteredFanpages.length ? filteredFanpages.map(renderFanpageControl).join('') : '<div class="context-empty">Chưa có kênh phù hợp bộ lọc.</div>'}
+          </div>
+        </aside>
+
+        <section class="content-publishing-queue">
+          <div class="queue-header">
+            <div>
+              <div class="panel-kicker">Publishing queue</div>
+              <h2>Nội dung tháng này</h2>
+              <p>${monthPosts.length} bài trên ${filteredFanpages.length} kênh đang được theo dõi.</p>
+            </div>
+            <div class="queue-actions">
+              <button class="btn btn-secondary" id="syncMetaBtn" ${window.RemoteStore?.available ? '' : 'disabled'}>
+                ${Utils.icons.refresh || Utils.icons.upload}<span>Đồng bộ</span>
+              </button>
+              <button class="btn btn-primary" id="schedulePostBtn">
+                ${Utils.icons.clock}<span>Lên lịch đăng</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="queue-status-strip">
+            <span><i class="queue-dot published"></i>${totalPosted} đã đăng</span>
+            <span><i class="queue-dot scheduled"></i>${totalScheduled} chờ đăng</span>
+            <span><i class="queue-dot failed"></i>${totalFailed} lỗi</span>
+          </div>
+          <div class="content-master-post-list">
+            ${monthPosts.length ? monthPosts.map(post => {
+              const fanpage = Store.fanpages.getById(post.fanpageId);
+              const platform = fanpage ? Utils.getPlatformInfo(fanpage.platform) : null;
+              return `
+                <article class="content-master-post">
+                  <div class="content-master-channel" style="--channel-color:${platform?.color || '#64748b'}">
+                    <span>${platform?.icon || ''}</span>
+                  </div>
+                  <div class="content-master-body">
+                    <div class="content-master-meta">
+                      <span>${Utils.escapeHtml(fanpage?.name || 'Không rõ kênh')}</span>
+                      <span>${post.status === 'published' ? Utils.formatDateShort(post.date) : formatScheduleTime(post.scheduledAt)}</span>
+                    </div>
+                    ${renderPostItem(post)}
+                  </div>
+                </article>
+              `;
+            }).join('') : `
+              <div class="queue-empty">
+                <span>${Utils.icons.calendar}</span>
+                <strong>Chưa có nội dung trong tháng này</strong>
+                <p>Tạo bài mới hoặc lên lịch để bắt đầu xây hàng đợi xuất bản.</p>
+              </div>
+            `}
+          </div>
+        </section>
+
+        <aside class="context-rail content-action-rail">
+          <div class="context-rail-heading">
+            <span>Việc cần xử lý</span>
+            <span class="live-indicator">Live</span>
+          </div>
+          <section class="context-block">
+            <div class="context-block-title">Công việc gần hạn</div>
+            ${pendingTasks.length ? pendingTasks.map(task => `
+              <button class="context-row" data-content-task="${task.id}">
+                <span class="context-date">${task.deadline ? Utils.formatDateShort(task.deadline) : '—'}</span>
+                <span>${Utils.escapeHtml(task.title)}</span>
+              </button>
+            `).join('') : '<div class="context-empty">Không có công việc chờ xử lý.</div>'}
+          </section>
+          <section class="context-block">
+            <div class="context-block-title">Chiến dịch đang chạy</div>
+            ${activeCampaigns.length ? activeCampaigns.map(campaign => `
+              <button class="context-row" data-content-campaign="${campaign.id}">
+                <span class="status-pulse"></span>
+                <span>${Utils.escapeHtml(campaign.name)}</span>
+              </button>
+            `).join('') : '<div class="context-empty">Chưa có chiến dịch đang chạy.</div>'}
+          </section>
+          <button class="btn btn-secondary context-rail-action" id="connectMetaBtn" ${window.RemoteStore?.available ? '' : 'disabled'}>
+            ${Utils.icons.link || Utils.icons.plus}<span>Liên kết Meta</span>
+          </button>
+        </aside>
       </div>
     `;
 
     bindEvents();
+    container.querySelectorAll('[data-content-task]').forEach(btn => btn.addEventListener('click', () => App.navigate('tasks')));
+    container.querySelectorAll('[data-content-campaign]').forEach(btn => btn.addEventListener('click', () => App.navigate('campaigns')));
   };
 
   const renderIntegrationPanel = () => {
@@ -183,6 +233,32 @@ const ContentPage = (() => {
         <div class="empty-state-icon"></div>
         <div class="empty-state-title">Không tìm thấy Fanpage nào</div>
         <div class="empty-state-desc">Hãy thêm fanpage mới hoặc điều chỉnh bộ lọc để bắt đầu.</div>
+      </div>
+    `;
+  };
+
+  const renderFanpageControl = (fp) => {
+    const platform = Utils.getPlatformInfo(fp.platform);
+    const target = fp.kpis?.[currentMonth] || 0;
+    const posted = Store.posts.getCountByFanpageAndMonth(fp.id, currentMonth);
+    const percent = target > 0 ? Math.min(100, Math.round((posted / target) * 100)) : 0;
+    return `
+      <div class="fanpage-control-item">
+        <div class="fanpage-control-main">
+          <span class="fanpage-control-icon" style="color:${platform.color};background:${platform.color}18">${platform.icon}</span>
+          <div>
+            <strong>${Utils.escapeHtml(fp.name)}</strong>
+            <span>${posted}/${target || 0} bài · ${percent}%</span>
+          </div>
+        </div>
+        <div class="fanpage-control-progress"><span style="width:${percent}%;background:${platform.color}"></span></div>
+        <div class="fanpage-control-actions">
+          <button class="btn btn-icon btn-ghost btn-sm add-post-btn" data-id="${fp.id}" data-tooltip="Thêm bài">${Utils.icons.plus}</button>
+          <button class="btn btn-icon btn-ghost btn-sm schedule-post-card-btn" data-id="${fp.id}" data-tooltip="Lên lịch">${Utils.icons.clock}</button>
+          <button class="btn btn-icon btn-ghost btn-sm edit-kpi-btn" data-id="${fp.id}" data-tooltip="KPI">${Utils.icons.target}</button>
+          <button class="btn btn-icon btn-ghost btn-sm edit-fp-btn" data-id="${fp.id}" data-tooltip="Chỉnh sửa">${Utils.icons.edit}</button>
+          <button class="btn btn-icon btn-ghost btn-sm delete-fp-btn" data-id="${fp.id}" data-tooltip="Xóa">${Utils.icons.trash}</button>
+        </div>
       </div>
     `;
   };
@@ -291,7 +367,7 @@ const ContentPage = (() => {
     const linkable = /^https?:\/\//i.test(permalink);
     const eng = post.engagement;
     const engHtml = eng && (eng.likes || eng.comments || eng.shares)
-      ? `<span class="post-engagement" title="Tương tác tự nhiên">👍 ${Utils.formatNumberCompact(eng.likes || 0)} · 💬 ${Utils.formatNumberCompact(eng.comments || 0)}${eng.shares ? ` · 🔁 ${Utils.formatNumberCompact(eng.shares)}` : ''}</span>`
+      ? `<span class="post-engagement" title="Tương tác tự nhiên">Thích ${Utils.formatNumberCompact(eng.likes || 0)} · Bình luận ${Utils.formatNumberCompact(eng.comments || 0)}${eng.shares ? ` · Chia sẻ ${Utils.formatNumberCompact(eng.shares)}` : ''}</span>`
       : '';
     return `
       <div class="post-item ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
@@ -411,7 +487,7 @@ const ContentPage = (() => {
         Modal.confirm({
           title: 'Xóa Fanpage',
           message: `Bạn có chắc muốn xóa Fanpage "${Utils.escapeHtml(fp.name)}"? Điều này cũng sẽ xóa tất cả các bài đăng và báo cáo Ads liên quan.`,
-          icon: '🗑️',
+          icon: Utils.icons.trash,
           onConfirm: () => {
             Store.fanpages.remove(fpId);
             Toast.success('Đã xóa Fanpage');
@@ -439,7 +515,7 @@ const ContentPage = (() => {
         Modal.confirm({
           title: 'Xóa bài đăng',
           message: `Bạn có chắc muốn xóa bài đăng "${Utils.escapeHtml(post.title)}"?`,
-          icon: '🗑️',
+          icon: Utils.icons.trash,
           onConfirm: async () => {
             try {
               if (window.RemoteStore?.available) {

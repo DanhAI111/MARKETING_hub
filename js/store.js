@@ -6,6 +6,8 @@
 const Store = (() => {
   const STORE_KEY = 'marketing_hub_data';
   const VERSION = 1;
+  const UI_SAMPLE_PREFIX = 'ui-sample-';
+  const UI_SAMPLE_BATCH = 'ui-preview-v1';
   const REMOTE_COLLECTIONS = [
     'fanpages',
     'posts',
@@ -431,7 +433,9 @@ const Store = (() => {
             description: tpl.description,
             amount: tpl.amount,
             notes: `Tự động tạo từ chi phí định kỳ`,
-            recurringId: tpl.id
+            recurringId: tpl.id,
+            uiSampleData: tpl.uiSampleData === true,
+            sampleBatch: tpl.sampleBatch || ''
           });
           generated++;
         }
@@ -548,6 +552,304 @@ const Store = (() => {
       reader.readAsText(file);
     });
   };
+
+  // ── Reversible local UI sample data ──
+  // This dataset is intentionally written in one localStorage transaction and
+  // never mirrored to the remote API. Every record has a dedicated marker so it
+  // can be removed later without touching the user's real records.
+  const uiSampleData = (() => {
+    const mark = (item) => ({
+      ...item,
+      uiSampleData: true,
+      sampleBatch: UI_SAMPLE_BATCH,
+      createdAt: item.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const getMonthContext = () => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const monthIndex = now.getMonth();
+      const month = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+      const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+      const day = Math.min(now.getDate(), daysInMonth);
+      const dateAt = (offset = 0) => {
+        const targetDay = Math.max(1, Math.min(daysInMonth, day + offset));
+        return `${month}-${String(targetDay).padStart(2, '0')}`;
+      };
+      return { month, day, daysInMonth, dateAt };
+    };
+
+    const buildDataset = () => {
+      const { month, dateAt } = getMonthContext();
+      const fanpageFacebook = `${UI_SAMPLE_PREFIX}fanpage-facebook`;
+      const fanpageInstagram = `${UI_SAMPLE_PREFIX}fanpage-instagram`;
+      const fanpageTiktok = `${UI_SAMPLE_PREFIX}fanpage-tiktok`;
+      const campaignLaunch = `${UI_SAMPLE_PREFIX}campaign-launch`;
+      const campaignAwareness = `${UI_SAMPLE_PREFIX}campaign-awareness`;
+      const publishedDates = [-18, -14, -10, -7, -4, -2, 0];
+      const adDates = [-14, -11, -8, -5, -3, -1, 0];
+
+      return {
+        month,
+        collections: {
+          fanpages: [
+            mark({
+              id: fanpageFacebook,
+              name: 'MKT Hub Vietnam',
+              platform: 'facebook',
+              link: 'https://facebook.com/mkthub.sample',
+              connected: false,
+              kpis: { [month]: 24 }
+            }),
+            mark({
+              id: fanpageInstagram,
+              name: 'MKT Hub Creative',
+              platform: 'instagram',
+              link: 'https://instagram.com/mkthub.sample',
+              connected: false,
+              kpis: { [month]: 18 }
+            }),
+            mark({
+              id: fanpageTiktok,
+              name: 'MKT Hub Short Video',
+              platform: 'tiktok',
+              link: 'https://tiktok.com/@mkthub.sample',
+              connected: false,
+              kpis: { [month]: 12 }
+            })
+          ],
+          employees: [
+            mark({ id: `${UI_SAMPLE_PREFIX}employee-an`, name: 'Minh An', role: 'Content Lead', email: 'minhan@example.test', avatar: '' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}employee-linh`, name: 'Khánh Linh', role: 'Performance', email: 'khanhlinh@example.test', avatar: '' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}employee-vy`, name: 'Thảo Vy', role: 'Event Executive', email: 'thaovy@example.test', avatar: '' })
+          ],
+          campaigns: [
+            mark({
+              id: campaignLaunch,
+              name: 'Ra mắt sản phẩm mùa hè',
+              goal: 'Tăng nhận diện, tạo khách hàng tiềm năng và kiểm thử hành trình chuyển đổi.',
+              status: 'active',
+              budget: 95000000,
+              startAt: dateAt(-18),
+              endAt: dateAt(5),
+              fanpageIds: [fanpageFacebook, fanpageInstagram]
+            }),
+            mark({
+              id: campaignAwareness,
+              name: 'Nhận diện thương hiệu quý mới',
+              goal: 'Mở rộng độ phủ trên video ngắn và nội dung hậu trường.',
+              status: 'planning',
+              budget: 60000000,
+              startAt: dateAt(3),
+              endAt: dateAt(6),
+              fanpageIds: [fanpageInstagram, fanpageTiktok]
+            })
+          ],
+          posts: [
+            ...publishedDates.map((offset, index) => mark({
+              id: `${UI_SAMPLE_PREFIX}post-published-${index + 1}`,
+              fanpageId: index % 2 === 0 ? fanpageFacebook : fanpageInstagram,
+              campaignId: campaignLaunch,
+              date: dateAt(offset),
+              title: [
+                'Teaser sản phẩm mới',
+                'Câu chuyện phía sau chiến dịch',
+                'Video mở hộp phiên bản giới hạn',
+                'Phản hồi sớm từ khách hàng',
+                'Hậu trường buổi chụp hình',
+                'Điểm nổi bật của sản phẩm',
+                'Ưu đãi trong tuần ra mắt'
+              ][index],
+              content: 'Nội dung mẫu dùng để kiểm tra bố cục, bộ lọc và số liệu tổng quan.',
+              status: 'published',
+              approvalStatus: 'approved',
+              reach: 18000 + index * 4200,
+              engagement: 1300 + index * 240,
+              clicks: 260 + index * 65
+            })),
+            mark({
+              id: `${UI_SAMPLE_PREFIX}post-scheduled-1`,
+              fanpageId: fanpageInstagram,
+              campaignId: campaignLaunch,
+              date: dateAt(2),
+              scheduledAt: `${dateAt(2)}T09:00:00`,
+              title: 'Livestream giải đáp về sản phẩm',
+              content: 'Bài mẫu đã được duyệt và đang chờ đến giờ đăng.',
+              status: 'scheduled',
+              approvalStatus: 'approved'
+            }),
+            mark({
+              id: `${UI_SAMPLE_PREFIX}post-scheduled-2`,
+              fanpageId: fanpageTiktok,
+              campaignId: campaignAwareness,
+              date: dateAt(4),
+              scheduledAt: `${dateAt(4)}T20:00:00`,
+              title: 'Một ngày cùng đội ngũ sáng tạo',
+              content: 'Video ngắn mẫu cho lịch đăng bài.',
+              status: 'scheduled',
+              approvalStatus: 'pending'
+            })
+          ],
+          tasks: [
+            mark({ id: `${UI_SAMPLE_PREFIX}task-1`, title: 'Duyệt nội dung livestream', partner: 'Nội bộ', assignee: 'Minh An', priority: 'high', status: 'in-progress', deadline: dateAt(1), notes: 'Kiểm tra CTA và thông tin ưu đãi.' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}task-2`, title: 'Tối ưu nhóm quảng cáo chuyển đổi', partner: 'Đội Performance', assignee: 'Khánh Linh', priority: 'high', status: 'review', deadline: dateAt(2), notes: 'Đối chiếu CPC giữa hai nhóm đối tượng.' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}task-3`, title: 'Chuẩn bị backdrop sự kiện', partner: 'Nhà cung cấp', assignee: 'Thảo Vy', priority: 'medium', status: 'pending', deadline: dateAt(3), notes: '' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}task-4`, title: 'Hoàn thiện báo cáo tuần', partner: 'Nội bộ', assignee: 'Khánh Linh', priority: 'medium', status: 'completed', deadline: dateAt(-1), notes: 'Đã gửi cho quản lý.' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}task-5`, title: 'Lên kịch bản video hậu trường', partner: 'Creative Studio', assignee: 'Minh An', priority: 'low', status: 'pending', deadline: dateAt(4), notes: '' })
+          ],
+          events: [
+            mark({
+              id: `${UI_SAMPLE_PREFIX}event-launch`,
+              campaignId: campaignLaunch,
+              name: 'Trải nghiệm sản phẩm mới',
+              type: 'launch',
+              date: dateAt(3),
+              startTime: '09:00',
+              endTime: '11:30',
+              status: 'preparing',
+              priority: 'high',
+              address: 'Quận 1, TP.HCM',
+              budget: 28000000,
+              attendeeCount: 120,
+              plan: 'Đón khách, trải nghiệm sản phẩm, chia sẻ từ đội ngũ và networking.'
+            }),
+            mark({
+              id: `${UI_SAMPLE_PREFIX}event-workshop`,
+              campaignId: campaignAwareness,
+              name: 'Workshop sáng tạo video ngắn',
+              type: 'workshop',
+              date: dateAt(6),
+              startTime: '14:00',
+              endTime: '17:00',
+              status: 'planning',
+              priority: 'medium',
+              address: 'Thủ Đức, TP.HCM',
+              budget: 16000000,
+              attendeeCount: 60
+            })
+          ],
+          expenses: [
+            mark({ id: `${UI_SAMPLE_PREFIX}expense-1`, campaignId: campaignLaunch, date: dateAt(-16), category: 'content', description: 'Sản xuất video chủ đạo', amount: 12000000, notes: 'Thanh toán đợt 1' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}expense-2`, campaignId: campaignLaunch, date: dateAt(-12), category: 'ads', description: 'Ngân sách quảng cáo Meta', amount: 9000000, notes: '' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}expense-3`, campaignId: campaignLaunch, date: dateAt(-7), category: 'event', description: 'Đặt cọc địa điểm sự kiện', amount: 8000000, notes: '' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}expense-4`, campaignId: campaignAwareness, date: dateAt(-4), category: 'kol', description: 'Chi phí cộng tác creator', amount: 6500000, notes: 'Hai video ngắn' }),
+            mark({ id: `${UI_SAMPLE_PREFIX}expense-5`, campaignId: '', date: dateAt(-2), category: 'other', description: 'Kho tài nguyên thiết kế', amount: 1800000, notes: 'Gói sử dụng theo tháng' })
+          ],
+          adReports: adDates.flatMap((offset, index) => [
+            mark({
+              id: `${UI_SAMPLE_PREFIX}ad-facebook-${index + 1}`,
+              campaignId: campaignLaunch,
+              fanpageId: fanpageFacebook,
+              date: dateAt(offset),
+              spend: 720000 + index * 85000,
+              reach: 16500 + index * 3400,
+              impressions: 28400 + index * 5100,
+              clicks: 540 + index * 86,
+              messages: 38 + index * 7,
+              conversions: 18 + index * 4,
+              engagement: 1850 + index * 230,
+              revenue: 2600000 + index * 520000
+            }),
+            mark({
+              id: `${UI_SAMPLE_PREFIX}ad-instagram-${index + 1}`,
+              campaignId: campaignLaunch,
+              fanpageId: fanpageInstagram,
+              date: dateAt(offset),
+              spend: 540000 + index * 70000,
+              reach: 13200 + index * 2800,
+              impressions: 22600 + index * 4300,
+              clicks: 420 + index * 72,
+              messages: 29 + index * 6,
+              conversions: 13 + index * 3,
+              engagement: 1620 + index * 210,
+              revenue: 2100000 + index * 430000
+            })
+          ]),
+          recurringExpenses: [
+            mark({
+              id: `${UI_SAMPLE_PREFIX}recurring-design-tools`,
+              description: 'Bộ công cụ thiết kế và quản lý nội dung',
+              category: 'content',
+              amount: 2450000,
+              active: true,
+              notes: 'Mẫu kiểm tra luồng chi phí định kỳ'
+            })
+          ],
+          monthlyTargets: [
+            mark({
+              id: `${UI_SAMPLE_PREFIX}target-${month}`,
+              month,
+              totalBudget: 180000000,
+              adsBudget: 65000000,
+              eventBudget: 50000000,
+              targetPosts: 54,
+              targetEvents: 3,
+              targetRevenue: 320000000
+            })
+          ]
+        }
+      };
+    };
+
+    const seed = () => {
+      const data = load();
+      const dataset = buildDataset();
+      const counts = {};
+      let added = 0;
+
+      REMOTE_COLLECTIONS.forEach((collection) => {
+        const current = Array.isArray(data[collection]) ? data[collection] : [];
+        let incoming = dataset.collections[collection] || [];
+        if (collection === 'monthlyTargets' && current.some(item => item.month === dataset.month)) {
+          incoming = [];
+        }
+        const existingIds = new Set(current.map(item => item.id));
+        const additions = incoming.filter(item => !existingIds.has(item.id));
+        data[collection] = [...current, ...additions];
+        counts[collection] = additions.length;
+        added += additions.length;
+      });
+
+      save(data);
+      return { added, month: dataset.month, counts };
+    };
+
+    const clear = () => {
+      const data = load();
+      const counts = {};
+      let removed = 0;
+
+      REMOTE_COLLECTIONS.forEach((collection) => {
+        const current = Array.isArray(data[collection]) ? data[collection] : [];
+        const remaining = current.filter(item =>
+          item.uiSampleData !== true && !String(item.id || '').startsWith(UI_SAMPLE_PREFIX)
+        );
+        counts[collection] = current.length - remaining.length;
+        removed += counts[collection];
+        data[collection] = remaining;
+      });
+
+      save(data);
+      return { removed, counts };
+    };
+
+    const getStatus = () => {
+      const data = load();
+      const counts = {};
+      REMOTE_COLLECTIONS.forEach((collection) => {
+        counts[collection] = (data[collection] || []).filter(item =>
+          item.uiSampleData === true || String(item.id || '').startsWith(UI_SAMPLE_PREFIX)
+        ).length;
+      });
+      return {
+        active: Object.values(counts).some(count => count > 0),
+        counts
+      };
+    };
+
+    return { seed, clear, getStatus };
+  })();
 
   // ── Seed demo data ──
   const seedDemoData = () => {
@@ -669,6 +971,7 @@ const Store = (() => {
     customCategories,
     backup,
     restore,
+    uiSampleData,
     seedDemoData,
     generateId
   };

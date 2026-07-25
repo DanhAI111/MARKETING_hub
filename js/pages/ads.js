@@ -124,7 +124,7 @@ const AdsPage = (() => {
 
         <div class="toolbar-right">
           <button class="btn ${compareMode ? 'btn-primary' : 'btn-secondary'}" id="toggleCompareBtn" style="${compareMode ? '' : 'opacity: 0.75;'}">
-            ${Utils.icons.chart || '📊'}
+            ${Utils.icons.ads}
             <span>So sánh tháng trước</span>
           </button>
           <button class="btn btn-secondary" id="importFileBtn" style="background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.25); color: var(--success-400);">
@@ -233,10 +233,37 @@ const AdsPage = (() => {
 
     if (reports.length === 0) {
       return `
-        <div class="empty-state" style="padding: var(--space-8) 0;">
-          <div class="empty-state-icon"></div>
-          <div class="empty-state-title">Chưa có dữ liệu báo cáo quảng cáo</div>
-          <div class="empty-state-desc">Hãy nhập báo cáo ngày để phân tích hiệu quả chiến dịch.</div>
+        <div class="ads-empty-workspace">
+          <section class="ads-empty-analysis">
+            <div class="queue-header">
+              <div>
+                <div class="panel-kicker">Performance trend</div>
+                <h2>Xu hướng hiệu quả Ads</h2>
+                <p>Biểu đồ sẽ tự động hiển thị sau khi có dữ liệu báo cáo đầu tiên.</p>
+              </div>
+            </div>
+            <div class="queue-empty">
+              <span>${Utils.icons.ads}</span>
+              <strong>Chưa có dữ liệu báo cáo quảng cáo</strong>
+              <p>Tải file từ nền tảng quảng cáo hoặc nhập báo cáo ngày để bắt đầu phân tích.</p>
+            </div>
+          </section>
+          <aside class="context-rail ads-readiness-rail">
+            <div class="context-rail-heading">
+              <span>Sẵn sàng phân tích</span>
+              <span class="live-indicator">Live</span>
+            </div>
+            <section class="context-block">
+              <div class="context-block-title">Nguồn dữ liệu</div>
+              <div class="context-metric-row"><span>Fanpage đã chọn</span><strong>${selectedFanpage ? 1 : targetFanpages.length}</strong></div>
+              <div class="context-metric-row"><span>Báo cáo tháng này</span><strong>0</strong></div>
+              <div class="context-metric-row"><span>So sánh kỳ trước</span><strong>${compareMode ? 'Bật' : 'Tắt'}</strong></div>
+            </section>
+            <section class="context-block">
+              <div class="context-block-title">Bước tiếp theo</div>
+              <div class="context-empty">Dùng “Tải lên File” để nhập nhanh hoặc “Nhập thủ công” cho báo cáo đầu tiên.</div>
+            </section>
+          </aside>
         </div>
       `;
     }
@@ -608,7 +635,7 @@ const AdsPage = (() => {
         Modal.confirm({
           title: 'Xóa báo cáo quảng cáo',
           message: `Bạn có chắc chắn muốn xóa bản ghi quảng cáo ngày ${Utils.formatDateShort(report.date)}?`,
-          icon: '🗑️',
+          icon: Utils.icons.trash,
           onConfirm: () => {
             Store.adReports.remove(id);
             Toast.success('Đã xóa báo cáo quảng cáo');
@@ -818,7 +845,7 @@ const AdsPage = (() => {
         <label class="form-label">Tải lên file báo cáo từ Google Sheets <span style="color:var(--danger-400);">*</span></label>
         <div id="importDropZone" style="border: 2px dashed var(--border-default); border-radius: var(--radius-lg); padding: var(--space-8) var(--space-4); text-align: center; cursor: pointer; transition: all 0.2s ease; background: var(--bg-input);">
           <input type="file" id="importFileInput" accept=".csv,.tsv,.txt" style="display:none;">
-          <div style="font-size: 2.5rem; margin-bottom: var(--space-3); opacity: 0.7;">📂</div>
+          <div class="import-dropzone-icon">${Utils.icons.upload}</div>
           <div style="font-size: var(--text-sm); color: var(--text-secondary); font-weight: var(--weight-medium);">
             Click để chọn file hoặc kéo thả vào đây
           </div>
@@ -835,7 +862,7 @@ const AdsPage = (() => {
     `;
 
     Modal.open({
-      title: '📊 Tải lên báo cáo từ Google Sheets',
+      title: 'Tải lên báo cáo từ Google Sheets',
       content,
       size: 'lg',
       saveLabel: 'Nhập dữ liệu',
@@ -899,7 +926,7 @@ const AdsPage = (() => {
             statusEl.style.alignItems = 'center';
             statusEl.style.gap = 'var(--space-2)';
             statusEl.innerHTML = `
-              <span style="color: var(--success-400); font-size: var(--text-lg);">✅</span>
+              <span class="ui-inline-icon" style="color: var(--success-400);">${Utils.icons.check}</span>
               <div>
                 <div style="font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text-primary);">${Utils.escapeHtml(file.name)}</div>
                 <div style="font-size: var(--text-xs); color: var(--text-tertiary);">${rows.length} dòng dữ liệu · ${headers.length} cột</div>
@@ -915,7 +942,7 @@ const AdsPage = (() => {
             dz.style.padding = 'var(--space-4)';
             dz.innerHTML = `
               <div style="display: flex; align-items: center; gap: var(--space-3); justify-content: center;">
-                <span style="font-size: 1.5rem;">📄</span>
+                <span class="ui-inline-icon">${Utils.icons.fileText}</span>
                 <span style="font-size: var(--text-sm); color: var(--success-400); font-weight: var(--weight-medium);">${Utils.escapeHtml(file.name)}</span>
                 <span style="font-size: var(--text-xs); color: var(--text-muted);">(click để đổi file)</span>
               </div>
@@ -1027,7 +1054,7 @@ const AdsPage = (() => {
         <div style="border-top: 1px solid var(--border-subtle); padding-top: var(--space-4); margin-bottom: var(--space-4);">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
             <div style="font-weight: var(--weight-semibold); color: var(--text-primary); font-size: var(--text-md);">
-              🔗 Ghép cột dữ liệu
+              <span class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.repeat}</span>Ghép cột dữ liệu</span>
             </div>
             <div style="font-size: var(--text-xs); padding: 3px 10px; border-radius: var(--radius-full); background: ${detectedCount >= 2 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)'}; color: ${detectedCount >= 2 ? 'var(--success-400)' : 'var(--warning-400)'}; font-weight: var(--weight-medium);">
               Tự động nhận diện ${detectedCount}/${IMPORT_FIELDS.length} cột
@@ -1042,7 +1069,7 @@ const AdsPage = (() => {
               return `
                 <div class="form-group" style="margin-bottom: var(--space-2);">
                   <label class="form-label" style="font-size: 11px; display: flex; align-items: center; gap: 4px;">
-                    ${isDetected ? '<span style="color:var(--success-400);">✓</span>' : ''}
+                    ${isDetected ? `<span class="ui-inline-icon" style="color:var(--success-400);">${Utils.icons.check}</span>` : ''}
                     ${f.label}
                     ${f.required ? '<span style="color:var(--danger-400);">*</span>' : ''}
                   </label>
@@ -1060,7 +1087,7 @@ const AdsPage = (() => {
 
         <div style="margin-bottom: var(--space-3);">
           <div style="font-weight: var(--weight-semibold); color: var(--text-primary); margin-bottom: var(--space-2); font-size: var(--text-sm);">
-            👁 Xem trước dữ liệu (${Math.min(5, parsedRows.length)} / ${parsedRows.length} dòng)
+            <span class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.search}</span>Xem trước dữ liệu (${Math.min(5, parsedRows.length)} / ${parsedRows.length} dòng)</span>
           </div>
           <div style="overflow-x: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); max-height: 200px;">
             <table class="data-table" style="font-size: 11px;">
@@ -1232,7 +1259,7 @@ const AdsPage = (() => {
       Modal.close();
 
       if (importCount > 0) {
-        Toast.success(`✅ Đã nhập thành công ${importCount} bản ghi${skipCount > 0 ? ` (bỏ qua ${skipCount} dòng lỗi)` : ''}`);
+        Toast.success(`Đã nhập thành công ${importCount} bản ghi${skipCount > 0 ? ` (bỏ qua ${skipCount} dòng lỗi)` : ''}`);
       } else {
         Toast.error(`Không thể nhập dữ liệu. Bỏ qua ${skipCount} dòng do lỗi định dạng ngày.`);
       }

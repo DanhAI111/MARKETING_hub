@@ -109,7 +109,7 @@ const Modal = (() => {
     }
   };
 
-  const confirm = ({ title = 'Xác nhận', message, icon = '⚠️', onConfirm, confirmLabel = 'Xác nhận', confirmClass = 'btn-danger' }) => {
+  const confirm = ({ title = 'Xác nhận', message, icon = Utils.icons.warning, onConfirm, confirmLabel = 'Xác nhận', confirmClass = 'btn-danger' }) => {
     const content = `
       <div class="confirm-body">
         <div class="confirm-icon">${icon}</div>

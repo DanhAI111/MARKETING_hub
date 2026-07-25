@@ -124,8 +124,37 @@ const ScheduledPage = (() => {
         </div>
       </div>
 
-      <div class="scheduled-page-list">
-        ${fanpages.length === 0 ? renderEmptyState('Chưa có fanpage', 'Thêm fanpage trước khi tạo lịch đăng.') : renderFanpageGroups(fanpages, postsByFanpage)}
+      <div class="scheduled-workspace-grid">
+        <div class="scheduled-page-list">
+          ${fanpages.length === 0 ? renderEmptyState('Chưa có fanpage', 'Thêm fanpage trước khi tạo lịch đăng.') : renderFanpageGroups(fanpages, postsByFanpage)}
+        </div>
+        <aside class="context-rail scheduled-context-rail">
+          <div class="context-rail-heading">
+            <span>Sức khỏe hàng đợi</span>
+            <span class="live-indicator">Live</span>
+          </div>
+          <section class="queue-health-gauge">
+            <strong>${posts.length ? Math.max(0, Math.round(((posts.length - failedCount) / posts.length) * 100)) : 100}%</strong>
+            <span>sẵn sàng xuất bản</span>
+          </section>
+          <section class="context-block">
+            <div class="context-block-title">Trạng thái</div>
+            <div class="context-metric-row"><span>Chờ duyệt</span><strong>${pendingApprovalCount}</strong></div>
+            <div class="context-metric-row"><span>Chờ đăng</span><strong>${scheduledCount}</strong></div>
+            <div class="context-metric-row"><span>Đang đăng</span><strong>${publishingCount}</strong></div>
+            <div class="context-metric-row danger"><span>Lỗi đăng</span><strong>${failedCount}</strong></div>
+          </section>
+          <section class="context-block">
+            <div class="context-block-title">Bài tiếp theo</div>
+            ${posts[0] ? `
+              <div class="next-publish-card">
+                <span>${formatScheduleTime(posts[0].scheduledAt)}</span>
+                <strong>${Utils.escapeHtml(posts[0].title || posts[0].content || 'Bài đăng')}</strong>
+                <small>${Utils.escapeHtml(Store.fanpages.getById(posts[0].fanpageId)?.name || 'Không rõ kênh')}</small>
+              </div>
+            ` : '<div class="context-empty">Hàng đợi đang trống.</div>'}
+          </section>
+        </aside>
       </div>
     `;
 

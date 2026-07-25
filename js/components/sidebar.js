@@ -79,16 +79,39 @@ const Sidebar = (() => {
       </div>
     `;
 
+    let toggleButton = document.getElementById('sidebarToggle');
+    if (!toggleButton) {
+      toggleButton = document.createElement('button');
+      toggleButton.className = 'sidebar-toggle';
+      toggleButton.id = 'sidebarToggle';
+      toggleButton.type = 'button';
+      toggleButton.setAttribute('aria-label', 'Mở điều hướng');
+      toggleButton.setAttribute('aria-expanded', 'false');
+      toggleButton.innerHTML = Utils.icons.menu;
+      document.querySelector('.app')?.append(toggleButton);
+    }
+
     // Attach events
     sidebar.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', (e) => {
         e.preventDefault();
         const page = item.dataset.page;
         App.navigate(page);
+        if (window.innerWidth <= 768) {
+          sidebar.classList.remove('mobile-open');
+          document.getElementById('sidebarToggle')?.setAttribute('aria-expanded', 'false');
+        }
       });
     });
 
-    document.getElementById('sidebarToggle')?.addEventListener('click', toggle);
+    toggleButton?.addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        const isOpen = sidebar.classList.toggle('mobile-open');
+        document.getElementById('sidebarToggle')?.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        return;
+      }
+      toggle();
+    });
   };
 
   const toggle = () => {
@@ -97,6 +120,8 @@ const Sidebar = (() => {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) {
       sidebar.classList.toggle('collapsed', collapsed);
+      const isOpen = sidebar.classList.contains('mobile-open');
+      document.getElementById('sidebarToggle')?.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     }
   };
 

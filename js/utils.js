@@ -404,11 +404,9 @@ const Utils = (() => {
     other: icons.receipt
   };
 
-  const getExpenseCategoryIcon = (category, info = {}) => {
-    // Built-in icons are trusted inline SVG. A custom category's `info.icon` is
-    // free-text user input, so escape it to block stored XSS (e.g. an <img onerror>).
-    // Emoji/plain text pass through escapeHtml unchanged (only & < > are escaped).
-    if (info.icon) return escapeHtml(info.icon);
+  const getExpenseCategoryIcon = (category) => {
+    // The interface uses one coherent SVG icon set. Ignore legacy/custom emoji
+    // values that may still exist in stored category records.
     return categoryIconMap[category] || icons.expenses;
   };
 

@@ -77,7 +77,7 @@ const ExpensesPage = (() => {
       <!-- Tab Navigation -->
       <div style="display: flex; gap: var(--space-2); margin-bottom: var(--space-5); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-1);">
         <button class="btn ${activeTab === 'expenses' ? 'btn-primary' : 'btn-ghost'}" id="tabExpenses" style="border-radius: var(--radius-md) var(--radius-md) 0 0;">
-          💸 Chi phí
+          ${Utils.icons.expenses} <span>Chi phí</span>
         </button>
         <button class="btn ${activeTab === 'recurring' ? 'btn-primary' : 'btn-ghost'}" id="tabRecurring" style="border-radius: var(--radius-md) var(--radius-md) 0 0;">
           ${Utils.icons.repeat} Chi phí định kỳ
@@ -137,7 +137,7 @@ const ExpensesPage = (() => {
       if (totalPct >= 90) {
         alerts.unshift({
           cat: '_total',
-          catInfo: { name: 'Tổng ngân sách', icon: '💰', color: '#ef4444' },
+          catInfo: { name: 'Tổng ngân sách', icon: '', color: '#ef4444' },
           spent: totalSpent,
           budget: target.totalBudget,
           pct: totalPct,
@@ -159,7 +159,7 @@ const ExpensesPage = (() => {
           ">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2);">
               <div style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: ${a.isOver ? 'var(--danger-400)' : 'var(--warning-400)'};">
-                ${a.isOver ? '🚨' : '⚠️'} <span class="expense-inline-icon">${Utils.getExpenseCategoryIcon(a.cat, a.catInfo)}</span> ${Utils.escapeHtml(a.catInfo.name)}
+                <span class="ui-inline-icon">${Utils.icons.warning}</span><span class="expense-inline-icon">${Utils.getExpenseCategoryIcon(a.cat, a.catInfo)}</span> ${Utils.escapeHtml(a.catInfo.name)}
                 — ${a.isOver ? 'Vượt ngân sách!' : 'Sắp hết ngân sách!'}
               </div>
               <span style="font-size: var(--text-xs); font-family: var(--font-mono); color: var(--text-secondary);">
@@ -226,8 +226,8 @@ const ExpensesPage = (() => {
               ${changeLabel}
             </div>
           </div>
-          <div class="stat-card-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success-400); width: 64px; height: 64px; border-radius: var(--radius-xl); font-size: 1.8rem;">
-            💸
+          <div class="stat-card-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success-400); width: 64px; height: 64px; border-radius: var(--radius-xl);">
+            ${Utils.icons.expenses}
           </div>
         </div>
       </div>
@@ -361,7 +361,7 @@ const ExpensesPage = (() => {
                   </td>
                   <td style="font-weight: var(--weight-medium); color: var(--text-primary);">
                     ${Utils.escapeHtml(e.description)}
-                    ${hasAttachment ? `<span class="view-attachment-btn" data-id="${e.id}" style="cursor: pointer; margin-left: 4px;" title="Xem đính kèm">📎</span>` : ''}
+                    ${hasAttachment ? `<button class="view-attachment-btn ui-icon-button" data-id="${e.id}" title="Xem đính kèm">${Utils.icons.fileText}</button>` : ''}
                   </td>
                   <td class="text-right font-mono" style="font-weight: var(--weight-semibold); color: var(--text-primary);">${Utils.formatVND(e.amount)}</td>
                   <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${Utils.escapeHtml(e.notes || '')}">
@@ -403,8 +403,9 @@ const ExpensesPage = (() => {
     return `
       <div class="toolbar" style="margin-bottom: var(--space-4);">
         <div class="toolbar-left">
-          <h3 style="font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--text-primary); margin: 0;">
-            ${Utils.icons.repeat} Danh sách chi phí định kỳ
+          <h3 class="ui-label-with-icon recurring-list-title" style="font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--text-primary); margin: 0;">
+            <span class="ui-inline-icon">${Utils.icons.repeat}</span>
+            <span>Danh sách chi phí định kỳ</span>
           </h3>
         </div>
         <div class="toolbar-right">
@@ -452,7 +453,7 @@ const ExpensesPage = (() => {
                   </td>
                   <td class="text-center">
                     <button class="btn btn-sm toggle-recurring-btn ${isActive ? 'btn-success' : 'btn-ghost'}" data-id="${tpl.id}" style="font-size: var(--text-xs); padding: 4px 12px; border-radius: var(--radius-full);">
-                      ${isActive ? '✅ Hoạt động' : '⏸️ Tạm dừng'}
+                      <span class="ui-inline-icon">${isActive ? Utils.icons.check : Utils.icons.clock}</span>${isActive ? 'Hoạt động' : 'Tạm dừng'}
                     </button>
                   </td>
                   <td class="text-center">
@@ -658,7 +659,7 @@ const ExpensesPage = (() => {
         Modal.confirm({
           title: 'Xóa khoản chi phí',
           message: `Bạn có chắc chắn muốn xóa khoản chi "${Utils.escapeHtml(exp.description)}"?`,
-          icon: '🗑️',
+          icon: Utils.icons.trash,
           onConfirm: () => {
             Store.expenses.remove(id);
             Toast.success('Đã xóa khoản chi phí');
@@ -719,7 +720,7 @@ const ExpensesPage = (() => {
         Modal.confirm({
           title: 'Xóa chi phí định kỳ',
           message: `Bạn có chắc chắn muốn xóa mẫu "${Utils.escapeHtml(tpl.description)}"? Các khoản chi đã tạo trước đó sẽ không bị ảnh hưởng.`,
-          icon: '🗑️',
+          icon: Utils.icons.trash,
           onConfirm: () => {
             Store.recurringExpenses.remove(id);
             Toast.success('Đã xóa mẫu chi phí định kỳ');
@@ -957,7 +958,7 @@ const ExpensesPage = (() => {
           border-radius: var(--radius-md);
           font-size: var(--text-sm); color: var(--text-secondary);
         ">
-          📄 ${Utils.escapeHtml(attachment.name)}
+          <span class="ui-inline-icon">${Utils.icons.fileText}</span>${Utils.escapeHtml(attachment.name)}
         </div>
       `;
     }
@@ -977,7 +978,7 @@ const ExpensesPage = (() => {
     if (attachment.type === 'application/pdf') {
       viewContent = `
         <div style="text-align: center; padding: var(--space-4);">
-          <div style="font-size: 4rem; margin-bottom: var(--space-3);">📄</div>
+          <div class="attachment-file-icon">${Utils.icons.fileText}</div>
           <p style="color: var(--text-secondary); margin-bottom: var(--space-3);">${Utils.escapeHtml(attachment.name)}</p>
           <a href="${attachment.data}" download="${Utils.escapeHtml(attachment.name)}" class="btn btn-primary">
             ${Utils.icons.download} Tải xuống PDF
@@ -995,7 +996,7 @@ const ExpensesPage = (() => {
     }
 
     Modal.open({
-      title: '📎 Hóa đơn / Biên lai',
+      title: 'Hóa đơn / Biên lai',
       content: viewContent,
       size: 'lg',
       showFooter: false

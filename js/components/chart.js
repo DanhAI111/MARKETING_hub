@@ -82,7 +82,12 @@ const Chart = (() => {
     canvas.style.height = h + 'px';
     ctx.scale(dpr, dpr);
 
-    const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+    const padding = {
+      top: options.padding?.top ?? 20,
+      right: options.padding?.right ?? 20,
+      bottom: options.padding?.bottom ?? 40,
+      left: options.padding?.left ?? 60
+    };
     const chartW = w - padding.left - padding.right;
     const chartH = h - padding.top - padding.bottom;
 
@@ -104,7 +109,7 @@ const Chart = (() => {
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
     ctx.fillStyle = '#999999';
-    ctx.font = '11px "JetBrains Mono"';
+    ctx.font = `${w >= 900 ? 12 : 11}px "JetBrains Mono"`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
 
@@ -115,7 +120,10 @@ const Chart = (() => {
       ctx.lineTo(w - padding.right, y);
       ctx.stroke();
       const val = (maxVal / gridLines) * i;
-      ctx.fillText(Utils.formatNumberCompact(val), padding.left - 8, y);
+      const label = maxVal < 10
+        ? (Math.round(val * 10) / 10).toLocaleString('vi-VN')
+        : Utils.formatNumberCompact(val);
+      ctx.fillText(label, padding.left - 8, y);
     }
 
     // Bars
@@ -136,7 +144,7 @@ const Chart = (() => {
 
       // Label
       ctx.fillStyle = '#999999';
-      ctx.font = '11px "Inter Variable", Inter, sans-serif';
+      ctx.font = `${w >= 900 ? 12 : 11}px "Inter Variable", Inter, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(d.label || '', x + barWidth / 2, padding.top + chartH + 8);
@@ -158,7 +166,12 @@ const Chart = (() => {
     canvas.style.height = h + 'px';
     ctx.scale(dpr, dpr);
 
-    const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+    const padding = {
+      top: options.padding?.top ?? 20,
+      right: options.padding?.right ?? 20,
+      bottom: options.padding?.bottom ?? 40,
+      left: options.padding?.left ?? 60
+    };
     const chartW = w - padding.left - padding.right;
     const chartH = h - padding.top - padding.bottom;
     const labels = options.labels || [];
@@ -182,7 +195,7 @@ const Chart = (() => {
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
     ctx.fillStyle = '#999999';
-    ctx.font = '11px "JetBrains Mono"';
+    ctx.font = `${w >= 900 ? 12 : 11}px "JetBrains Mono"`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
 
@@ -193,17 +206,21 @@ const Chart = (() => {
       ctx.lineTo(w - padding.right, y);
       ctx.stroke();
       const val = (maxVal / gridLines) * i;
-      ctx.fillText(Utils.formatNumberCompact(val), padding.left - 8, y);
+      const label = maxVal < 10
+        ? (Math.round(val * 10) / 10).toLocaleString('vi-VN')
+        : Utils.formatNumberCompact(val);
+      ctx.fillText(label, padding.left - 8, y);
     }
 
     // X-axis labels
     const xStep = labels.length > 1 ? chartW / (labels.length - 1) : 0;
     ctx.fillStyle = '#999999';
-    ctx.font = '11px "Inter Variable", Inter, sans-serif';
+    ctx.font = `${w >= 900 ? 12 : 11}px "Inter Variable", Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
 
-    const labelStep = Math.ceil(labels.length / 10);
+    const targetLabelCount = w < 500 ? 5 : 10;
+    const labelStep = Math.ceil(labels.length / targetLabelCount);
     labels.forEach((label, i) => {
       if (i % labelStep === 0 || i === labels.length - 1) {
         ctx.fillText(label, padding.left + xStep * i, padding.top + chartH + 8);

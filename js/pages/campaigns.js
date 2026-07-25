@@ -86,58 +86,166 @@ const CampaignsPage = (() => {
     bindEvents();
   };
 
-  const renderCards = (campaigns) => `
-    <div class="campaign-grid">
-      ${campaigns.map(c => {
-        const stats = Store.campaigns.getStats(c.id);
-        const statusInfo = Utils.CAMPAIGN_STATUSES[c.status] || { label: c.status, cssClass: 'tag-neutral' };
-        const budget = parseFloat(c.budget) || 0;
-        const pct = budget > 0 ? Math.min(100, Math.round((stats.totalSpend / budget) * 100)) : 0;
-        const overBudget = budget > 0 && stats.totalSpend > budget;
-        return `
-          <div class="campaign-card card clickable-row" data-campaign-id="${Utils.escapeHtml(c.id)}" tabindex="0" role="button"
-               style="padding:var(--space-4);cursor:pointer;display:grid;gap:var(--space-3);">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-2);">
-              <h3 style="font-size:var(--text-md);font-weight:var(--weight-bold);color:var(--text-primary);margin:0;">
-                ${Utils.escapeHtml(c.name)}
-              </h3>
-              <span class="tag ${statusInfo.cssClass}">${Utils.escapeHtml(statusInfo.label)}</span>
-            </div>
-            ${c.goal ? `<p style="font-size:var(--text-sm);color:var(--text-secondary);margin:0;">${Utils.escapeHtml(c.goal)}</p>` : ''}
-            <div style="font-size:var(--text-xs);color:var(--text-tertiary);font-family:var(--font-mono);">
-              ${c.startAt ? Utils.formatDateShort(c.startAt) : '—'} → ${c.endAt ? Utils.formatDateShort(c.endAt) : '—'}
-            </div>
-            <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;font-size:var(--text-xs);color:var(--text-secondary);">
-              <span>📝 ${stats.postCount} bài</span>
-              <span>📣 ${stats.adCount} ads</span>
-              <span>🎪 ${stats.eventCount} sự kiện</span>
-            </div>
+  const renderCards = (campaigns) => {
+    const featured = campaigns[0];
+    const stats = Store.campaigns.getStats(featured.id);
+    const statusInfo = Utils.CAMPAIGN_STATUSES[featured.status] || { label: featured.status, cssClass: 'tag-neutral' };
+    const budget = parseFloat(featured.budget) || 0;
+    const budgetPct = budget > 0 ? Math.min(100, Math.round((stats.totalSpend / budget) * 100)) : 0;
+    const campaignPosts = Store.posts.getAll()
+      .filter(post => post.campaignId === featured.id)
+      .sort((a, b) => (a.scheduledAt || a.date || '').localeCompare(b.scheduledAt || b.date || ''))
+      .slice(0, 6);
+    const campaignEvents = Store.events.getAll()
+      .filter(event => event.campaignId === featured.id)
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+      .slice(0, 4);
+
+    return `
+      <div class="campaign-studio">
+        <aside class="campaign-brief-panel">
+          <div class="panel-kicker">Campaign brief</div>
+          <button class="campaign-featured-title clickable-row" data-campaign-id="${Utils.escapeHtml(featured.id)}">
+            <span class="campaign-art-mark">${Utils.icons.megaphone}</span>
+            <span>
+              <strong>${Utils.escapeHtml(featured.name)}</strong>
+              <small>${featured.startAt ? Utils.formatDateShort(featured.startAt) : '—'} → ${featured.endAt ? Utils.formatDateShort(featured.endAt) : '—'}</small>
+            </span>
+            <span class="tag ${statusInfo.cssClass}">${Utils.escapeHtml(statusInfo.label)}</span>
+          </button>
+          <div class="campaign-brief-copy">
+            <span>Mục tiêu</span>
+            <p>${Utils.escapeHtml(featured.goal || 'Chưa thiết lập mục tiêu chiến dịch.')}</p>
+          </div>
+          <div class="campaign-budget">
+            <div><span>Ngân sách đã dùng</span><strong>${budgetPct}%</strong></div>
+            <div class="campaign-budget-track"><span style="width:${budgetPct}%"></span></div>
+            <small>${Utils.formatVND(stats.totalSpend)} / ${Utils.formatVND(budget)}</small>
+          </div>
+          <div class="campaign-brief-metrics">
+            <div><span>Bài đăng</span><strong>${stats.postCount}</strong></div>
+            <div><span>Ads</span><strong>${stats.adCount}</strong></div>
+            <div><span>Sự kiện</span><strong>${stats.eventCount}</strong></div>
+          </div>
+          <div class="panel-section-title"><span>Chiến dịch khác</span><span>${Math.max(0, campaigns.length - 1)}</span></div>
+          <div class="campaign-switcher">
+            ${campaigns.slice(1, 5).map(campaign => {
+              const info = Utils.CAMPAIGN_STATUSES[campaign.status] || { label: campaign.status, cssClass: 'tag-neutral' };
+              return `
+                <button class="context-row clickable-row" data-campaign-id="${Utils.escapeHtml(campaign.id)}">
+                  <span class="status-pulse"></span>
+                  <span>${Utils.escapeHtml(campaign.name)}</span>
+                  <span class="tag ${info.cssClass}">${Utils.escapeHtml(info.label)}</span>
+                </button>
+              `;
+            }).join('') || '<div class="context-empty">Không có chiến dịch khác.</div>'}
+          </div>
+        </aside>
+
+        <section class="campaign-storyboard">
+          <div class="queue-header">
             <div>
-              <div style="display:flex;justify-content:space-between;font-size:var(--text-xs);margin-bottom:4px;">
-                <span style="color:var(--text-tertiary);">Ngân sách</span>
-                <span class="font-mono" style="color:${overBudget ? 'var(--danger-400)' : 'var(--text-secondary)'};">
-                  ${Utils.formatVND(stats.totalSpend)} / ${Utils.formatVND(budget)}
-                </span>
-              </div>
-              <div style="height:6px;background:var(--bg-tertiary);border-radius:999px;overflow:hidden;">
-                <div style="height:100%;width:${pct}%;background:${overBudget ? 'var(--danger-400)' : 'var(--success-400)'};"></div>
-              </div>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:var(--text-xs);color:var(--text-tertiary);">
-              <span>ROAS: <strong class="font-mono" style="color:var(--text-primary);">${stats.roas.toFixed(2)}x</strong></span>
-              <span>DT: <strong class="font-mono" style="color:var(--text-primary);">${Utils.formatVND(stats.revenue)}</strong></span>
+              <div class="panel-kicker">Editorial stream</div>
+              <h2>Dòng nội dung chiến dịch</h2>
+              <p>Tập trung bài đăng, mốc sự kiện và tiến độ xuất bản trong một luồng.</p>
             </div>
           </div>
-        `;
-      }).join('')}
-    </div>
-  `;
+          <div class="storyboard-stream">
+            ${campaignPosts.length ? campaignPosts.map((post, index) => {
+              const fanpage = Store.fanpages.getById(post.fanpageId);
+              const postStatus = Utils.getPostStatus(post.status);
+              return `
+                <article class="storyboard-item">
+                  <span class="storyboard-index">${String(index + 1).padStart(2, '0')}</span>
+                  <div class="storyboard-copy">
+                    <div>
+                      <strong>${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</strong>
+                      <span class="tag ${postStatus.className}">${postStatus.label}</span>
+                    </div>
+                    <p>${Utils.escapeHtml((post.content || post.title || '').slice(0, 160))}</p>
+                    <small>${Utils.escapeHtml(fanpage?.name || 'Không rõ kênh')} · ${post.scheduledAt ? Utils.formatDateShort(post.scheduledAt.slice(0, 10)) : Utils.formatDateShort(post.date)}</small>
+                  </div>
+                </article>
+              `;
+            }).join('') : `
+              <div class="queue-empty">
+                <span>${Utils.icons.content}</span>
+                <strong>Chưa có bài gắn với chiến dịch</strong>
+                <p>Mở chi tiết chiến dịch để liên kết bài đăng, ads và sự kiện.</p>
+              </div>
+            `}
+          </div>
+        </section>
+
+        <aside class="context-rail campaign-health-rail">
+          <div class="context-rail-heading">
+            <span>Sức khỏe chiến dịch</span>
+            <span class="live-indicator">Live</span>
+          </div>
+          <section class="campaign-roas">
+            <span>ROAS</span>
+            <strong>${stats.roas.toFixed(2)}x</strong>
+            <small>Doanh thu ${Utils.formatVND(stats.revenue)}</small>
+          </section>
+          <section class="context-block">
+            <div class="context-block-title">Chỉ số chính</div>
+            <div class="context-metric-row"><span>Chi tiêu</span><strong>${Utils.formatVNDCompact(stats.totalSpend)}</strong></div>
+            <div class="context-metric-row"><span>Doanh thu</span><strong>${Utils.formatVNDCompact(stats.revenue)}</strong></div>
+            <div class="context-metric-row"><span>Ngân sách còn lại</span><strong>${Utils.formatVNDCompact(Math.max(0, budget - stats.totalSpend))}</strong></div>
+          </section>
+          <section class="context-block">
+            <div class="context-block-title">Mốc sắp tới</div>
+            ${campaignEvents.length ? campaignEvents.map(event => `
+              <div class="context-row static">
+                <span class="context-date">${Utils.formatDateShort(event.date)}</span>
+                <span>${Utils.escapeHtml(event.name)}</span>
+              </div>
+            `).join('') : '<div class="context-empty">Chưa có sự kiện liên kết.</div>'}
+          </section>
+        </aside>
+      </div>
+    `;
+  };
 
   const renderEmptyState = () => `
-    <div class="empty-state" style="padding: var(--space-8) 0;">
-      <div class="empty-state-icon"></div>
-      <div class="empty-state-title">Chưa có chiến dịch nào</div>
-      <div class="empty-state-desc">Tạo chiến dịch để gom bài đăng, quảng cáo, sự kiện và chi phí theo một mục tiêu.</div>
+    <div class="campaign-studio campaign-studio-empty">
+      <aside class="campaign-brief-panel">
+        <div class="panel-kicker">Campaign brief</div>
+        <div class="campaign-empty-brief">
+          <span class="campaign-art-mark">${Utils.icons.megaphone}</span>
+          <strong>Chưa có brief</strong>
+          <p>Tạo chiến dịch đầu tiên để xác định mục tiêu, ngân sách và các kênh tham gia.</p>
+        </div>
+      </aside>
+      <section class="campaign-storyboard">
+        <div class="queue-header">
+          <div>
+            <div class="panel-kicker">Editorial stream</div>
+            <h2>Dòng nội dung chiến dịch</h2>
+            <p>Bài đăng và các mốc triển khai sẽ xuất hiện tại đây.</p>
+          </div>
+        </div>
+        <div class="queue-empty">
+          <span>${Utils.icons.content}</span>
+          <strong>Chưa có chiến dịch nào</strong>
+          <p>Tạo chiến dịch để gom bài đăng, quảng cáo, sự kiện và chi phí theo một mục tiêu.</p>
+        </div>
+      </section>
+      <aside class="context-rail campaign-health-rail">
+        <div class="context-rail-heading">
+          <span>Sức khỏe chiến dịch</span>
+          <span class="live-indicator">Live</span>
+        </div>
+        <section class="campaign-roas">
+          <span>ROAS</span>
+          <strong>—</strong>
+          <small>Chờ dữ liệu chiến dịch</small>
+        </section>
+        <section class="context-block">
+          <div class="context-block-title">Bước tiếp theo</div>
+          <div class="context-empty">Nhấn “Thêm Chiến Dịch”, điền mục tiêu và ngân sách, sau đó liên kết nội dung.</div>
+        </section>
+      </aside>
     </div>
   `;
 
@@ -267,7 +375,7 @@ const CampaignsPage = (() => {
           Modal.confirm({
             title: 'Xóa chiến dịch',
             message: `Xóa chiến dịch "${Utils.escapeHtml(campaign.name)}"? Bài đăng, quảng cáo, sự kiện và chi phí liên kết sẽ được gỡ khỏi chiến dịch nhưng không bị xóa.`,
-            icon: '🗑️',
+            icon: Utils.icons.trash,
             onConfirm: () => {
               Store.campaigns.remove(campaign.id);
               Toast.success('Đã xóa chiến dịch');
