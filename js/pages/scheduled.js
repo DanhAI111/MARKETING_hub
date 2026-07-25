@@ -8,6 +8,7 @@ const ScheduledPage = (() => {
   let currentMonth = Utils.getReportingMonth();
   let selectedStatus = '';
   let selectedPlatform = '';
+  let selectedApproval = '';
 
   // Scheduled queue excludes 'published' — those leave the queue.
   const { published, ...STATUS_META } = Utils.POST_STATUSES;
@@ -26,6 +27,7 @@ const ScheduledPage = (() => {
     return Store.posts.getScheduled()
       .filter(post => {
         if (selectedStatus && post.status !== selectedStatus) return false;
+        if (selectedApproval && (post.approvalStatus || 'approved') !== selectedApproval) return false;
         const fanpage = Store.fanpages.getById(post.fanpageId);
         if (selectedPlatform && fanpage?.platform !== selectedPlatform) return false;
         return true;
@@ -57,13 +59,21 @@ const ScheduledPage = (() => {
       postsByFanpage.get(key).push(post);
     });
 
-    const scheduledCount = posts.filter(p => p.status === 'scheduled').length;
+    const scheduledCount = posts.filter(p =>
+      p.status === 'scheduled' && (p.approvalStatus || 'approved') === 'approved'
+    ).length;
     const publishingCount = posts.filter(p => p.status === 'publishing').length;
     const failedCount = posts.filter(p => p.status === 'failed').length;
+    const pendingApprovalCount = posts.filter(p => (p.approvalStatus || 'approved') === 'pending').length;
     const pageCount = postsByFanpage.size;
 
     container.innerHTML = `
-      <div class="quick-stats" style="grid-template-columns: repeat(4, 1fr); margin-bottom: var(--space-5);">
+      <div class="quick-stats approval-quick-stats" style="margin-bottom: var(--space-5);">
+        <div class="stat-card">
+          <div class="stat-card-icon" style="background: rgba(139, 92, 246, 0.12); color: var(--primary-400);">${Utils.icons.check}</div>
+          <div class="stat-card-label">Chờ duyệt</div>
+          <div class="stat-card-value">${pendingApprovalCount}</div>
+        </div>
         <div class="stat-card">
           <div class="stat-card-icon" style="background: rgba(245, 158, 11, 0.12); color: var(--warning-400);">${Utils.icons.clock}</div>
           <div class="stat-card-label">Chờ đăng</div>
@@ -96,6 +106,10 @@ const ScheduledPage = (() => {
           <select class="filter-select" id="scheduledPlatformFilter">
             <option value="">Tất cả nền tảng</option>
             ${Object.entries(Utils.PLATFORMS).map(([key, platform]) => `<option value="${key}" ${selectedPlatform === key ? 'selected' : ''}>${platform.name}</option>`).join('')}
+          </select>
+          <select class="filter-select" id="scheduledApprovalFilter">
+            <option value="">Tất cả phê duyệt</option>
+            ${Object.entries(Utils.APPROVAL_STATUSES).map(([key, meta]) => `<option value="${key}" ${selectedApproval === key ? 'selected' : ''}>${meta.label}</option>`).join('')}
           </select>
         </div>
         <div class="toolbar-right">
@@ -162,6 +176,7 @@ const ScheduledPage = (() => {
 
   const renderScheduledPost = (post) => {
     const status = getStatusMeta(post.status);
+    const approval = Utils.getApprovalStatus(post.approvalStatus || 'approved');
     const mediaCount = Array.isArray(post.mediaItems) ? post.mediaItems.length : (post.mediaUrl ? 1 : 0);
     return `
       <article class="scheduled-post-row ${post.status === 'failed' ? 'is-failed' : ''}">
@@ -175,9 +190,20 @@ const ScheduledPage = (() => {
         </div>
         <div class="scheduled-post-meta">
           ${mediaCount ? `<span class="post-media-count">${Utils.icons.image}${mediaCount}</span>` : ''}
+          <span class="tag ${approval.className}">${approval.label}</span>
           <span class="tag ${status.className}">${status.label}</span>
         </div>
         <div class="scheduled-post-actions">
+          ${(post.approvalStatus || 'approved') !== 'approved' ? `
+            <button class="btn btn-icon btn-ghost btn-sm approve-scheduled-post-btn" data-id="${post.id}" data-tooltip="Phê duyệt bài">
+              ${Utils.icons.check}
+            </button>
+          ` : ''}
+          ${(post.approvalStatus || 'approved') === 'pending' ? `
+            <button class="btn btn-icon btn-ghost btn-sm reject-scheduled-post-btn" data-id="${post.id}" data-tooltip="Từ chối bài">
+              ${Utils.icons.close}
+            </button>
+          ` : ''}
           ${post.status === 'failed' ? `
             <button class="btn btn-icon btn-ghost btn-sm retry-scheduled-post-btn" data-id="${post.id}" data-tooltip="Thử đăng lại">
               ${Utils.icons.refresh}
@@ -218,6 +244,11 @@ const ScheduledPage = (() => {
 
     container.querySelector('#scheduledPlatformFilter')?.addEventListener('change', (e) => {
       selectedPlatform = e.target.value;
+      renderPage();
+    });
+
+    container.querySelector('#scheduledApprovalFilter')?.addEventListener('change', (e) => {
+      selectedApproval = e.target.value;
       renderPage();
     });
 
@@ -262,6 +293,52 @@ const ScheduledPage = (() => {
         }
         renderPage();
         Sidebar.updateBadge();
+      });
+    });
+
+    const updateApproval = async (postId, approvalStatus) => {
+      if (window.RemoteStore?.available) {
+        await RemoteStore.updatePost(postId, { approvalStatus });
+        if (approvalStatus === 'approved') await RemoteStore.publishDue();
+        else await RemoteStore.loadPending();
+      } else {
+        Store.posts.update(postId, { approvalStatus });
+      }
+    };
+
+    container.querySelectorAll('.approve-scheduled-post-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          await updateApproval(btn.dataset.id, 'approved');
+          Toast.success('Đã phê duyệt bài đăng');
+          renderPage();
+          Sidebar.updateBadge();
+        } catch (err) {
+          Toast.error(err.message || 'Không thể phê duyệt bài đăng');
+        }
+      });
+    });
+
+    container.querySelectorAll('.reject-scheduled-post-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const post = Store.posts.getById(btn.dataset.id);
+        if (!post) return;
+        Modal.confirm({
+          title: 'Từ chối bài đăng',
+          message: `Từ chối bài "${Utils.escapeHtml(post.title || 'Bài đăng')}"? Bài sẽ không được đăng tự động.`,
+          icon: '',
+          confirmLabel: 'Từ chối',
+          onConfirm: async () => {
+            try {
+              await updateApproval(post.id, 'rejected');
+              Toast.success('Đã từ chối bài đăng');
+              renderPage();
+              Sidebar.updateBadge();
+            } catch (err) {
+              Toast.error(err.message || 'Không thể từ chối bài đăng');
+            }
+          }
+        });
       });
     });
 

@@ -14,7 +14,8 @@ const RemoteStore = (() => {
     'adReports',
     'employees',
     'monthlyTargets',
-    'recurringExpenses'
+    'recurringExpenses',
+    'campaigns'
   ];
   const isServerMode = () => window.location.protocol !== 'file:';
   let available = false;
@@ -120,6 +121,7 @@ const RemoteStore = (() => {
         employees: data.employees || [],
         monthlyTargets: data.monthlyTargets || [],
         recurringExpenses: data.recurringExpenses || [],
+        campaigns: data.campaigns || [],
         customCategories: data.customCategories
       })
     });

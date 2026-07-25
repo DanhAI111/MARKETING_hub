@@ -203,6 +203,37 @@ const Utils = (() => {
 
   const getPostStatus = (status, fallback = 'published') => POST_STATUSES[status] || POST_STATUSES[fallback];
 
+  const APPROVAL_STATUSES = {
+    pending: { label: 'Chờ duyệt', className: 'tag-warning' },
+    approved: { label: 'Đã duyệt', className: 'tag-success' },
+    rejected: { label: 'Từ chối', className: 'tag-danger' }
+  };
+
+  const getApprovalStatus = (status, fallback = 'approved') => (
+    APPROVAL_STATUSES[status] || APPROVAL_STATUSES[fallback]
+  );
+
+  const CAMPAIGN_STATUSES = {
+    active: { label: 'Đang chạy', cssClass: 'tag-status-ongoing' },
+    planning: { label: 'Lên kế hoạch', cssClass: 'tag-status-planning' },
+    paused: { label: 'Tạm dừng', cssClass: 'tag-status-preparing' },
+    completed: { label: 'Đã kết thúc', cssClass: 'tag-status-completed' }
+  };
+
+  // Reusable campaign picker for member forms (posts/ads/events/expenses).
+  // Returns a labelled form-group; read the value with data-field="campaignId".
+  const campaignPickerHtml = (selectedId = '') => {
+    const campaigns = typeof Store !== 'undefined' ? Store.campaigns.getAll() : [];
+    return `
+      <div class="form-group">
+        <label class="form-label">Chiến dịch</label>
+        <select class="form-select" data-field="campaignId">
+          <option value="">— Không thuộc chiến dịch —</option>
+          ${campaigns.map(c => `<option value="${escapeHtml(c.id)}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>`;
+  };
+
   // ── KPI Color ──
   const getKpiColor = (percentage) => {
     if (percentage >= 80) return 'success';
@@ -313,10 +344,13 @@ const Utils = (() => {
 
   // ── Sanitize HTML ──
   const escapeHtml = (str) => {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   };
 
   // ── SVG Icons (inline) ──
@@ -419,6 +453,7 @@ const Utils = (() => {
     PLATFORMS, getPlatformInfo,
     EXPENSE_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, getExpenseCategories, getCategoryInfo, getExpenseCategoryIcon,
     EVENT_TYPES, EVENT_STATUSES, TASK_STATUSES, PRIORITIES, POST_STATUSES, getPostStatus,
+    APPROVAL_STATUSES, getApprovalStatus, CAMPAIGN_STATUSES, campaignPickerHtml,
     getKpiColor,
     exportCSV, exportExcel, importCSV, downloadBlob,
     debounce, escapeHtml, safeUrl, onActivate,

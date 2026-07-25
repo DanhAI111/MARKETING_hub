@@ -111,3 +111,79 @@ test('cross-post retry does not re-publish Facebook', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('Facebook sync persists organic reactions, comments, and shares', async () => {
+  const saved = [];
+  const meta = new MetaService({}, {
+    decryptPageToken: async () => 'page-token',
+    upsertPost: async (post) => {
+      saved.push(post);
+      return post;
+    },
+    markMissingSyncedPostsDeleted: async () => 0
+  }, 'https://example.test');
+  meta.fetchFacebookPostBatch = async () => ({
+    posts: [{
+      id: 'fb-post-1',
+      message: 'Launch',
+      created_time: '2026-07-25T01:00:00.000Z',
+      reactions: { summary: { total_count: 123 } },
+      comments: { summary: { total_count: 45 } },
+      shares: { count: 6 }
+    }]
+  });
+
+  const count = await meta.syncFacebookPosts({
+    id: 'fp-1',
+    metaPageId: 'page-1'
+  }, { limit: 100 });
+
+  assert.equal(count, 1);
+  assert.deepEqual(
+    {
+      likes: saved[0].engagement.likes,
+      comments: saved[0].engagement.comments,
+      shares: saved[0].engagement.shares,
+      reach: saved[0].engagement.reach
+    },
+    { likes: 123, comments: 45, shares: 6, reach: 0 }
+  );
+  assert.match(saved[0].engagement.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('Instagram sync persists like and comment counts', async () => {
+  const saved = [];
+  const meta = new MetaService({}, {
+    decryptPageToken: async () => 'page-token',
+    upsertPost: async (post) => {
+      saved.push(post);
+      return post;
+    },
+    markMissingSyncedPostsDeleted: async () => 0
+  }, 'https://example.test');
+  meta.graphGet = async () => ({
+    data: [{
+      id: 'ig-post-1',
+      caption: 'Launch',
+      timestamp: '2026-07-25T01:00:00.000Z',
+      like_count: 88,
+      comments_count: 12
+    }]
+  });
+
+  const count = await meta.syncInstagramMedia({
+    id: 'fp-ig',
+    instagramBusinessId: 'ig-1'
+  }, { limit: 100 });
+
+  assert.equal(count, 1);
+  assert.deepEqual(
+    {
+      likes: saved[0].engagement.likes,
+      comments: saved[0].engagement.comments,
+      shares: saved[0].engagement.shares,
+      reach: saved[0].engagement.reach
+    },
+    { likes: 88, comments: 12, shares: 0, reach: 0 }
+  );
+});

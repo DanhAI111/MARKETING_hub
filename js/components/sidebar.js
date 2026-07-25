@@ -9,6 +9,7 @@ const Sidebar = (() => {
     { id: 'scheduled', label: 'Bài đã lên lịch', icon: 'clock', badge: 'scheduled' },
     { id: 'tasks', label: 'Công việc', icon: 'tasks', badge: 'tasks' },
     { id: 'events', label: 'Sự kiện', icon: 'events' },
+    { id: 'campaigns', label: 'Chiến dịch', icon: 'megaphone' },
     { id: 'expenses', label: 'Chi phí', icon: 'expenses' },
     { id: 'ads', label: 'Hiệu quả Ads', icon: 'ads' },
     { id: 'settings', label: 'Cài đặt', icon: 'settings' },

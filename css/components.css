@@ -1001,6 +1001,33 @@
 
 /* ── Responsive Components ── */
 @media (max-width: 768px) {
+  .toolbar-left,
+  .toolbar-right {
+    width: 100%;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .toolbar-left {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .toolbar-right {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-left .search-input-wrapper {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .toolbar-left .filter-select {
+    width: 100%;
+    min-width: 0;
+  }
+
   /* Sticky Table Column */
   .table-container {
     overflow-x: auto;

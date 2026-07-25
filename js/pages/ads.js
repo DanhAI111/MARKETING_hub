@@ -692,6 +692,8 @@ const AdsPage = (() => {
           <input type="number" class="form-input" data-field="revenue" value="${isEdit ? report.revenue : 0}" min="0" placeholder="Có thể bỏ trống">
         </div>
       </div>
+
+      ${Utils.campaignPickerHtml(isEdit ? (report.campaignId || '') : '')}
     `;
 
     Modal.open({
@@ -729,7 +731,8 @@ const AdsPage = (() => {
           messages: messagesVal,
           conversions: conversionsVal,
           engagement: engagementVal,
-          revenue: revenueVal
+          revenue: revenueVal,
+          campaignId: formData.campaignId || ''
         };
 
         if (isEdit) {

@@ -107,7 +107,7 @@ test('claimDueScheduledPosts publishes only approved posts', async () => {
 });
 
 test('deleting a campaign clears its links without deleting member records', async () => {
-  await withSqliteRepository(async (repo) => {
+  await withSqliteRepository(async (repo, db) => {
     await repo.upsertAppItem('campaigns', { id: 'campaign-1', name: 'Launch' });
     await repo.upsertAppItem('expenses', {
       id: 'expense-1',
@@ -123,11 +123,23 @@ test('deleting a campaign clears its links without deleting member records', asy
       ...scheduledPost('post-1', 'approved'),
       campaignId: 'campaign-1'
     });
+    db.prepare(`
+      UPDATE app_items
+      SET data = json_set(data, '$.updatedAt', '2000-01-01T00:00:00.000Z'),
+          updatedAt = '2000-01-01T00:00:00.000Z'
+      WHERE collection = 'expenses' AND id = 'expense-1'
+    `).run();
 
     await repo.deleteAppItem('campaigns', 'campaign-1');
 
     assert.equal((await repo.getPost('post-1')).campaignId, '');
-    assert.equal((await repo.getAppItem('expenses', 'expense-1')).campaignId, '');
+    const expense = await repo.getAppItem('expenses', 'expense-1');
+    const expenseRow = db.prepare(
+      'SELECT updatedAt FROM app_items WHERE collection = ? AND id = ?'
+    ).get('expenses', 'expense-1');
+    assert.equal(expense.campaignId, '');
+    assert.equal(expense.updatedAt, expenseRow.updatedAt);
+    assert.notEqual(expense.updatedAt, '2000-01-01T00:00:00.000Z');
     assert.equal((await repo.getAppItem('events', 'event-1')).campaignId, '');
   });
 });
@@ -153,9 +165,18 @@ test('local campaign deletion clears links from every member collection', () => 
 
   const campaign = store.campaigns.create({ name: 'Launch' });
   const post = store.posts.create({ title: 'Post', campaignId: campaign.id });
-  const ad = store.adReports.create({ campaignId: campaign.id });
-  const event = store.events.create({ campaignId: campaign.id });
-  const expense = store.expenses.create({ campaignId: campaign.id });
+  const ad = store.adReports.create({ campaignId: campaign.id, spend: 100, revenue: 400 });
+  const event = store.events.create({ campaignId: campaign.id, budget: 50 });
+  const expense = store.expenses.create({ campaignId: campaign.id, amount: 25 });
+
+  const stats = store.campaigns.getStats(campaign.id);
+  assert.equal(stats.postCount, 1);
+  assert.equal(stats.adCount, 1);
+  assert.equal(stats.eventCount, 1);
+  assert.equal(stats.expenseCount, 1);
+  assert.equal(stats.totalSpend, 175);
+  assert.equal(stats.revenue, 400);
+  assert.equal(stats.roas, 4);
 
   store.campaigns.remove(campaign.id);
 

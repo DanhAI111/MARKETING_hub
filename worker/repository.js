@@ -8,9 +8,11 @@ const APP_COLLECTIONS = [
   'adReports',
   'employees',
   'monthlyTargets',
-  'recurringExpenses'
+  'recurringExpenses',
+  'campaigns'
 ];
 const APP_SINGLETONS = ['customCategories'];
+const APPROVAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 
 const now = () => new Date().toISOString();
 const parseJson = (value, fallback) => {
@@ -58,6 +60,9 @@ const postFromRow = (row) => row && ({
   sheetUrl: row.sheetUrl || '',
   sheetRowKey: row.sheetRowKey || '',
   sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
+  campaignId: row.campaignId || '',
+  engagement: parseJson(row.engagement, null),
+  approvalStatus: row.approvalStatus || 'approved',
   source: row.source,
   status: row.status,
   deletedAt: row.deletedAt || '',
@@ -144,6 +149,7 @@ export class Repository {
     const { results } = await this.db.prepare(`
       SELECT * FROM posts
       WHERE status = 'scheduled'
+        AND approvalStatus = 'approved'
         AND (deletedAt IS NULL OR deletedAt = '')
         AND scheduledAt IS NOT NULL
         AND scheduledAt != ''
@@ -164,6 +170,7 @@ export class Repository {
       WHERE id IN (
         SELECT id FROM posts
         WHERE status = 'scheduled'
+          AND approvalStatus = 'approved'
           AND (deletedAt IS NULL OR deletedAt = '')
           AND scheduledAt IS NOT NULL
           AND scheduledAt != ''
@@ -251,6 +258,17 @@ export class Repository {
   async deleteAppItem(collection, itemId) {
     this.assertCollection(collection);
     const timestamp = now();
+    if (collection === 'campaigns') {
+      await this.db.prepare('UPDATE posts SET campaignId = NULL, updatedAt = ? WHERE campaignId = ?')
+        .bind(timestamp, itemId).run();
+      await this.db.prepare(`
+        UPDATE app_items
+        SET data = json_set(data, '$.campaignId', '', '$.updatedAt', ?),
+            updatedAt = ?
+        WHERE collection IN ('adReports', 'events', 'expenses')
+          AND json_extract(data, '$.campaignId') = ?
+      `).bind(timestamp, timestamp, itemId).run();
+    }
     await this.db.prepare('UPDATE app_items SET deletedAt = ?, updatedAt = ? WHERE collection = ? AND id = ?')
       .bind(timestamp, timestamp, collection, itemId).run();
   }
@@ -516,6 +534,11 @@ export class Repository {
       sheetDefaultFanpageId: post.sheetDefaultFanpageId !== undefined
         ? post.sheetDefaultFanpageId
         : (existing?.sheetDefaultFanpageId || null),
+      campaignId: post.campaignId !== undefined ? (post.campaignId || null) : (existing?.campaignId || null),
+      engagement: JSON.stringify(post.engagement !== undefined ? post.engagement : (existing?.engagement || null)),
+      approvalStatus: APPROVAL_STATUSES.has(post.approvalStatus)
+        ? post.approvalStatus
+        : (existing?.approvalStatus || 'approved'),
       source: post.source || existing?.source || 'manual',
       status: post.status || existing?.status || 'published',
       deletedAt: post.deletedAt !== undefined
@@ -534,8 +557,9 @@ export class Repository {
     await this.db.prepare(`
       INSERT INTO posts (
         id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
-        mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, deletedAt, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, campaignId, engagement, approvalStatus,
+        source, status, deletedAt, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         fanpageId = excluded.fanpageId,
         externalPostId = excluded.externalPostId,
@@ -551,6 +575,9 @@ export class Repository {
         sheetUrl = excluded.sheetUrl,
         sheetRowKey = excluded.sheetRowKey,
         sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
+        campaignId = excluded.campaignId,
+        engagement = excluded.engagement,
+        approvalStatus = excluded.approvalStatus,
         source = excluded.source,
         status = excluded.status,
         deletedAt = excluded.deletedAt,
@@ -559,6 +586,7 @@ export class Repository {
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date,
       data.scheduledAt, data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems,
       data.publishError, data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId,
+      data.campaignId, data.engagement, data.approvalStatus,
       data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ).run();
     return this.pruneDuplicatePublishedPosts(postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()));

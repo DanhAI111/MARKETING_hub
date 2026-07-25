@@ -212,6 +212,23 @@ const getOldestSyncDate = (dates = []) => dates
   .map((value) => String(value).slice(0, 10))
   .sort()[0] || '';
 
+// Organic engagement from a Facebook post edge (reactions/comments/shares summaries).
+const extractFacebookEngagement = (post = {}) => ({
+  likes: post.reactions?.summary?.total_count ?? post.likes?.summary?.total_count ?? 0,
+  comments: post.comments?.summary?.total_count ?? 0,
+  shares: post.shares?.count ?? 0,
+  reach: 0,
+  updatedAt: new Date().toISOString()
+});
+
+const extractInstagramEngagement = (item = {}) => ({
+  likes: item.like_count ?? 0,
+  comments: item.comments_count ?? 0,
+  shares: 0,
+  reach: 0,
+  updatedAt: new Date().toISOString()
+});
+
 const addFacebookPhoto = async ({ pageId, token, media, caption = '', published = true }) => {
   const dataBlob = dataUrlToBlob(media.url);
   const params = {
@@ -508,7 +525,11 @@ const connectPages = async (userAccessToken) => {
 
 const fetchFacebookPostBatch = async (fanpage, token, limit = 100) => {
   const postEdges = ['published_posts', 'posts', 'feed'];
-  const fieldSets = ['id,message,created_time,updated_time,permalink_url,full_picture', 'id,created_time,updated_time'];
+  const fieldSets = [
+    'id,message,created_time,updated_time,permalink_url,full_picture,shares,reactions.summary(total_count),comments.summary(total_count)',
+    'id,message,created_time,updated_time,permalink_url,full_picture',
+    'id,created_time,updated_time'
+  ];
   const edgeErrors = [];
   for (const edge of postEdges) {
     for (const fields of fieldSets) {
@@ -551,6 +572,7 @@ const syncFacebookPosts = async (fanpage, { limit = 100 } = {}) => {
       publishedAt,
       permalink: post.permalink_url || '',
       mediaUrl: post.full_picture || '',
+      engagement: extractFacebookEngagement(post),
       source: 'facebook',
       status: 'published'
     });
@@ -575,7 +597,7 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
   const media = await graphGet(`${fanpage.instagramBusinessId}/media`, {
     access_token: token,
     limit,
-    fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url'
+    fields: 'id,caption,timestamp,permalink,media_url,thumbnail_url,like_count,comments_count'
   }).catch(() => graphGet(`${fanpage.instagramBusinessId}/media`, {
     access_token: token,
     limit,
@@ -596,6 +618,7 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
       publishedAt,
       permalink: item.permalink || '',
       mediaUrl: item.media_url || item.thumbnail_url || '',
+      engagement: extractInstagramEngagement(item),
       source: 'instagram',
       status: 'published'
     });

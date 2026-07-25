@@ -15,9 +15,11 @@ const APP_COLLECTIONS = [
   'adReports',
   'employees',
   'monthlyTargets',
-  'recurringExpenses'
+  'recurringExpenses',
+  'campaigns'
 ];
 const APP_SINGLETONS = ['customCategories'];
+const APPROVAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 
 const parseJson = (value, fallback) => {
   if (!value) return fallback;
@@ -98,6 +100,9 @@ const initPostgres = async () => {
       "sheetUrl" TEXT,
       "sheetRowKey" TEXT,
       "sheetDefaultFanpageId" TEXT,
+      "campaignId" TEXT,
+      engagement TEXT,
+      "approvalStatus" TEXT NOT NULL DEFAULT 'approved',
       source TEXT NOT NULL DEFAULT 'manual',
       status TEXT NOT NULL DEFAULT 'published',
       "deletedAt" TEXT,
@@ -113,12 +118,23 @@ const initPostgres = async () => {
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetRowKey" TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "sheetDefaultFanpageId" TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "campaignId" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS engagement TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "approvalStatus" TEXT NOT NULL DEFAULT 'approved';
     ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
     ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "crossPostInstagram" BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row
       ON posts("sheetUrl", "sheetRowKey")
       WHERE "sheetUrl" IS NOT NULL AND "sheetRowKey" IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_posts_campaign
+      ON posts("campaignId")
+      WHERE "campaignId" IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_posts_approval_queue
+      ON posts(status, "approvalStatus", "scheduledAt")
+      WHERE status = 'scheduled';
 
     CREATE TABLE IF NOT EXISTS sync_state (
       key TEXT PRIMARY KEY,
@@ -207,6 +223,9 @@ const postFromRow = (row) => row && ({
   sheetUrl: row.sheetUrl || '',
   sheetRowKey: row.sheetRowKey || '',
   sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
+  campaignId: row.campaignId || '',
+  engagement: parseJson(row.engagement, null),
+  approvalStatus: row.approvalStatus || 'approved',
   source: row.source,
   status: row.status,
   deletedAt: row.deletedAt || '',
@@ -309,6 +328,7 @@ const listDueScheduledPosts = async () => {
     const rows = await pgQuery(`
       SELECT * FROM posts
       WHERE status = 'scheduled'
+        AND "approvalStatus" = 'approved'
         AND ("deletedAt" IS NULL OR "deletedAt" = '')
         AND "scheduledAt" IS NOT NULL
         AND "scheduledAt" != ''
@@ -320,6 +340,7 @@ const listDueScheduledPosts = async () => {
   return getSqlite().prepare(`
     SELECT * FROM posts
     WHERE status = 'scheduled'
+      AND approvalStatus = 'approved'
       AND (deletedAt IS NULL OR deletedAt = '')
       AND scheduledAt IS NOT NULL
       AND scheduledAt != ''
@@ -342,6 +363,7 @@ const claimDueScheduledPosts = async (limit = 10) => {
       WITH due_posts AS (
         SELECT id FROM posts
         WHERE status = 'scheduled'
+          AND "approvalStatus" = 'approved'
           AND ("deletedAt" IS NULL OR "deletedAt" = '')
           AND "scheduledAt" IS NOT NULL
           AND "scheduledAt" != ''
@@ -367,6 +389,7 @@ const claimDueScheduledPosts = async (limit = 10) => {
     WHERE id IN (
       SELECT id FROM posts
       WHERE status = 'scheduled'
+        AND approvalStatus = 'approved'
         AND (deletedAt IS NULL OR deletedAt = '')
         AND scheduledAt IS NOT NULL
         AND scheduledAt != ''
@@ -480,8 +503,37 @@ const deleteAppItem = async (collection, itemId) => {
   assertAppCollection(collection);
   const timestamp = now();
   if (usePostgres) {
+    if (collection === 'campaigns') {
+      await pgQuery(
+        'UPDATE posts SET "campaignId" = NULL, "updatedAt" = $1 WHERE "campaignId" = $2',
+        [timestamp, itemId]
+      );
+      await pgQuery(`
+        UPDATE app_items
+        SET data = jsonb_set(
+              jsonb_set(data::jsonb, '{campaignId}', to_jsonb(''::text), true),
+              '{updatedAt}',
+              to_jsonb($1::text),
+              true
+            )::text,
+            "updatedAt" = $1
+        WHERE collection IN ('adReports', 'events', 'expenses')
+          AND data::jsonb ->> 'campaignId' = $2
+      `, [timestamp, itemId]);
+    }
     await pgQuery('UPDATE app_items SET "deletedAt" = $1, "updatedAt" = $2 WHERE collection = $3 AND id = $4', [timestamp, timestamp, collection, itemId]);
     return;
+  }
+  if (collection === 'campaigns') {
+    getSqlite().prepare('UPDATE posts SET campaignId = NULL, updatedAt = ? WHERE campaignId = ?')
+      .run(timestamp, itemId);
+    getSqlite().prepare(`
+      UPDATE app_items
+      SET data = json_set(data, '$.campaignId', '', '$.updatedAt', ?),
+          updatedAt = ?
+      WHERE collection IN ('adReports', 'events', 'expenses')
+        AND json_extract(data, '$.campaignId') = ?
+    `).run(timestamp, timestamp, itemId);
   }
   getSqlite().prepare('UPDATE app_items SET deletedAt = ?, updatedAt = ? WHERE collection = ? AND id = ?').run(timestamp, timestamp, collection, itemId);
 };
@@ -900,6 +952,11 @@ const upsertPost = async (post = {}) => {
     sheetDefaultFanpageId: post.sheetDefaultFanpageId !== undefined
       ? post.sheetDefaultFanpageId
       : (existing?.sheetDefaultFanpageId || null),
+    campaignId: post.campaignId !== undefined ? (post.campaignId || null) : (existing?.campaignId || null),
+    engagement: JSON.stringify(post.engagement !== undefined ? post.engagement : (existing?.engagement || null)),
+    approvalStatus: APPROVAL_STATUSES.has(post.approvalStatus)
+      ? post.approvalStatus
+      : (existing?.approvalStatus || 'approved'),
     source: post.source || existing?.source || 'manual',
     status: post.status || existing?.status || 'published',
     deletedAt: post.deletedAt !== undefined
@@ -923,10 +980,11 @@ const upsertPost = async (post = {}) => {
     await pgQuery(`
       INSERT INTO posts (
         id, "fanpageId", "externalPostId", title, content, date, "scheduledAt", "publishedAt", permalink, "mediaUrl",
-        "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", source, status, "deletedAt", "createdAt", "updatedAt"
+        "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", "campaignId", engagement, "approvalStatus",
+        source, status, "deletedAt", "createdAt", "updatedAt"
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
       )
       ON CONFLICT(id) DO UPDATE SET
         "fanpageId" = EXCLUDED."fanpageId",
@@ -943,6 +1001,9 @@ const upsertPost = async (post = {}) => {
         "sheetUrl" = EXCLUDED."sheetUrl",
         "sheetRowKey" = EXCLUDED."sheetRowKey",
         "sheetDefaultFanpageId" = EXCLUDED."sheetDefaultFanpageId",
+        "campaignId" = EXCLUDED."campaignId",
+        engagement = EXCLUDED.engagement,
+        "approvalStatus" = EXCLUDED."approvalStatus",
         source = EXCLUDED.source,
         status = EXCLUDED.status,
         "deletedAt" = EXCLUDED."deletedAt",
@@ -950,8 +1011,8 @@ const upsertPost = async (post = {}) => {
     `, [
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date, data.scheduledAt,
       data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems, data.publishError,
-      data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId, data.source,
-      data.status, data.deletedAt, data.createdAt, data.updatedAt
+      data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId, data.campaignId, data.engagement, data.approvalStatus,
+      data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ]);
     return pruneDuplicatePublishedPosts(postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]));
   }
@@ -959,10 +1020,12 @@ const upsertPost = async (post = {}) => {
   getSqlite().prepare(`
     INSERT INTO posts (
       id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
-      mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, source, status, deletedAt, createdAt, updatedAt
+      mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, campaignId, engagement, approvalStatus,
+      source, status, deletedAt, createdAt, updatedAt
     ) VALUES (
       @id, @fanpageId, @externalPostId, @title, @content, @date, @scheduledAt, @publishedAt, @permalink, @mediaUrl,
-      @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @source, @status, @deletedAt, @createdAt, @updatedAt
+      @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @campaignId, @engagement, @approvalStatus,
+      @source, @status, @deletedAt, @createdAt, @updatedAt
     )
     ON CONFLICT(source, externalPostId) WHERE externalPostId IS NOT NULL DO UPDATE SET
       fanpageId = excluded.fanpageId,
@@ -978,6 +1041,9 @@ const upsertPost = async (post = {}) => {
       sheetUrl = excluded.sheetUrl,
       sheetRowKey = excluded.sheetRowKey,
       sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
+      campaignId = excluded.campaignId,
+      engagement = excluded.engagement,
+      approvalStatus = excluded.approvalStatus,
       status = excluded.status,
       deletedAt = excluded.deletedAt,
       updatedAt = excluded.updatedAt
@@ -996,6 +1062,9 @@ const upsertPost = async (post = {}) => {
       sheetUrl = excluded.sheetUrl,
       sheetRowKey = excluded.sheetRowKey,
       sheetDefaultFanpageId = excluded.sheetDefaultFanpageId,
+      campaignId = excluded.campaignId,
+      engagement = excluded.engagement,
+      approvalStatus = excluded.approvalStatus,
       source = excluded.source,
       status = excluded.status,
       deletedAt = excluded.deletedAt,

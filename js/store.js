@@ -15,7 +15,8 @@ const Store = (() => {
     'adReports',
     'employees',
     'monthlyTargets',
-    'recurringExpenses'
+    'recurringExpenses',
+    'campaigns'
   ];
   const GENERIC_REMOTE_COLLECTIONS = new Set(REMOTE_COLLECTIONS.filter(c => c !== 'fanpages' && c !== 'posts'));
 
@@ -31,6 +32,7 @@ const Store = (() => {
     employees: [],
     monthlyTargets: [],
     recurringExpenses: [],
+    campaigns: [],
     customCategories: null,
     settings: {
       sidebarCollapsed: false,
@@ -438,6 +440,67 @@ const Store = (() => {
     }
   };
 
+  // ── Campaigns ──
+  // A campaign groups posts, ad reports, events and expenses under one goal +
+  // budget. Members soft-link back via campaignId; deleting a campaign clears
+  // those links without deleting the member records.
+  const campaigns = {
+    getAll: () => getAll('campaigns'),
+    getById: (id) => getById('campaigns', id),
+    create: (c) => create('campaigns', { status: 'active', ...c }),
+    update: (id, updates) => update('campaigns', id, updates),
+    remove: (id) => {
+      const data = load();
+      const timestamp = new Date().toISOString();
+      const memberCollections = ['posts', 'adReports', 'events', 'expenses'];
+      const unlinkedItems = [];
+      memberCollections.forEach((collection) => {
+        data[collection] = (data[collection] || []).map((item) => {
+          if (item.campaignId !== id) return item;
+          const updated = { ...item, campaignId: '', updatedAt: timestamp };
+          unlinkedItems.push({ collection, item: updated });
+          return updated;
+        });
+      });
+      data.campaigns = (data.campaigns || []).filter((campaign) => campaign.id !== id);
+      save(data);
+
+      unlinkedItems.forEach(({ collection, item }) => {
+        mirrorRemote(collection, 'update', {
+          id: item.id,
+          updates: { campaignId: '' },
+          item
+        });
+      });
+      mirrorRemote('campaigns', 'remove', { id });
+    },
+    // Aggregate members + KPIs for a campaign, across every collection.
+    getStats: (id) => {
+      const posts = getAll('posts').filter(p => p.campaignId === id);
+      const ads = getAll('adReports').filter(r => r.campaignId === id);
+      const events = getAll('events').filter(e => e.campaignId === id);
+      const expenses = getAll('expenses').filter(e => e.campaignId === id);
+      const adSpend = ads.reduce((s, r) => s + (parseFloat(r.spend) || 0), 0);
+      const otherSpend = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+      const eventBudget = events.reduce((s, e) => s + (parseFloat(e.budget) || 0), 0);
+      const revenue = ads.reduce((s, r) => s + (parseFloat(r.revenue) || 0), 0);
+      const totalSpend = adSpend + otherSpend + eventBudget;
+      return {
+        postCount: posts.length,
+        publishedCount: posts.filter(p => p.status === 'published').length,
+        adCount: ads.length,
+        eventCount: events.length,
+        expenseCount: expenses.length,
+        adSpend,
+        otherSpend,
+        eventBudget,
+        totalSpend,
+        revenue,
+        roas: adSpend > 0 ? revenue / adSpend : 0
+      };
+    }
+  };
+
   // ── Custom Expense Categories ──
   const customCategories = {
     getAll: () => {
@@ -602,6 +665,7 @@ const Store = (() => {
     employees,
     monthlyTargets,
     recurringExpenses,
+    campaigns,
     customCategories,
     backup,
     restore,

@@ -774,6 +774,8 @@ const ExpensesPage = (() => {
         <textarea class="form-textarea" data-field="notes" style="height: 60px;" placeholder="Ghi chú thêm (Hóa đơn, hình thức thanh toán...)...">${isEdit ? Utils.escapeHtml(expense.notes || '') : ''}</textarea>
       </div>
 
+      ${Utils.campaignPickerHtml(isEdit ? (expense.campaignId || '') : '')}
+
       <!-- D2: Attachment -->
       <div class="form-group">
         <label class="form-label">Hóa đơn / Biên lai đính kèm</label>
@@ -828,6 +830,7 @@ const ExpensesPage = (() => {
           date: formData.date,
           amount: amountVal,
           notes: formData.notes.trim(),
+          campaignId: formData.campaignId || '',
           attachment: pendingAttachment || null
         };
 

@@ -289,10 +289,15 @@ const ContentPage = (() => {
     const mediaCount = Array.isArray(post.mediaItems) ? post.mediaItems.length : (post.mediaUrl ? 1 : 0);
     const permalink = post.status === 'published' ? (post.permalink || '') : '';
     const linkable = /^https?:\/\//i.test(permalink);
+    const eng = post.engagement;
+    const engHtml = eng && (eng.likes || eng.comments || eng.shares)
+      ? `<span class="post-engagement" title="Tương tác tự nhiên">👍 ${Utils.formatNumberCompact(eng.likes || 0)} · 💬 ${Utils.formatNumberCompact(eng.comments || 0)}${eng.shares ? ` · 🔁 ${Utils.formatNumberCompact(eng.shares)}` : ''}</span>`
+      : '';
     return `
       <div class="post-item ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
         <span class="post-date">${displayTime}</span>
         <span class="post-title-text" title="${Utils.escapeHtml(linkable ? 'Mở bài trên Facebook' : (post.publishError || post.content || post.title))}">${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</span>
+        ${engHtml}
         ${mediaCount ? `<span class="post-media-count">${Utils.icons.image || ''}${mediaCount}</span>` : ''}
         <span class="tag ${status.className} post-status-tag">${status.label}</span>
         ${post.status === 'failed' ? `
@@ -740,10 +745,14 @@ const ContentPage = (() => {
           <input type="datetime-local" class="form-input" data-field="scheduledAt" value="${defaultTime}">
         </div>
         <div class="form-group">
-          <label class="form-label">Trạng thái</label>
-          <input type="text" class="form-input" value="Chờ đăng tự động" disabled>
+          <label class="form-label">Phê duyệt</label>
+          <select class="form-select" data-field="approvalStatus">
+            <option value="pending" selected>Chờ phê duyệt trước khi đăng</option>
+            <option value="approved">Đã duyệt, cho phép tự động đăng</option>
+          </select>
         </div>
       </div>
+      <div class="form-hint">Bài chờ duyệt sẽ không được đăng tự động, kể cả khi đã đến giờ.</div>
       ${Utils.campaignPickerHtml('')}
       <div class="form-group">
         <label class="form-label">Media</label>
@@ -812,10 +821,11 @@ const ContentPage = (() => {
           mediaItems,
           status: 'scheduled',
           source: 'scheduled',
-          campaignId: formData.campaignId || ''
+          campaignId: formData.campaignId || '',
+          approvalStatus: formData.approvalStatus || 'pending'
         });
 
-        if (window.RemoteStore?.available && scheduledDate <= new Date()) {
+        if (window.RemoteStore?.available && formData.approvalStatus === 'approved' && scheduledDate <= new Date()) {
           try {
             await RemoteStore.publishDue();
           } catch (err) {
@@ -823,7 +833,9 @@ const ContentPage = (() => {
           }
         }
 
-        Toast.success('Đã lưu lịch đăng bài');
+        Toast.success(formData.approvalStatus === 'approved'
+          ? 'Đã lưu lịch đăng bài'
+          : 'Đã lưu và gửi bài vào hàng chờ duyệt');
         Modal.close();
         renderPage();
         Sidebar.updateBadge();

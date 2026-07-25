@@ -121,6 +121,9 @@ ensureColumn('posts', 'sheetUrl', 'TEXT');
 ensureColumn('posts', 'sheetRowKey', 'TEXT');
 ensureColumn('posts', 'sheetDefaultFanpageId', 'TEXT');
 ensureColumn('posts', 'deletedAt', 'TEXT');
+ensureColumn('posts', 'campaignId', 'TEXT');
+ensureColumn('posts', 'engagement', 'TEXT');
+ensureColumn('posts', 'approvalStatus', "TEXT NOT NULL DEFAULT 'approved'");
 ensureColumn('app_items', 'deletedAt', 'TEXT');
 ensureColumn('fanpages', 'deletedAt', 'TEXT');
 ensureColumn('fanpages', 'crossPostInstagram', 'INTEGER NOT NULL DEFAULT 0');
@@ -128,7 +131,15 @@ ensureColumn('fanpages', 'crossPostInstagram', 'INTEGER NOT NULL DEFAULT 0');
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row
     ON posts(sheetUrl, sheetRowKey)
-    WHERE sheetUrl IS NOT NULL AND sheetRowKey IS NOT NULL
+    WHERE sheetUrl IS NOT NULL AND sheetRowKey IS NOT NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_posts_campaign
+    ON posts(campaignId)
+    WHERE campaignId IS NOT NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_posts_approval_queue
+    ON posts(status, approvalStatus, scheduledAt)
+    WHERE status = 'scheduled'
 `);
 
 module.exports = db;

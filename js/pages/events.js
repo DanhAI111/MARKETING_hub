@@ -560,6 +560,8 @@ const EventsPage = (() => {
         <div class="event-link-preview" data-event-link-preview="guestList" data-label="Mở Google Sheet khách mời"></div>
       </div>
 
+      ${Utils.campaignPickerHtml(isEdit ? (event.campaignId || '') : '')}
+
       ${isEdit ? `
         <div style="text-align: left; margin-top: var(--space-2);">
           <button class="btn btn-danger btn-sm" id="deleteEventBtn">
@@ -601,7 +603,8 @@ const EventsPage = (() => {
           budget: budgetNum,
           attendeeCount: attendeeNum,
           plan: formData.plan.trim(),
-          guestList: formData.guestList.trim()
+          guestList: formData.guestList.trim(),
+          campaignId: formData.campaignId || ''
         };
 
         if (isEdit) {
