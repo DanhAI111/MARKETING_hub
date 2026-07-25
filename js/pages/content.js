@@ -7,9 +7,19 @@ const ContentPage = (() => {
   let container = null;
   let currentMonth = Utils.getReportingMonth();
   let selectedPlatform = '';
+  let visiblePostLimit = 60;
 
   const POST_STATUSES = Utils.POST_STATUSES;
+  const POSTS_PAGE_SIZE = 60;
   const getPostStatus = (status) => Utils.getPostStatus(status);
+
+  const getInitials = (name = '') => String(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part.charAt(0).toUpperCase())
+    .join('') || 'P';
 
   const formatScheduleTime = (value) => {
     if (!value) return '';
@@ -28,45 +38,61 @@ const ContentPage = (() => {
   const render = (el) => {
     container = el;
     currentMonth = Utils.getReportingMonth();
+    visiblePostLimit = POSTS_PAGE_SIZE;
     renderPage();
   };
 
   const renderPage = () => {
     if (!container) return;
 
-    const fanpages = Store.fanpages.getAll();
+    // Read localStorage once. Re-loading and parsing the full store for every
+    // fanpage/post row made this page increasingly slow as post history grew.
+    const data = Store.getData();
+    const fanpages = data.fanpages || [];
+    const allPosts = data.posts || [];
+    const fanpageById = new Map(fanpages.map(fanpage => [fanpage.id, fanpage]));
     const filteredFanpages = selectedPlatform 
       ? fanpages.filter(fp => fp.platform === selectedPlatform)
       : fanpages;
 
     // Calculate Summary Stats
     let totalKpi = 0;
-    let totalPosted = 0;
     let totalScheduled = 0;
     let totalFailed = 0;
+    const publishedCounts = new Map();
+    allPosts.forEach(post => {
+      const date = post.status === 'published' ? post.date : (post.scheduledAt || post.date);
+      if ((date || '').slice(0, 7) !== currentMonth) return;
+      if (post.status === 'published') {
+        publishedCounts.set(post.fanpageId, (publishedCounts.get(post.fanpageId) || 0) + 1);
+      } else if (post.status === 'failed') {
+        totalFailed++;
+      } else {
+        totalScheduled++;
+      }
+    });
     fanpages.forEach(fp => {
       totalKpi += fp.kpis?.[currentMonth] || 0;
-      totalPosted += Store.posts.getCountByFanpageAndMonth(fp.id, currentMonth);
     });
-    Store.posts.getScheduledByMonth(currentMonth).forEach(post => {
-      if (post.status === 'failed') totalFailed++;
-      else totalScheduled++;
-    });
+    const totalPosted = fanpages.reduce((sum, fp) => (
+      sum + (publishedCounts.get(fp.id) || 0)
+    ), 0);
     const totalPercent = totalKpi > 0 ? Math.round((totalPosted / totalKpi) * 100) : 0;
     const progressColorClass = Utils.getKpiColor(totalPercent);
     const filteredFanpageIds = new Set(filteredFanpages.map(fp => fp.id));
-    const monthPosts = Store.posts.getAll()
+    const monthPosts = allPosts
       .filter(post => {
         if (!filteredFanpageIds.has(post.fanpageId)) return false;
         const date = post.status === 'published' ? post.date : (post.scheduledAt || post.date);
         return (date || '').slice(0, 7) === currentMonth;
       })
       .sort((a, b) => (b.scheduledAt || b.publishedAt || b.date || '').localeCompare(a.scheduledAt || a.publishedAt || a.date || ''));
-    const pendingTasks = Store.tasks.getAll()
+    const visibleMonthPosts = monthPosts.slice(0, visiblePostLimit);
+    const pendingTasks = (data.tasks || [])
       .filter(task => task.status !== 'completed')
       .sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'))
       .slice(0, 4);
-    const activeCampaigns = Store.campaigns.getAll()
+    const activeCampaigns = (data.campaigns || [])
       .filter(campaign => campaign.status === 'active')
       .slice(0, 3);
 
@@ -105,7 +131,9 @@ const ContentPage = (() => {
             <button class="btn btn-icon btn-ghost btn-sm" id="addFanpageBtn" data-tooltip="Thêm Fanpage">${Utils.icons.plus}</button>
           </div>
           <div class="fanpage-control-list">
-            ${filteredFanpages.length ? filteredFanpages.map(renderFanpageControl).join('') : '<div class="context-empty">Chưa có kênh phù hợp bộ lọc.</div>'}
+            ${filteredFanpages.length ? filteredFanpages.map(fp =>
+              renderFanpageControl(fp, publishedCounts.get(fp.id) || 0)
+            ).join('') : '<div class="context-empty">Chưa có kênh phù hợp bộ lọc.</div>'}
           </div>
         </aside>
 
@@ -132,13 +160,15 @@ const ContentPage = (() => {
             <span><i class="queue-dot failed"></i>${totalFailed} lỗi</span>
           </div>
           <div class="content-master-post-list">
-            ${monthPosts.length ? monthPosts.map(post => {
-              const fanpage = Store.fanpages.getById(post.fanpageId);
+            ${monthPosts.length ? visibleMonthPosts.map(post => {
+              const fanpage = fanpageById.get(post.fanpageId);
               const platform = fanpage ? Utils.getPlatformInfo(fanpage.platform) : null;
+              const imageUrl = String(fanpage?.imageUrl || '').trim();
               return `
                 <article class="content-master-post">
                   <div class="content-master-channel" style="--channel-color:${platform?.color || '#64748b'}">
-                    <span>${platform?.icon || ''}</span>
+                    ${imageUrl ? `<img src="${Utils.escapeHtml(imageUrl)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();">` : ''}
+                    <span class="fanpage-avatar-fallback">${Utils.escapeHtml(getInitials(fanpage?.name || 'Page'))}</span>
                   </div>
                   <div class="content-master-body">
                     <div class="content-master-meta">
@@ -157,6 +187,11 @@ const ContentPage = (() => {
               </div>
             `}
           </div>
+          ${monthPosts.length > visibleMonthPosts.length ? `
+            <button class="btn btn-secondary content-load-more" id="loadMorePostsBtn">
+              Hiển thị thêm ${Math.min(POSTS_PAGE_SIZE, monthPosts.length - visibleMonthPosts.length)} bài
+            </button>
+          ` : ''}
         </section>
 
         <aside class="context-rail content-action-rail">
@@ -237,15 +272,18 @@ const ContentPage = (() => {
     `;
   };
 
-  const renderFanpageControl = (fp) => {
+  const renderFanpageControl = (fp, posted = 0) => {
     const platform = Utils.getPlatformInfo(fp.platform);
+    const imageUrl = String(fp.imageUrl || '').trim();
     const target = fp.kpis?.[currentMonth] || 0;
-    const posted = Store.posts.getCountByFanpageAndMonth(fp.id, currentMonth);
     const percent = target > 0 ? Math.min(100, Math.round((posted / target) * 100)) : 0;
     return `
       <div class="fanpage-control-item">
         <div class="fanpage-control-main">
-          <span class="fanpage-control-icon" style="color:${platform.color};background:${platform.color}18">${platform.icon}</span>
+          <span class="fanpage-control-avatar" style="color:${platform.color};background:${platform.color}18">
+            ${imageUrl ? `<img src="${Utils.escapeHtml(imageUrl)}" alt="${Utils.escapeHtml(fp.name)}" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();">` : ''}
+            <span class="fanpage-avatar-fallback">${Utils.escapeHtml(getInitials(fp.name))}</span>
+          </span>
           <div>
             <strong>${Utils.escapeHtml(fp.name)}</strong>
             <span>${posted}/${target || 0} bài · ${percent}%</span>
@@ -362,7 +400,10 @@ const ContentPage = (() => {
     const displayTime = post.status === 'published'
       ? (post.date ? `${post.date.split('-')[2]}/${post.date.split('-')[1]}` : '')
       : formatScheduleTime(post.scheduledAt);
-    const mediaCount = Array.isArray(post.mediaItems) ? post.mediaItems.length : (post.mediaUrl ? 1 : 0);
+    const mediaCount = Array.isArray(post.mediaItems) && post.mediaItems.length
+      ? post.mediaItems.length
+      : (post.mediaUrl ? 1 : 0);
+    const thumbnailUrl = getPostThumbnail(post);
     const permalink = post.status === 'published' ? (post.permalink || '') : '';
     const linkable = /^https?:\/\//i.test(permalink);
     const eng = post.engagement;
@@ -371,6 +412,12 @@ const ContentPage = (() => {
       : '';
     return `
       <div class="post-item ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
+        ${thumbnailUrl ? `
+          <span class="post-thumbnail">
+            <img class="post-thumbnail-image" src="${Utils.escapeHtml(thumbnailUrl)}" alt="" loading="lazy" decoding="async" onerror="this.parentElement.classList.add('is-broken'); this.remove();">
+            <span class="post-thumbnail-fallback">${Utils.icons.image || ''}</span>
+          </span>
+        ` : ''}
         <span class="post-date">${displayTime}</span>
         <span class="post-title-text" title="${Utils.escapeHtml(linkable ? 'Mở bài trên Facebook' : (post.publishError || post.content || post.title))}">${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</span>
         ${engHtml}
@@ -388,12 +435,33 @@ const ContentPage = (() => {
     `;
   };
 
+  const getPostThumbnail = (post = {}) => {
+    const mediaItems = Array.isArray(post.mediaItems) ? post.mediaItems : [];
+    const still = mediaItems.find(item => {
+      const type = String(item?.type || '').toLowerCase();
+      return item?.thumbnailUrl || item?.thumbnail_url || (item?.url && type !== 'video');
+    });
+    const raw = String(
+      still?.thumbnailUrl
+      || still?.thumbnail_url
+      || still?.url
+      || post.thumbnailUrl
+      || post.mediaUrl
+      || ''
+    ).trim();
+    if (!raw || /\.(mp4|mov|webm)(?:$|[?#])/i.test(raw)) return '';
+    if (/^data:image\//i.test(raw)) return raw;
+    const safe = Utils.safeUrl(raw);
+    return safe === '#' ? '' : safe;
+  };
+
   // ── Bind Events ──
 
   const bindEvents = () => {
     // Month picker
     container.querySelector('#prevMonthBtn')?.addEventListener('click', async () => {
       currentMonth = Utils.getPrevMonth(currentMonth);
+      visiblePostLimit = POSTS_PAGE_SIZE;
       Utils.setReportingMonth(currentMonth);
       if (window.RemoteStore?.available) await RemoteStore.loadPosts(currentMonth).catch((err) => Toast.error(err.message));
       renderPage();
@@ -401,6 +469,7 @@ const ContentPage = (() => {
 
     container.querySelector('#nextMonthBtn')?.addEventListener('click', async () => {
       currentMonth = Utils.getNextMonth(currentMonth);
+      visiblePostLimit = POSTS_PAGE_SIZE;
       Utils.setReportingMonth(currentMonth);
       if (window.RemoteStore?.available) await RemoteStore.loadPosts(currentMonth).catch((err) => Toast.error(err.message));
       renderPage();
@@ -409,6 +478,12 @@ const ContentPage = (() => {
     // Platform filter
     container.querySelector('#platformFilterSelect')?.addEventListener('change', (e) => {
       selectedPlatform = e.target.value;
+      visiblePostLimit = POSTS_PAGE_SIZE;
+      renderPage();
+    });
+
+    container.querySelector('#loadMorePostsBtn')?.addEventListener('click', () => {
+      visiblePostLimit += POSTS_PAGE_SIZE;
       renderPage();
     });
 

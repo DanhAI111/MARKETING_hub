@@ -611,8 +611,11 @@ export class Repository {
       params.push(sinceDate);
     }
     if (ids.length) {
-      clauses.push(`externalPostId NOT IN (${ids.map(() => '?').join(', ')})`);
-      params.push(...ids);
+      // D1 caps the number of bound SQL variables. Passing a full Meta page
+      // (100 IDs) as individual placeholders exceeds that cap, so bind the list
+      // once and expand it through SQLite's JSON table function.
+      clauses.push('externalPostId NOT IN (SELECT value FROM json_each(?))');
+      params.push(JSON.stringify(ids));
     }
     const result = await this.db.prepare(`
       UPDATE posts
