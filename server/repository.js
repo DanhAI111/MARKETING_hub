@@ -566,6 +566,27 @@ const getState = async (key) => {
   return row ? parseJson(row.value, null) : null;
 };
 
+// OAuth/Meta login state persisted in sync_state (dual-path KV) instead of an
+// in-memory Map, so login survives restarts and works across instances.
+const oauthStateKey = (provider, state) => `oauth_state:${provider}:${state}`;
+
+const saveOAuthState = async (provider, state, payload = null, ttlSeconds = 600) => {
+  await saveState(oauthStateKey(provider, state), {
+    payload,
+    expiresAt: Date.now() + ttlSeconds * 1000
+  });
+};
+
+const consumeOAuthState = async (provider, state) => {
+  if (!state) return null;
+  const key = oauthStateKey(provider, state);
+  const row = await getState(key);
+  if (!row) return null;
+  await saveState(key, null); // one-time use
+  if (row.expiresAt && Date.now() > row.expiresAt) return null;
+  return row.payload ?? {};
+};
+
 const getBootstrapData = async () => ({
   fanpages: await listFanpages(),
   posts: await listPosts(),
@@ -1139,6 +1160,8 @@ module.exports = {
   saveSingleton,
   getState,
   saveState,
+  saveOAuthState,
+  consumeOAuthState,
   upsertFanpage,
   deleteFanpage,
   upsertPost,

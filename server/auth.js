@@ -4,7 +4,6 @@ const { readRequiredSecret } = require('./security');
 const COOKIE_NAME = 'mh_session';
 const CSRF_COOKIE_NAME = 'mh_csrf';
 const ONE_WEEK_SECONDS = 60 * 60 * 24 * 7;
-const states = new Map();
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const required = () => process.env.AUTH_REQUIRED === '1' || !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -52,7 +51,11 @@ const readSession = (req) => {
 };
 
 const cookieOptions = ({ httpOnly = true, maxAge = ONE_WEEK_SECONDS } = {}) => {
-  const secure = baseUrl().startsWith('https://') || process.env.NODE_ENV === 'production';
+  // Set TRUST_PROXY=1 when behind a TLS-terminating proxy so cookies stay Secure
+  // even though baseUrl()/req is plaintext http on the internal hop.
+  const secure = baseUrl().startsWith('https://')
+    || process.env.NODE_ENV === 'production'
+    || process.env.TRUST_PROXY === '1';
   return [
     httpOnly ? 'HttpOnly' : '',
     'Path=/',
@@ -98,19 +101,32 @@ const verifyCsrf = (req) => {
   throw error;
 };
 
-const isAllowedUser = (email) => {
+let warnedAllowAll = false;
+
+const isAllowedUser = async (email) => {
   const normalized = String(email || '').toLowerCase();
+  if (!normalized) return false;
   const allowedEmails = splitList(process.env.ALLOWED_EMAILS);
   const allowedDomains = splitList(process.env.ALLOWED_EMAIL_DOMAINS);
   const allowEmployeeEmails = process.env.ALLOW_EMPLOYEE_EMAILS === '1';
   const domain = normalized.split('@')[1] || '';
   if (allowedEmails.includes(normalized) || allowedDomains.includes(domain)) return true;
   if (allowEmployeeEmails) {
-    return require('./repository').listAppItems('employees')
-      .then((employees) => employees.some((employee) => String(employee.email || '').trim().toLowerCase() === normalized))
-      .catch(() => false);
+    const employees = await require('./repository').listAppItems('employees').catch(() => []);
+    if (employees.some((employee) => String(employee.email || '').trim().toLowerCase() === normalized)) return true;
   }
-  if (!allowedEmails.length && !allowedDomains.length) return true;
+  // Fail-closed: with no allowlist configured, deny by default. Opt in to the
+  // old allow-any-Google behavior with ALLOW_ALL_AUTHENTICATED=1 (single-user setups).
+  if (!allowedEmails.length && !allowedDomains.length && !allowEmployeeEmails) {
+    if (process.env.ALLOW_ALL_AUTHENTICATED === '1') {
+      if (!warnedAllowAll) {
+        console.warn('[auth] ALLOW_ALL_AUTHENTICATED=1: any verified Google account is admitted. Set ALLOWED_EMAILS to restrict access.');
+        warnedAllowAll = true;
+      }
+      return true;
+    }
+    console.warn('[auth] No allowlist configured (ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS / ALLOW_EMPLOYEE_EMAILS). Denying login. Set ALLOW_ALL_AUTHENTICATED=1 to allow any verified Google account.');
+  }
   return false;
 };
 
@@ -166,28 +182,30 @@ const installRoutes = (app) => {
     res.json({ authenticated: !!user, user, authRequired: required() });
   });
 
-  app.get('/auth/google/start', (req, res) => {
+  app.get('/auth/google/start', async (req, res) => {
     if (!configured()) {
       res.redirect('/login?error=Google%20OAuth%20chua%20duoc%20cau%20hinh');
       return;
     }
-    const state = crypto.randomBytes(16).toString('hex');
-    states.set(state, { next: safeNext(req.query.next), createdAt: Date.now() });
-    setTimeout(() => states.delete(state), 10 * 60 * 1000).unref();
-    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    url.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID);
-    url.searchParams.set('redirect_uri', callbackUrl());
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', 'openid email profile');
-    url.searchParams.set('state', state);
-    url.searchParams.set('prompt', 'select_account');
-    res.redirect(url.toString());
+    try {
+      const state = crypto.randomBytes(16).toString('hex');
+      await require('./repository').saveOAuthState('google', state, { next: safeNext(req.query.next) });
+      const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+      url.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID);
+      url.searchParams.set('redirect_uri', callbackUrl());
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('scope', 'openid email profile');
+      url.searchParams.set('state', state);
+      url.searchParams.set('prompt', 'select_account');
+      res.redirect(url.toString());
+    } catch (err) {
+      res.redirect(`/login?error=${encodeURIComponent(err.message || 'Không thể bắt đầu đăng nhập Google')}`);
+    }
   });
 
   app.get('/auth/google/callback', async (req, res, next) => {
     try {
-      const state = states.get(req.query.state);
-      states.delete(req.query.state);
+      const state = await require('./repository').consumeOAuthState('google', req.query.state);
       if (!req.query.code || !state) {
         res.redirect('/login?error=Phien%20dang%20nhap%20da%20het%20han');
         return;

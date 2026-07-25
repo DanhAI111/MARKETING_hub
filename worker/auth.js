@@ -72,6 +72,7 @@ export class AuthService {
 
   async isAllowedUser(email) {
     const normalized = String(email || '').toLowerCase();
+    if (!normalized) return false;
     const allowedEmails = splitList(this.env.ALLOWED_EMAILS);
     const allowedDomains = splitList(this.env.ALLOWED_EMAIL_DOMAINS);
     const allowEmployeeEmails = this.env.ALLOW_EMPLOYEE_EMAILS === '1';
@@ -79,9 +80,17 @@ export class AuthService {
     if (allowedEmails.includes(normalized) || allowedDomains.includes(domain)) return true;
     if (allowEmployeeEmails) {
       const employees = await this.repo.listAppItems('employees').catch(() => []);
-      return employees.some((employee) => String(employee.email || '').trim().toLowerCase() === normalized);
+      if (employees.some((employee) => String(employee.email || '').trim().toLowerCase() === normalized)) return true;
     }
-    if (!allowedEmails.length && !allowedDomains.length) return true;
+    // Fail-closed: with no allowlist configured, deny by default. Opt in to the
+    // old allow-any-Google behavior with ALLOW_ALL_AUTHENTICATED=1 (single-user setups).
+    if (!allowedEmails.length && !allowedDomains.length && !allowEmployeeEmails) {
+      if (this.env.ALLOW_ALL_AUTHENTICATED === '1') {
+        console.warn('[auth] ALLOW_ALL_AUTHENTICATED=1: any verified Google account is admitted. Set ALLOWED_EMAILS to restrict access.');
+        return true;
+      }
+      console.warn('[auth] No allowlist configured (ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS / ALLOW_EMPLOYEE_EMAILS). Denying login. Set ALLOW_ALL_AUTHENTICATED=1 to allow any verified Google account.');
+    }
     return false;
   }
 

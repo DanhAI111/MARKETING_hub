@@ -18,7 +18,6 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost');
 const ROOT_DIR = path.join(__dirname, '..');
 const INDEX_HTML = path.join(ROOT_DIR, 'manage_MKT.html');
-const states = new Set();
 let lastSync = null;
 let syncInFlight = null;
 let publishInFlight = false;
@@ -318,8 +317,7 @@ app.get('/api/sync/status', asyncHandler(async (req, res) => {
 
 app.get('/auth/meta/start', asyncHandler(async (req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
-  states.add(state);
-  setTimeout(() => states.delete(state), 10 * 60 * 1000).unref();
+  await repo.saveOAuthState('meta', state, {});
   res.redirect(meta.authUrl(state));
 }));
 
@@ -329,11 +327,11 @@ app.get('/auth/meta/callback', asyncHandler(async (req, res) => {
     res.redirect(`/?meta_error=${encodeURIComponent(errorDescription || error)}#content`);
     return;
   }
-  if (!code || !state || !states.has(state)) {
+  const savedState = code && state ? await repo.consumeOAuthState('meta', state) : null;
+  if (!code || !state || !savedState) {
     res.redirect(`/?meta_error=${encodeURIComponent('Phiên liên kết Meta đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.') }#content`);
     return;
   }
-  states.delete(state);
   try {
     const token = await meta.exchangeCode(code);
     await meta.connectPages(token);
