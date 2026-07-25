@@ -556,7 +556,7 @@ const AdsPage = (() => {
 
     Chart.drawLine(
       canvas, 
-      [{ label: 'Chi tiêu (₫)', data: spendData, color: '#6a4cf5', fill: true }], 
+      [{ label: 'Chi tiêu (₫)', data: spendData, color: '#6a4cf5', fill: true }],
       { labels }
     );
   };
