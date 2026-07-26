@@ -48,18 +48,26 @@ const Store = (() => {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 11);
   };
 
-  // Load data from localStorage
+  // In-memory cache of the parsed store. Re-parsing the full localStorage blob
+  // on every getAll() made pages re-JSON.parse the entire dataset dozens of
+  // times per render. The cache is the single source of truth in memory; every
+  // save() refreshes it, so reads never re-parse. Only save() mutates the blob,
+  // so the cache can never drift (the one raw removeItem — settings reset —
+  // reloads the page immediately).
+  let cache = null;
+
+  // Load data from localStorage (memoized).
   const load = () => {
+    if (cache) return cache;
     try {
       const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return defaultData();
-      const data = JSON.parse(raw);
-      // Merge with defaults to ensure all keys exist
-      return { ...defaultData(), ...data };
+      // Merge with defaults to ensure all keys exist.
+      cache = raw ? { ...defaultData(), ...JSON.parse(raw) } : defaultData();
     } catch (e) {
       console.error('Store load error:', e);
-      return defaultData();
+      cache = defaultData();
     }
+    return cache;
   };
 
   // Save data to localStorage. Returns true on success, false on failure
@@ -67,6 +75,7 @@ const Store = (() => {
   const save = (data) => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data));
+      cache = data;
       return true;
     } catch (e) {
       console.error('Store save error:', e);
@@ -165,9 +174,11 @@ const Store = (() => {
 
   // ── Generic CRUD ──
 
+  // Return a shallow copy: callers sort/reverse the result in place
+  // (e.g. campaigns, ads), which must never mutate the cached array.
   const getAll = (collection) => {
     const data = load();
-    return data[collection] || [];
+    return data[collection] ? [...data[collection]] : [];
   };
 
   const getById = (collection, id) => {
