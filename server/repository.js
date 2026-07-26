@@ -1,30 +1,21 @@
 const crypto = require('node:crypto');
 const { encrypt, decrypt } = require('./crypto');
+const {
+  APP_COLLECTIONS,
+  APP_SINGLETONS,
+  APPROVAL_STATUSES,
+  now,
+  parseJson,
+  fanpageFromRow,
+  postFromRow,
+  appItemFromRow
+} = require('../shared/repository-helpers.cjs');
 
-const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 const usePostgres = !!process.env.DATABASE_URL;
 
 let sqliteDb = null;
 let pgPool = null;
-
-const APP_COLLECTIONS = [
-  'tasks',
-  'events',
-  'expenses',
-  'adReports',
-  'employees',
-  'monthlyTargets',
-  'recurringExpenses',
-  'campaigns'
-];
-const APP_SINGLETONS = ['customCategories'];
-const APPROVAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
-
-const parseJson = (value, fallback) => {
-  if (!value) return fallback;
-  try { return JSON.parse(value); } catch { return fallback; }
-};
 
 const getSqlite = () => {
   if (!sqliteDb) sqliteDb = require('./db');
@@ -182,58 +173,6 @@ const init = async () => {
   }
   getSqlite();
 };
-
-const fanpageFromRow = (row, { includeToken = false } = {}) => {
-  if (!row) return null;
-  const fanpage = {
-    id: row.id,
-    platform: row.platform,
-    name: row.name,
-    link: row.link || '',
-    imageUrl: row.imageUrl || '',
-    metaPageId: row.metaPageId || '',
-    instagramBusinessId: row.instagramBusinessId || '',
-    connected: !!row.connected,
-    crossPostInstagram: !!row.crossPostInstagram,
-    lastSyncedAt: row.lastSyncedAt || '',
-    syncStatus: row.syncStatus || '',
-    syncError: row.syncError || '',
-    kpis: parseJson(row.kpis, {}),
-    deletedAt: row.deletedAt || '',
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt
-  };
-  if (includeToken) fanpage.pageAccessTokenEncrypted = row.pageAccessTokenEncrypted || '';
-  return fanpage;
-};
-
-const postFromRow = (row) => row && ({
-  id: row.id,
-  fanpageId: row.fanpageId,
-  externalPostId: row.externalPostId || '',
-  title: row.title,
-  content: row.content || '',
-  date: row.date,
-  scheduledAt: row.scheduledAt || '',
-  publishedAt: row.publishedAt || '',
-  permalink: row.permalink || '',
-  mediaUrl: row.mediaUrl || '',
-  mediaItems: parseJson(row.mediaItems, []),
-  publishError: row.publishError || '',
-  sheetUrl: row.sheetUrl || '',
-  sheetRowKey: row.sheetRowKey || '',
-  sheetDefaultFanpageId: row.sheetDefaultFanpageId || '',
-  campaignId: row.campaignId || '',
-  engagement: parseJson(row.engagement, null),
-  approvalStatus: row.approvalStatus || 'approved',
-  source: row.source,
-  status: row.status,
-  deletedAt: row.deletedAt || '',
-  createdAt: row.createdAt,
-  updatedAt: row.updatedAt
-});
-
-const appItemFromRow = (row) => row && parseJson(row.data, null);
 
 const assertAppCollection = (collection) => {
   if (!APP_COLLECTIONS.includes(collection)) {
