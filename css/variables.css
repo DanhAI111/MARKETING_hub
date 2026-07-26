@@ -1,7 +1,5 @@
 /* ═══════════════════════════════════════════
    MARKETING HUB - Design System Tokens
-   Energy Management System Theme
-   Adapted from ui_design/src/styles/globals.css
    ═══════════════════════════════════════════ */
 
 :root {
@@ -221,7 +219,6 @@
 
 /* ═══════════════════════════════════════════
    Dark Mode Theme Overrides
-   From ui_design/src/styles/globals.css .dark
    ═══════════════════════════════════════════ */
 /* Dark-only system: body.dark mirrors :root so any legacy `.dark` selector stays
    correct. The Framer canvas IS the default — see app.js forcing theme 'dark'. */
