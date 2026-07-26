@@ -30,6 +30,27 @@ const escapeHtml = Function('document', `
   }
 });
 
+const dtMatch = utilsSrc.match(/const formatDateTime = \(value, \{ withYear = false \} = \{\}\) => \{[\s\S]*?\n {2}\};/);
+assert.ok(dtMatch, 'formatDateTime should be found in js/utils.js');
+// eslint-disable-next-line no-eval
+const formatDateTime = eval(`(${dtMatch[0].replace(/^\s*const formatDateTime = /, '').replace(/;\s*$/, '')})`);
+
+test('formatDateTime renders compact DD/MM HH:MM by default', () => {
+  assert.equal(formatDateTime('2026-03-05T09:07:00'), '05/03 09:07');
+});
+
+test('formatDateTime includes the year when withYear is set', () => {
+  assert.equal(formatDateTime('2026-03-05T09:07:00', { withYear: true }), '05/03/2026 09:07');
+});
+
+test('formatDateTime returns empty string for a falsy value', () => {
+  assert.equal(formatDateTime(''), '');
+});
+
+test('formatDateTime returns the raw value when unparseable', () => {
+  assert.equal(formatDateTime('not-a-date'), 'not-a-date');
+});
+
 test('parseCSV splits simple rows', () => {
   assert.deepEqual(parseCSV('a,b,c\n1,2,3'), [['a', 'b', 'c'], ['1', '2', '3']]);
 });

@@ -58,6 +58,19 @@ const Utils = (() => {
     return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
   };
 
+  // Datetime label from an ISO/date value. withYear=false → "DD/MM HH:MM"
+  // (compact list rows); withYear=true → "DD/MM/YYYY HH:MM". Returns the raw
+  // value unchanged when unparseable so callers keep any pre-formatted string.
+  const formatDateTime = (value, { withYear = false } = {}) => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const date = withYear ? `${dd}/${mm}/${d.getFullYear()}` : `${dd}/${mm}`;
+    return `${date} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
   const formatMonthYear = (monthStr) => {
     if (!monthStr) return '';
     const [year, month] = monthStr.split('-');
@@ -444,7 +457,7 @@ const Utils = (() => {
   return {
     formatVND, formatVNDCompact, formatNumber, formatNumberCompact,
     formatPercent, formatRatio,
-    formatDate, formatDateShort, formatMonthYear,
+    formatDate, formatDateShort, formatDateTime, formatMonthYear,
     getCurrentMonth, getPrevMonth, getNextMonth, getReportingMonth, setReportingMonth, getDefaultDateForMonth,
     isToday, isPast, daysUntil, getGreeting,
     MONTHS_VI, DAYS_VI,

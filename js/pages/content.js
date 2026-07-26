@@ -21,12 +21,7 @@ const ContentPage = (() => {
     .map(part => part.charAt(0).toUpperCase())
     .join('') || 'P';
 
-  const formatScheduleTime = (value) => {
-    if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  };
+  const formatScheduleTime = (value) => Utils.formatDateTime(value);
 
   const toLocalDateTimeValue = (date = new Date()) => {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);

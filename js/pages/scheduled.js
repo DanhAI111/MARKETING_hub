@@ -14,12 +14,7 @@ const ScheduledPage = (() => {
   const { published, ...STATUS_META } = Utils.POST_STATUSES;
   const getStatusMeta = (status) => STATUS_META[status] || STATUS_META.scheduled;
 
-  const formatScheduleTime = (value) => {
-    if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  };
+  const formatScheduleTime = (value) => Utils.formatDateTime(value, { withYear: true });
 
   // The publishing queue is month-agnostic: it lists every not-yet-published
   // post so future-dated schedules are never hidden by the reporting month.
