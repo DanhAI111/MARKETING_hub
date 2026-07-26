@@ -424,11 +424,13 @@ export class Repository {
   }
 
   async deleteFanpage(fanpageId) {
-    const reports = await this.listAppItems('adReports');
-    await Promise.all(reports
-      .filter((report) => report.fanpageId === fanpageId)
-      .map((report) => this.deleteAppItem('adReports', report.id)));
     const timestamp = now();
+    await this.db.prepare(`
+      UPDATE app_items SET deletedAt = ?, updatedAt = ?
+      WHERE collection = 'adReports'
+        AND json_extract(data, '$.fanpageId') = ?
+        AND (deletedAt IS NULL OR deletedAt = '')
+    `).bind(timestamp, timestamp, fanpageId).run();
     await this.db.prepare('UPDATE fanpages SET deletedAt = ?, updatedAt = ? WHERE id = ?')
       .bind(timestamp, timestamp, fanpageId).run();
     await this.db.prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE fanpageId = ?')

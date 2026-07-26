@@ -334,6 +334,7 @@ const listDueScheduledPosts = async () => {
         AND "scheduledAt" != ''
         AND "scheduledAt" <= $1
       ORDER BY "scheduledAt" ASC
+      LIMIT 10
     `, [now()]);
     return rows.map(postFromRow);
   }
@@ -346,6 +347,7 @@ const listDueScheduledPosts = async () => {
       AND scheduledAt != ''
       AND scheduledAt <= ?
     ORDER BY scheduledAt ASC
+    LIMIT 10
   `).all(now()).map(postFromRow);
 };
 
@@ -781,16 +783,20 @@ const upsertFanpage = async (fanpage = {}) => {
 };
 
 const deleteFanpage = async (fanpageId) => {
-  const reports = await listAppItems('adReports');
-  await Promise.all(reports
-    .filter((report) => report.fanpageId === fanpageId)
-    .map((report) => deleteAppItem('adReports', report.id)));
   const timestamp = now();
   if (usePostgres) {
+    await pgQuery(`UPDATE app_items SET "deletedAt" = $1, "updatedAt" = $2
+      WHERE collection = 'adReports'
+        AND data::jsonb ->> 'fanpageId' = $3
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')`, [timestamp, timestamp, fanpageId]);
     await pgQuery('UPDATE fanpages SET "deletedAt" = $1, "updatedAt" = $2 WHERE id = $3', [timestamp, timestamp, fanpageId]);
     await pgQuery('UPDATE posts SET "deletedAt" = $1, "updatedAt" = $2 WHERE "fanpageId" = $3', [timestamp, timestamp, fanpageId]);
     return;
   }
+  getSqlite().prepare(`UPDATE app_items SET deletedAt = ?, updatedAt = ?
+    WHERE collection = 'adReports'
+      AND json_extract(data, '$.fanpageId') = ?
+      AND (deletedAt IS NULL OR deletedAt = '')`).run(timestamp, timestamp, fanpageId);
   getSqlite().prepare('UPDATE fanpages SET deletedAt = ?, updatedAt = ? WHERE id = ?').run(timestamp, timestamp, fanpageId);
   getSqlite().prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE fanpageId = ?').run(timestamp, timestamp, fanpageId);
 };
