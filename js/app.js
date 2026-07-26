@@ -118,7 +118,7 @@ const App = (() => {
         ${user ? `
           <div class="header-user" title="${Utils.escapeHtml(user.email || userName)}">
             ${user.picture
-              ? `<img class="header-user-avatar" src="${Utils.escapeHtml(user.picture)}" alt="">`
+              ? `<img class="header-user-avatar" src="${Utils.escapeHtml(Utils.safeUrl(user.picture))}" alt="">`
               : `<span class="header-user-avatar header-user-initial">${Utils.escapeHtml(userInitial)}</span>`}
             <span class="header-user-name">${Utils.escapeHtml(userName)}</span>
             <button class="btn-icon btn-ghost" id="logoutBtn" title="Đăng xuất">${Utils.icons.logout}</button>

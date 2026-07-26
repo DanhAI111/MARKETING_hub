@@ -372,38 +372,6 @@
   color: var(--text-tertiary);
 }
 
-/* ── Spotlight hero card (Framer gradient signature) ── */
-.dashboard-spotlight {
-  margin-bottom: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.dashboard-spotlight-label {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.01em;
-  opacity: 0.85;
-}
-
-.dashboard-spotlight-headline {
-  font-family: var(--font-display);
-  font-size: var(--text-4xl);
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.04em;
-  line-height: 1.0;
-}
-
-.dashboard-spotlight-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  opacity: 0.9;
-}
-
 /* ═══════════════════════════════════════════
    ADAPTIVE SPOTLIGHT DASHBOARD
    Selected Product Design direction — July 2026

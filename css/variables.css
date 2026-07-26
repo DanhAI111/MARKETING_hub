@@ -218,50 +218,6 @@
 }
 
 /* ═══════════════════════════════════════════
-   Dark Mode Theme Overrides
-   ═══════════════════════════════════════════ */
-/* Dark-only system: body.dark mirrors :root so any legacy `.dark` selector stays
-   correct. The Framer canvas IS the default — see app.js forcing theme 'dark'. */
-body.dark {
-  --background: #090909;
-  --foreground: #ffffff;
-  --card: #141414;
-  --card-foreground: #ffffff;
-  --popover: #1c1c1c;
-  --popover-foreground: #ffffff;
-  --primary: #ffffff;
-  --primary-foreground: #000000;
-  --secondary: #1c1c1c;
-  --secondary-foreground: #ffffff;
-  --muted: #1c1c1c;
-  --muted-foreground: #999999;
-  --accent: #0099ff;
-  --accent-foreground: #ffffff;
-  --destructive: #ef4444;
-  --destructive-foreground: #ffffff;
-  --border: #262626;
-  --input: #141414;
-  --input-background: #141414;
-  --ring: #0099ff;
-
-  --sidebar: #0d0d0d;
-  --sidebar-foreground: #ffffff;
-  --sidebar-primary: #ffffff;
-  --sidebar-primary-foreground: #000000;
-  --sidebar-accent: #1c1c1c;
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #262626;
-  --sidebar-ring: #0099ff;
-
-  --bg-card-hover: #1c1c1c;
-  --bg-input-focus: #1c1c1c;
-  --bg-table-row-hover: rgba(255, 255, 255, 0.03);
-  --text-tertiary: #6b6b6b;
-  --border-subtle: #1a1a1a;
-  --border-strong: #333333;
-}
-
-/* ═══════════════════════════════════════════
    Light Mode Theme Overrides
    Inverts the Framer canvas for a bright surface.
    ═══════════════════════════════════════════ */

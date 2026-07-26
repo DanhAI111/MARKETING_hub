@@ -251,11 +251,6 @@
   font-size: var(--text-xs);
 }
 
-.btn-lg {
-  padding: var(--space-3) var(--space-6);
-  font-size: var(--text-md);
-}
-
 /* Icon Button */
 .btn-icon {
   width: 36px;

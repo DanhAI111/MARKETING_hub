@@ -149,26 +149,10 @@ body.dark ::-webkit-scrollbar-thumb:hover {
   border: 0;
 }
 
-.text-mono {
-  font-family: var(--font-mono);
-}
-
-.text-gradient {
-  background: var(--primary-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.no-select {
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 /* ── Animations ── */
@@ -192,11 +176,6 @@ body.dark ::-webkit-scrollbar-thumb:hover {
   to { opacity: 1; transform: scale(1); }
 }
 
-@keyframes slideInLeft {
-  from { opacity: 0; transform: translateX(-20px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
 @keyframes slideInRight {
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
@@ -212,42 +191,6 @@ body.dark ::-webkit-scrollbar-thumb:hover {
   100% { background-position: 200% 0; }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes countUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes progressFill {
-  from { width: 0; }
-}
-
-@keyframes bounceIn {
-  0% { transform: scale(0.3); opacity: 0; }
-  50% { transform: scale(1.05); }
-  70% { transform: scale(0.9); }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-.animate-fade-in { animation: fadeIn var(--transition-base) ease-out; }
-.animate-fade-in-up { animation: fadeInUp var(--transition-slow) ease-out; }
-.animate-fade-in-down { animation: fadeInDown var(--transition-slow) ease-out; }
-.animate-fade-in-scale { animation: fadeInScale var(--transition-slow) ease-out; }
-.animate-slide-in-left { animation: slideInLeft var(--transition-slow) ease-out; }
-.animate-slide-in-right { animation: slideInRight var(--transition-slow) ease-out; }
-
-/* ── Staggered animation delays ── */
-.stagger-1 { animation-delay: 50ms; }
-.stagger-2 { animation-delay: 100ms; }
-.stagger-3 { animation-delay: 150ms; }
-.stagger-4 { animation-delay: 200ms; }
-.stagger-5 { animation-delay: 250ms; }
-.stagger-6 { animation-delay: 300ms; }
-.stagger-7 { animation-delay: 350ms; }
-.stagger-8 { animation-delay: 400ms; }
 
 /* ── Missing Utility Classes ── */
 .text-success { color: var(--success-400); }

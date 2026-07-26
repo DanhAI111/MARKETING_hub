@@ -262,16 +262,6 @@ const ContentPage = (() => {
     `;
   };
 
-  const renderEmptyState = () => {
-    return `
-      <div class="empty-state span-4" style="grid-column: 1 / -1; padding: var(--space-8) 0;">
-        <div class="empty-state-icon"></div>
-        <div class="empty-state-title">Không tìm thấy Fanpage nào</div>
-        <div class="empty-state-desc">Hãy thêm fanpage mới hoặc điều chỉnh bộ lọc để bắt đầu.</div>
-      </div>
-    `;
-  };
-
   const renderFanpageControl = (fp, posted = 0) => {
     const platform = Utils.getPlatformInfo(fp.platform);
     const imageUrl = String(fp.imageUrl || '').trim();
@@ -296,100 +286,6 @@ const ContentPage = (() => {
           <button class="btn btn-icon btn-ghost btn-sm edit-kpi-btn" data-id="${fp.id}" data-tooltip="KPI">${Utils.icons.target}</button>
           <button class="btn btn-icon btn-ghost btn-sm edit-fp-btn" data-id="${fp.id}" data-tooltip="Chỉnh sửa">${Utils.icons.edit}</button>
           <button class="btn btn-icon btn-ghost btn-sm delete-fp-btn" data-id="${fp.id}" data-tooltip="Xóa">${Utils.icons.trash}</button>
-        </div>
-      </div>
-    `;
-  };
-
-  const renderFanpageCard = (fp) => {
-    const platform = Utils.getPlatformInfo(fp.platform);
-    const imageUrl = (fp.imageUrl || '').trim();
-    const kpiTarget = fp.kpis?.[currentMonth] || 0;
-    const posts = Store.posts.getAll()
-      .filter(p => {
-        if (p.fanpageId !== fp.id) return false;
-        const postMonth = p.status === 'published'
-          ? (p.date || '').slice(0, 7)
-          : ((p.date || p.scheduledAt || '').slice(0, 7));
-        return postMonth === currentMonth;
-      })
-      .sort((a, b) => (b.scheduledAt || b.publishedAt || b.date || '').localeCompare(a.scheduledAt || a.publishedAt || a.date || ''));
-    
-    const posted = posts.filter(p => p.status === 'published').length;
-    const scheduled = posts.filter(p => p.status !== 'published').length;
-    const percent = kpiTarget > 0 ? Math.round((posted / kpiTarget) * 100) : 0;
-    const colorClass = Utils.getKpiColor(percent);
-
-    return `
-      <div class="fanpage-card">
-        <div class="fanpage-header">
-          <div class="fanpage-avatar" style="background: ${platform.color}20; color: ${platform.color};">
-            ${imageUrl ? `
-              <img src="${Utils.escapeHtml(imageUrl)}" alt="${Utils.escapeHtml(fp.name)}" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();">
-            ` : ''}
-            <span class="fanpage-avatar-fallback">${platform.icon}</span>
-          </div>
-          <div class="fanpage-main">
-            <div class="fanpage-card-top">
-              <div class="fanpage-name" title="${Utils.escapeHtml(fp.name)}">
-                ${Utils.escapeHtml(fp.name)}
-              </div>
-            </div>
-            <div class="fanpage-link">
-              <a href="${Utils.escapeHtml(Utils.safeUrl(fp.link))}" target="_blank" rel="noopener noreferrer">
-                Link ${Utils.icon('chevronRight', 'icon-xs')}
-              </a>
-            </div>
-          </div>
-          <div class="fanpage-side">
-            <span class="fanpage-platform-badge tag tag-${fp.platform}" title="${platform.name}">
-              <span>${platform.icon}</span>
-              <span>${platform.name}</span>
-            </span>
-            <div class="fanpage-actions">
-              <button class="btn btn-icon btn-ghost btn-sm add-post-btn" data-id="${fp.id}" data-tooltip="Thêm bài đăng">
-                ${Utils.icons.plus}
-              </button>
-              <button class="btn btn-icon btn-ghost btn-sm schedule-post-card-btn" data-id="${fp.id}" data-tooltip="Lên lịch đăng">
-                ${Utils.icons.clock}
-              </button>
-              <button class="btn btn-icon btn-ghost btn-sm edit-kpi-btn" data-id="${fp.id}" data-tooltip="Thiết lập KPI">
-                ${Utils.icons.target}
-              </button>
-              <button class="btn btn-icon btn-ghost btn-sm edit-fp-btn" data-id="${fp.id}" data-tooltip="Chỉnh sửa">
-                ${Utils.icons.edit}
-              </button>
-              <button class="btn btn-icon btn-ghost btn-sm delete-fp-btn" data-id="${fp.id}" data-tooltip="Xóa">
-                ${Utils.icons.trash}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- KPI Progress -->
-        <div class="kpi-info" style="margin-bottom: var(--space-3);">
-          <div class="kpi-stats" style="display: flex; justify-content: space-between; font-size: var(--text-sm); font-weight: var(--weight-medium); margin-bottom: var(--space-1);">
-            <span style="color: var(--text-secondary);">KPI Tháng: ${posted}/${kpiTarget} bài</span>
-            <span class="${colorClass}">${percent}%</span>
-          </div>
-          <div class="progress-bar-container" style="height: 6px;">
-            <div class="progress-bar-fill ${colorClass}" style="width: ${Math.min(percent, 100)}%"></div>
-          </div>
-        </div>
-
-        <!-- Recent Posts List -->
-        <div style="border-top: 1px solid var(--border-subtle); padding-top: var(--space-2);">
-          <div style="font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--text-tertiary); margin-bottom: var(--space-2); display: flex; justify-content: space-between;">
-            <span>DANH SÁCH BÀI ĐĂNG</span>
-            <span>${posted} đã đăng${scheduled ? ` • ${scheduled} chờ` : ''}</span>
-          </div>
-          <div class="post-list">
-            ${posts.length === 0 ? `
-              <div style="text-align: center; color: var(--text-muted); font-size: var(--text-xs); padding: var(--space-4) 0;">
-                Chưa đăng bài nào trong tháng này
-              </div>
-            ` : posts.map(p => renderPostItem(p)).join('')}
-          </div>
         </div>
       </div>
     `;
