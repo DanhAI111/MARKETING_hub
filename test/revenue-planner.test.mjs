@@ -108,7 +108,7 @@ test('validateWeights and computePlan expose allocation and business warnings', 
   const invalidWeights = {
     ...structuredClone(DEFAULT_WEIGHTS),
     tier2: { core: 0.8, newStrategy: 0.3, experiment: 0.1 },
-    tier1: { core: 1.2, brand: 0.2 }
+    tier1: { core: 1.5, brand: 0.2 }
   };
 
   const weightWarnings = validateWeights(invalidWeights);
