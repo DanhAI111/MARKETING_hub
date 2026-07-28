@@ -114,7 +114,7 @@ const parseAiSuggestion = (message) => {
   return { weights, reasons, warnings, source: 'ai' };
 };
 
-const fallbackAfterError = (inputs, error) => {
+const fallbackAfterError = (inputs) => {
   const heuristic = suggestWeightsHeuristic(inputs);
   return {
     ...heuristic,
@@ -125,8 +125,7 @@ const fallbackAfterError = (inputs, error) => {
         field: 'ai',
         message: 'AI chưa sẵn sàng; kế hoạch đang dùng công thức phân bổ mặc định.'
       }
-    ],
-    fallbackReason: error?.message || 'AI unavailable'
+    ]
   };
 };
 
@@ -141,7 +140,7 @@ export async function suggestAllocation({
   if (typeof fetchImpl !== 'function') {
     const error = new Error('Runtime không hỗ trợ fetch.');
     onError?.(error);
-    return fallbackAfterError(inputs, error);
+    return fallbackAfterError(inputs);
   }
 
   const controller = new AbortController();
@@ -165,7 +164,7 @@ export async function suggestAllocation({
     return parseAiSuggestion(await response.json());
   } catch (error) {
     onError?.(error);
-    return fallbackAfterError(inputs, error);
+    return fallbackAfterError(inputs);
   } finally {
     clearTimeout(timeout);
   }

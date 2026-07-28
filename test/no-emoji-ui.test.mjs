@@ -15,6 +15,7 @@ const uiFiles = [
   '../js/pages/tasks.js',
   '../js/pages/events.js',
   '../js/pages/campaigns.js',
+  '../js/pages/planner.js',
   '../js/pages/expenses.js',
   '../js/pages/ads.js',
   '../js/pages/settings.js',
@@ -23,6 +24,7 @@ const uiFiles = [
   '../css/dashboard.css',
   '../css/layout.css',
   '../css/pages.css',
+  '../css/planner.css',
   '../css/variables.css',
 ];
 

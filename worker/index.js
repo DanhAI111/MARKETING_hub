@@ -3,6 +3,8 @@ import { MetaService } from './meta.js';
 import { Repository } from './repository.js';
 import { assertSecurityConfig } from './security.js';
 import { sendDailyTaskSummaryIfDue, sendTaskNotification } from './task-notifications.js';
+import { computePlan, validateInputs } from '../shared/revenue-planner.mjs';
+import { suggestAllocation } from '../shared/ai-allocation.mjs';
 import { syncScheduleSheets } from '../shared/sheet-sync.mjs';
 import { fetchGoogleSheetCsvText } from '../shared/google-sheets.mjs';
 
@@ -35,6 +37,24 @@ const requireRateLimit = async (repo, request, name, config) => {
 };
 
 const conflict = (latest) => json({ error: 'Dữ liệu đã thay đổi', latest }, 409);
+
+const plannerInputsFromBody = (body = {}) => {
+  const inputs = body.inputs && typeof body.inputs === 'object' ? body.inputs : body;
+  return {
+    ...inputs,
+    ...(body.industry !== undefined ? { industry: body.industry } : {}),
+    ...(body.goal !== undefined ? { goal: body.goal } : {})
+  };
+};
+
+const assertPlannerInputs = (inputs) => {
+  const validation = validateInputs(inputs);
+  if (validation.valid) return;
+  const error = new Error(validation.errors.join(' '));
+  error.status = 400;
+  error.details = validation.errors;
+  throw error;
+};
 
 const versionMatches = (latest, expectedUpdatedAt) => (
   !expectedUpdatedAt || (latest && latest.updatedAt === expectedUpdatedAt)
@@ -236,6 +256,27 @@ const handleRequest = async (request, env, context) => {
     await repo.deletePost(postId);
     audit('delete', 'post', postId);
     return noContent();
+  }
+
+  if (method === 'POST' && pathname === '/api/marketing-plans/compute') {
+    const body = await parseJsonBody(request);
+    const inputs = plannerInputsFromBody(body);
+    assertPlannerInputs(inputs);
+    return json(computePlan(inputs, body.weights));
+  }
+
+  if (method === 'POST' && pathname === '/api/marketing-plans/ai-suggest') {
+    const limited = await requireRateLimit(repo, request, 'ai-suggest', { limit: 20, windowSeconds: 60 });
+    if (limited) return limited;
+    const body = await parseJsonBody(request);
+    const inputs = plannerInputsFromBody(body);
+    assertPlannerInputs(inputs);
+    return json(await suggestAllocation({
+      inputs,
+      apiKey: env.ANTHROPIC_API_KEY || '',
+      model: env.ANTHROPIC_MODEL || 'claude-opus-5',
+      onError: (error) => console.error('AI allocation failed; using fallback:', error.message)
+    }));
   }
 
   match = pathname.match(/^\/api\/collections\/([^/]+)$/);

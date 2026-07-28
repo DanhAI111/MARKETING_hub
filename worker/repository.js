@@ -1,7 +1,7 @@
 import { decrypt, encrypt } from './crypto.js';
 import { readRequiredSecret } from './security.js';
 import {
-  APP_COLLECTIONS,
+  APP_COLLECTIONS as SHARED_APP_COLLECTIONS,
   APP_SINGLETONS,
   APPROVAL_STATUSES,
   now,
@@ -10,6 +10,8 @@ import {
   postFromRow,
   appItemFromRow
 } from '../shared/repository-helpers.cjs';
+
+const APP_COLLECTIONS = Object.freeze([...SHARED_APP_COLLECTIONS, 'marketingPlans']);
 
 export class Repository {
   constructor(env) {

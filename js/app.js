@@ -70,6 +70,7 @@ const App = (() => {
     tasks: { title: 'Công việc', subtitle: 'Điều hướng công việc hỗ trợ đối tác' },
     events: { title: 'Sự kiện', subtitle: 'Quản lý tổ chức sự kiện công ty' },
     campaigns: { title: 'Chiến dịch', subtitle: 'Gom bài đăng, quảng cáo, sự kiện & chi phí theo mục tiêu' },
+    planner: { title: 'Kế hoạch doanh thu', subtitle: 'Tính ngân sách, funnel và phân bổ marketing theo mục tiêu' },
     expenses: { title: 'Chi phí', subtitle: 'Thống kê chi phí marketing hàng tháng' },
     ads: { title: 'Hiệu quả Ads', subtitle: 'Thống kê hiệu quả chạy quảng cáo' },
     settings: { title: 'Cài đặt', subtitle: 'Quản lý fanpage, nhân viên, KPI & mục tiêu' },

@@ -104,6 +104,9 @@ const assertValidInputs = (inputs) => {
 };
 
 export const validateInputs = (inputs = {}) => {
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
+    return deepFreeze({ valid: false, errors: ['Đầu vào kế hoạch phải là một object.'] });
+  }
   const errors = [];
   const hasDirectTarget = hasPositiveNumber(inputs.targetRevenue);
   const hasDerivedTarget = hasPositiveNumber(inputs.prevRevenue)
@@ -111,6 +114,15 @@ export const validateInputs = (inputs = {}) => {
 
   if (!hasDirectTarget && !hasDerivedTarget) {
     errors.push('Cần doanh thu mục tiêu dương hoặc doanh thu năm trước và hệ số tăng trưởng dương.');
+  }
+  if (inputs.targetRevenue !== undefined && !hasPositiveNumber(inputs.targetRevenue)) {
+    errors.push('Doanh thu mục tiêu phải là số lớn hơn 0.');
+  }
+  if (inputs.prevRevenue !== undefined && !hasPositiveNumber(inputs.prevRevenue)) {
+    errors.push('Doanh thu năm trước phải là số lớn hơn 0.');
+  }
+  if (inputs.growth !== undefined && !hasPositiveNumber(inputs.growth)) {
+    errors.push('Hệ số tăng trưởng phải là số lớn hơn 0.');
   }
   if (!hasPositiveNumber(inputs.aov)) {
     errors.push('AOV phải là số lớn hơn 0.');
@@ -309,15 +321,26 @@ const businessWarnings = (inputs, funnel) => {
   return warnings;
 };
 
+const uniqueWarnings = (warnings) => {
+  const seen = new Set();
+  return warnings.filter((warning) => {
+    const key = `${warning.code}:${warning.field}:${warning.total ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 export const computePlan = (inputs, weights = DEFAULT_WEIGHTS) => {
   assertValidInputs(inputs);
   const resolvedWeights = mergeWeightsWithDefaults(weights);
   const funnel = computeFunnel(inputs, resolvedWeights);
   const monthlyMoM = inputs.monthlyMoM ?? resolvedWeights.monthlyMoM;
-  const warnings = [
+  const warnings = uniqueWarnings([
+    ...(weights === DEFAULT_WEIGHTS ? [] : validateWeights(weights)),
     ...validateWeights(resolvedWeights),
     ...businessWarnings(inputs, funnel)
-  ];
+  ]);
 
   return deepFreeze({
     targetRevenue: funnel.targetRevenue,

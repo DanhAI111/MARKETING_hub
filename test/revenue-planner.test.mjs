@@ -102,6 +102,8 @@ test('validateInputs rejects missing and out-of-bound business inputs', () => {
   assert.ok(result.errors.some((message) => message.includes('SQL/Lead')));
   assert.ok(result.errors.some((message) => message.includes('Đơn hàng/SQL')));
   assert.throws(() => computePlan({ ...baseInputs, aov: 0 }), /AOV/);
+  assert.equal(validateInputs(null).valid, false);
+  assert.equal(validateInputs({ ...baseInputs, prevRevenue: -1 }).valid, false);
 });
 
 test('validateWeights and computePlan expose allocation and business warnings', () => {

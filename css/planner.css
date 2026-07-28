@@ -1,0 +1,323 @@
+.planner-shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(0, 2fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.planner-input-column {
+  display: grid;
+  gap: var(--space-5);
+  position: sticky;
+  top: var(--space-4);
+}
+
+.planner-form-card,
+.planner-saved-card,
+.planner-table-card,
+.planner-allocation-mini {
+  overflow: visible;
+}
+
+.planner-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-3);
+}
+
+.planner-goal-field,
+.planner-name-field {
+  grid-column: 1 / -1;
+}
+
+.planner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+.planner-actions .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.planner-output {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-5);
+}
+
+.planner-empty {
+  min-height: 220px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.planner-empty strong {
+  color: var(--text-primary);
+  font-size: var(--text-xl);
+}
+
+.planner-empty p {
+  max-width: 520px;
+  margin-top: var(--space-2);
+}
+
+.planner-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.planner-stat-grid .stat-card-value {
+  font-size: clamp(1.35rem, 2vw, 1.8rem);
+}
+
+.planner-chart-grid,
+.planner-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+.planner-chart {
+  min-height: 230px;
+}
+
+.planner-funnel-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
+.planner-funnel-summary span {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.planner-funnel-summary strong {
+  display: block;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+
+.planner-donut-wrap {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 230px;
+}
+
+.planner-donut-legend {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.planner-donut-legend > div {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.planner-donut-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+}
+
+.planner-donut-legend strong,
+.planner-number {
+  text-align: right;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.planner-tier-label {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tag);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.planner-ratio-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.planner-ratio-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-2);
+}
+
+.planner-ratio-list > div:last-child {
+  border-bottom: 0;
+}
+
+.planner-ratio-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-ratio-list strong,
+.planner-ratio-list small {
+  font-family: var(--font-mono);
+}
+
+.planner-ratio-list small {
+  color: var(--text-secondary);
+  min-width: 58px;
+  text-align: right;
+}
+
+.planner-warning,
+.planner-ai-note {
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+}
+
+.planner-warning {
+  color: var(--warning-400);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+}
+
+.planner-warning ul,
+.planner-ai-note ul {
+  margin: var(--space-2) 0 0 var(--space-5);
+}
+
+.planner-warning li,
+.planner-ai-note li {
+  margin-top: var(--space-1);
+}
+
+.planner-ai-note {
+  color: var(--text-secondary);
+  background: var(--info-bg);
+  border: 1px solid var(--info-border);
+}
+
+.planner-ai-note-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+}
+
+.planner-saved-empty {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  text-align: center;
+  padding: var(--space-5) 0;
+}
+
+.planner-saved-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-2);
+}
+
+.planner-saved-item.is-active {
+  border-color: var(--accent);
+  background: var(--info-bg);
+}
+
+.planner-saved-load,
+.planner-saved-delete {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.planner-saved-load {
+  min-width: 0;
+  padding: var(--space-3);
+  text-align: left;
+}
+
+.planner-saved-load strong,
+.planner-saved-load span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-saved-load span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+}
+
+.planner-saved-delete {
+  color: var(--text-tertiary);
+  font-size: var(--text-xl);
+}
+
+.planner-saved-delete:hover {
+  color: var(--danger-400);
+}
+
+@media (max-width: 1180px) {
+  .planner-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-input-column {
+    position: static;
+  }
+
+  .planner-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .planner-form-grid,
+  .planner-chart-grid,
+  .planner-compact-grid,
+  .planner-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-goal-field,
+  .planner-name-field {
+    grid-column: auto;
+  }
+
+  .planner-donut-wrap {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .planner-donut-legend {
+    width: 100%;
+  }
+
+  .planner-actions .btn {
+    width: 100%;
+  }
+}

@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const { encrypt, decrypt } = require('./crypto');
 const {
-  APP_COLLECTIONS,
+  APP_COLLECTIONS: SHARED_APP_COLLECTIONS,
   APP_SINGLETONS,
   APPROVAL_STATUSES,
   now,
@@ -10,6 +10,8 @@ const {
   postFromRow,
   appItemFromRow
 } = require('../shared/repository-helpers.cjs');
+
+const APP_COLLECTIONS = Object.freeze([...SHARED_APP_COLLECTIONS, 'marketingPlans']);
 
 const id = () => crypto.randomUUID();
 const usePostgres = !!process.env.DATABASE_URL;
