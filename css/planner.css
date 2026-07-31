@@ -321,3 +321,44 @@
     width: 100%;
   }
 }
+
+/* Right-align numeric headers to match their .planner-number cells */
+.planner-table-card th.num { text-align: right; }
+
+/* Editable weight inputs + live total badges */
+.planner-weight-cell { text-align: left; }
+.planner-weight-input {
+  width: 5rem;
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.planner-allocation-mini .planner-weight-input { width: 5.5rem; }
+.planner-mini-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.planner-weight-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+.planner-weight-total {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+.planner-weight-total.is-valid { color: #0a7c3d; background: rgba(16, 163, 127, 0.12); }
+.planner-weight-total.is-invalid { color: #b42318; background: rgba(255, 85, 119, 0.14); }
+
+/* Unit-economics ratio card */
+.planner-ratio-card.is-good { border-color: rgba(16, 163, 127, 0.5); }
+.planner-ratio-card.is-good .stat-card-value { color: #0a7c3d; }
+.planner-ratio-card.is-warn .stat-card-value { color: #b25e00; }
+.planner-ratio-card.is-bad { border-color: rgba(255, 85, 119, 0.5); }
+.planner-ratio-card.is-bad .stat-card-value { color: #b42318; }

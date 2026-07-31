@@ -80,6 +80,10 @@ const TIER4_GROUPS = Object.freeze({
   gift: ['experiment', 'traditional']
 });
 
+export const PERIOD_MONTHS = Object.freeze({ month: 1, quarter: 3, year: 12 });
+
+const resolvePeriodMonths = (period) => PERIOD_MONTHS[period] ?? PERIOD_MONTHS.year;
+
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 
 const hasPositiveNumber = (value) => isFiniteNumber(value) && value > 0;
@@ -143,6 +147,17 @@ export const validateInputs = (inputs = {}) => {
   if (inputs.months !== undefined
     && (!Number.isInteger(inputs.months) || inputs.months < 1 || inputs.months > 60)) {
     errors.push('Số tháng phải là số nguyên từ 1 đến 60.');
+  }
+  if (inputs.grossMargin !== undefined
+    && (!isFiniteNumber(inputs.grossMargin) || inputs.grossMargin <= 0 || inputs.grossMargin > 1)) {
+    errors.push('Biên lợi nhuận gộp phải nằm trong khoảng (0, 1].');
+  }
+  if (inputs.purchaseFrequency !== undefined
+    && (!isFiniteNumber(inputs.purchaseFrequency) || inputs.purchaseFrequency <= 0)) {
+    errors.push('Số đơn/khách phải là số lớn hơn 0.');
+  }
+  if (inputs.period !== undefined && PERIOD_MONTHS[inputs.period] === undefined) {
+    errors.push('Kỳ tính phải là "month", "quarter" hoặc "year".');
   }
   for (const [field, label] of [
     ['marketShare', 'Thị phần mục tiêu'],
@@ -233,6 +248,18 @@ export const computeFunnel = (inputs, weights = DEFAULT_WEIGHTS) => {
   const sql = customers / inputs.orderPerSql;
   const leads = sql / inputs.sqlPerLead;
   const customerBudget = mktBudget * resolvedWeights.tier1.core;
+  const cac = customerBudget / customers;
+
+  // Unit economics (chuẩn ngành). Optional inputs → default an toàn, không phá plan cũ.
+  const grossMargin = hasPositiveNumber(inputs.grossMargin) ? inputs.grossMargin : 1;
+  const purchaseFrequency = hasPositiveNumber(inputs.purchaseFrequency) ? inputs.purchaseFrequency : 1;
+  const retentionRate = isFiniteNumber(inputs.retentionRate)
+    && inputs.retentionRate >= 0 && inputs.retentionRate < 1
+    ? inputs.retentionRate
+    : 0;
+  const marginPerCustomer = inputs.aov * purchaseFrequency * grossMargin;
+  const ltv = marginPerCustomer / (1 - retentionRate);
+  const grossProfit = targetRevenue * grossMargin;
 
   return deepFreeze({
     targetRevenue,
@@ -241,7 +268,13 @@ export const computeFunnel = (inputs, weights = DEFAULT_WEIGHTS) => {
     sql,
     leads,
     customerBudget,
-    cps: customerBudget / customers
+    cps: cac,
+    cac,
+    grossMargin,
+    grossProfit,
+    ltv,
+    ltvCacRatio: ltv / cac,
+    paybackPeriods: cac / marginPerCustomer
   });
 };
 
@@ -318,6 +351,23 @@ const businessWarnings = (inputs, funnel) => {
       message: 'Chi phí tạo một khách hàng đang cao hơn AOV.'
     });
   }
+  // Unit-economics warnings — chỉ khi user khai biên lợi nhuận (tránh nhiễu plan cũ).
+  if (hasPositiveNumber(inputs.grossMargin)) {
+    if (funnel.ltvCacRatio < 3) {
+      warnings.push({
+        code: 'LTV_CAC_LOW',
+        field: 'ltvCacRatio',
+        message: `Tỷ lệ LTV:CAC là ${funnel.ltvCacRatio.toFixed(1)}, dưới ngưỡng khỏe 3:1.`
+      });
+    }
+    if (inputs.grossMargin < inputs.mktRatio) {
+      warnings.push({
+        code: 'MARGIN_BELOW_MKT',
+        field: 'grossMargin',
+        message: 'Biên lợi nhuận gộp thấp hơn tỷ lệ chi marketing; rủi ro lỗ.'
+      });
+    }
+  }
   return warnings;
 };
 
@@ -336,6 +386,8 @@ export const computePlan = (inputs, weights = DEFAULT_WEIGHTS) => {
   const resolvedWeights = mergeWeightsWithDefaults(weights);
   const funnel = computeFunnel(inputs, resolvedWeights);
   const monthlyMoM = inputs.monthlyMoM ?? resolvedWeights.monthlyMoM;
+  const period = inputs.period ?? 'year';
+  const months = inputs.months ?? resolvePeriodMonths(period);
   const warnings = uniqueWarnings([
     ...(weights === DEFAULT_WEIGHTS ? [] : validateWeights(weights)),
     ...validateWeights(resolvedWeights),
@@ -343,6 +395,8 @@ export const computePlan = (inputs, weights = DEFAULT_WEIGHTS) => {
   ]);
 
   return deepFreeze({
+    period,
+    months,
     targetRevenue: funnel.targetRevenue,
     mktBudget: funnel.mktBudget,
     funnel,
@@ -351,7 +405,7 @@ export const computePlan = (inputs, weights = DEFAULT_WEIGHTS) => {
       funnel.mktBudget,
       funnel.targetRevenue,
       monthlyMoM,
-      inputs.months ?? 12
+      months
     ),
     weights: resolvedWeights,
     warnings
