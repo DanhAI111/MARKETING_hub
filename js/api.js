@@ -15,7 +15,8 @@ const RemoteStore = (() => {
     'employees',
     'monthlyTargets',
     'recurringExpenses',
-    'campaigns'
+    'campaigns',
+    'marketingPlans'
   ];
   const isServerMode = () => window.location.protocol !== 'file:';
   let available = false;
@@ -122,6 +123,7 @@ const RemoteStore = (() => {
         monthlyTargets: data.monthlyTargets || [],
         recurringExpenses: data.recurringExpenses || [],
         campaigns: data.campaigns || [],
+        marketingPlans: data.marketingPlans || [],
         customCategories: data.customCategories
       })
     });
@@ -258,6 +260,24 @@ const RemoteStore = (() => {
     });
   };
 
+  const computeMarketingPlan = async (inputs, weights) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    return request('/api/marketing-plans/compute', {
+      method: 'POST',
+      body: JSON.stringify({ inputs, ...(weights ? { weights } : {}) }),
+      timeout: 15_000
+    });
+  };
+
+  const suggestMarketingAllocation = async (inputs) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    return request('/api/marketing-plans/ai-suggest', {
+      method: 'POST',
+      body: JSON.stringify({ inputs }),
+      timeout: 25_000
+    });
+  };
+
   return {
     check,
     hydrate,
@@ -273,6 +293,8 @@ const RemoteStore = (() => {
     updatePost,
     deletePost,
     fetchGoogleSheetCsv,
+    computeMarketingPlan,
+    suggestMarketingAllocation,
     get available() { return available; },
     get bootstrapped() { return bootstrapped; },
     get lastSync() { return lastSync; },

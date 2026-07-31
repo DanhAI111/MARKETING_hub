@@ -8,9 +8,11 @@ const meta = require('./meta');
 const auth = require('./auth');
 const { assertSecurityConfig } = require('./security');
 const { rateLimit } = require('./rate-limit');
+const { suggestAllocation } = require('./ai-allocation');
 const { sendTaskNotification, sendDailyTaskSummaryIfDue } = require('./task-notifications');
 const googleSheetsModule = import('../shared/google-sheets.mjs');
 const sheetSyncModule = import('../shared/sheet-sync.mjs');
+const revenuePlannerModule = import('../shared/revenue-planner.mjs');
 
 const app = express();
 assertSecurityConfig();
@@ -22,6 +24,25 @@ let lastSync = null;
 let syncInFlight = null;
 let publishInFlight = false;
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+const plannerInputsFromBody = (body = {}) => {
+  const inputs = body.inputs && typeof body.inputs === 'object' ? body.inputs : body;
+  return {
+    ...inputs,
+    ...(body.industry !== undefined ? { industry: body.industry } : {}),
+    ...(body.goal !== undefined ? { goal: body.goal } : {})
+  };
+};
+
+const assertPlannerInputs = async (inputs) => {
+  const { validateInputs } = await revenuePlannerModule;
+  const validation = validateInputs(inputs);
+  if (validation.valid) return;
+  const err = new Error(validation.errors.join(' '));
+  err.status = 400;
+  err.details = validation.errors;
+  throw err;
+};
 
 // Clamp a query param to a safe integer range, rejecting NaN/negative values.
 const clampInt = (value, { fallback, min = 0, max = Number.MAX_SAFE_INTEGER }) => {
@@ -227,6 +248,28 @@ app.delete('/api/posts/:id', asyncHandler(async (req, res) => {
   writeAudit(req, 'delete', 'post', req.params.id);
   res.status(204).end();
 }));
+
+app.post('/api/marketing-plans/compute', asyncHandler(async (req, res) => {
+  const inputs = plannerInputsFromBody(req.body || {});
+  await assertPlannerInputs(inputs);
+  const { computePlan } = await revenuePlannerModule;
+  res.json(computePlan(inputs, req.body?.weights));
+}));
+
+app.post(
+  '/api/marketing-plans/ai-suggest',
+  rateLimit('ai-suggest', { limit: 20, windowSeconds: 60 }),
+  asyncHandler(async (req, res) => {
+    const inputs = plannerInputsFromBody(req.body || {});
+    await assertPlannerInputs(inputs);
+    res.json(await suggestAllocation({
+      inputs,
+      apiKey: process.env.ANTHROPIC_API_KEY || '',
+      model: process.env.ANTHROPIC_MODEL || 'claude-opus-5',
+      onError: (err) => console.error('AI allocation failed; using fallback:', err.message)
+    }));
+  })
+);
 
 app.get('/api/collections/:collection', asyncHandler(async (req, res) => {
   res.json(await repo.listAppItems(req.params.collection));

@@ -18,7 +18,8 @@ const Store = (() => {
     'employees',
     'monthlyTargets',
     'recurringExpenses',
-    'campaigns'
+    'campaigns',
+    'marketingPlans'
   ];
   const GENERIC_REMOTE_COLLECTIONS = new Set(REMOTE_COLLECTIONS.filter(c => c !== 'fanpages' && c !== 'posts'));
 
@@ -35,6 +36,7 @@ const Store = (() => {
     monthlyTargets: [],
     recurringExpenses: [],
     campaigns: [],
+    marketingPlans: [],
     customCategories: null,
     settings: {
       sidebarCollapsed: false,
@@ -516,6 +518,15 @@ const Store = (() => {
     }
   };
 
+  // ── Revenue-driven marketing plans ──
+  const marketingPlans = {
+    getAll: () => getAll('marketingPlans'),
+    getById: (id) => getById('marketingPlans', id),
+    create: (plan) => create('marketingPlans', plan),
+    update: (id, updates) => update('marketingPlans', id, updates),
+    remove: (id) => remove('marketingPlans', id)
+  };
+
   // ── Custom Expense Categories ──
   const customCategories = {
     getAll: () => {
@@ -979,6 +990,7 @@ const Store = (() => {
     monthlyTargets,
     recurringExpenses,
     campaigns,
+    marketingPlans,
     customCategories,
     backup,
     restore,

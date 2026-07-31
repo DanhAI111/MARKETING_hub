@@ -10,6 +10,7 @@ const Sidebar = (() => {
     { id: 'tasks', label: 'Công việc', icon: 'tasks', badge: 'tasks' },
     { id: 'events', label: 'Sự kiện', icon: 'events' },
     { id: 'campaigns', label: 'Chiến dịch', icon: 'megaphone' },
+    { id: 'planner', label: 'Kế hoạch doanh thu', icon: 'planner' },
     { id: 'expenses', label: 'Chi phí', icon: 'expenses' },
     { id: 'ads', label: 'Hiệu quả Ads', icon: 'ads' },
     { id: 'settings', label: 'Cài đặt', icon: 'settings' },
