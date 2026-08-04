@@ -187,3 +187,53 @@ test('Instagram sync persists like and comment counts', async () => {
     { likes: 88, comments: 12, shares: 0, reach: 0 }
   );
 });
+
+// Regression guard for the Bearer-token change (fix E): graphGet must send the
+// access_token as an Authorization: Bearer header and NEVER in the query string
+// (query leaks via logs/proxies). This path is the one hitting the real Graph API
+// first in production, so lock the exact wire format.
+test('graphGet sends access_token as Bearer header, not in query string', async () => {
+  const originalFetch = globalThis.fetch;
+  let seenUrl = '';
+  let seenAuth = '';
+  globalThis.fetch = async (url, options = {}) => {
+    seenUrl = String(url);
+    seenAuth = (options.headers && options.headers.Authorization) || '';
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  try {
+    const meta = new MetaService({}, {}, 'https://example.com');
+    await meta.graphGet('me/accounts', { access_token: 'secret-token-123', fields: 'id,name' });
+    // token must be in the header
+    assert.equal(seenAuth, 'Bearer secret-token-123');
+    // token must NOT appear anywhere in the URL/query
+    assert.ok(!seenUrl.includes('secret-token-123'), 'access_token leaked into the URL');
+    assert.ok(!seenUrl.includes('access_token'), 'access_token key leaked into the query string');
+    // other params still go in the query
+    assert.ok(seenUrl.includes('fields=id%2Cname'), 'normal params should stay in the query');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('graphGet with no access_token sends no Authorization header', async () => {
+  const originalFetch = globalThis.fetch;
+  let seenAuth = 'UNSET';
+  globalThis.fetch = async (url, options = {}) => {
+    seenAuth = options.headers ? options.headers.Authorization : undefined;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  try {
+    const meta = new MetaService({}, {}, 'https://example.com');
+    await meta.graphGet('some/public', { fields: 'id' });
+    assert.equal(seenAuth, undefined, 'no token -> no Authorization header');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
