@@ -276,6 +276,88 @@
   min-height: 140px;
 }
 
+.schedule-fanpage-heading,
+.schedule-fanpage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.schedule-fanpage-heading .form-label {
+  margin-bottom: 0;
+}
+
+.schedule-fanpage-count {
+  color: var(--primary-300);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.schedule-fanpage-toolbar {
+  justify-content: flex-end;
+  margin: var(--space-2) 0;
+}
+
+.schedule-fanpage-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  max-height: 230px;
+  padding: var(--space-2);
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.schedule-fanpage-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.schedule-fanpage-option:hover,
+.schedule-fanpage-option.is-selected {
+  border-color: var(--primary-400);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.schedule-fanpage-option input {
+  margin-top: 3px;
+  accent-color: var(--primary-500);
+}
+
+.schedule-fanpage-option-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.schedule-fanpage-option-main strong,
+.schedule-fanpage-option-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-fanpage-option-main strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.schedule-fanpage-option-main small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
 .publish-mode-selector {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -596,6 +678,7 @@
 }
 
 @media (max-width: 768px) {
+  .schedule-fanpage-selector,
   .publish-mode-selector {
     grid-template-columns: 1fr;
   }

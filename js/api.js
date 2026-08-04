@@ -204,25 +204,27 @@ const RemoteStore = (() => {
     return result;
   };
 
-  const createPost = async (post) => {
+  const createPost = async (post, { refresh = true } = {}) => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
     const saved = await request('/api/posts', {
       method: 'POST',
       body: JSON.stringify(post || {})
     });
-    await loadPending().catch(() => {});
+    if (refresh) await loadPending().catch(() => {});
     return saved;
   };
 
-  const runPostTest = async (id) => {
+  const runPostTest = async (id, { refresh = true } = {}) => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
     const result = await request(`/api/posts/${encodeURIComponent(id)}/run-test`, {
       method: 'POST',
       body: '{}',
       timeout: 30000
     });
-    await loadPosts(window.Utils?.getReportingMonth?.() || '');
-    await loadPending().catch(() => {});
+    if (refresh) {
+      await loadPosts(window.Utils?.getReportingMonth?.() || '');
+      await loadPending().catch(() => {});
+    }
     return result;
   };
 

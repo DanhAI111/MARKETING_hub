@@ -778,14 +778,30 @@ const ContentPage = (() => {
 
     const content = `
       <div class="form-group">
-        <label class="form-label">Fanpage / tài khoản <span style="color:var(--danger-400);">*</span></label>
-        <select class="form-select" data-field="fanpageId" id="scheduleFanpageSelect">
+        <div class="schedule-fanpage-heading">
+          <label class="form-label">Fanpage / tài khoản <span style="color:var(--danger-400);">*</span></label>
+          <span class="schedule-fanpage-count" id="scheduleFanpageCount">Đã chọn 1/${fanpages.length}</span>
+        </div>
+        <div class="schedule-fanpage-toolbar">
+          <button type="button" class="btn btn-ghost btn-sm" id="selectAllScheduleFanpages">Chọn tất cả</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="clearScheduleFanpages">Bỏ chọn</button>
+        </div>
+        <div class="schedule-fanpage-selector" id="scheduleFanpageSelector" role="group" aria-label="Chọn fanpage hoặc tài khoản đăng bài">
           ${fanpages.map(fp => {
             const platform = Utils.getPlatformInfo(fp.platform);
             const connectedText = fp.connected ? '' : ' - chưa liên kết Meta';
-            return `<option value="${fp.id}" ${selectedFanpage.id === fp.id ? 'selected' : ''}>${Utils.escapeHtml(fp.name)} (${platform.name}${connectedText})</option>`;
+            return `
+              <label class="schedule-fanpage-option ${selectedFanpage.id === fp.id ? 'is-selected' : ''}">
+                <input type="checkbox" class="schedule-fanpage-checkbox" value="${Utils.escapeHtml(fp.id)}" ${selectedFanpage.id === fp.id ? 'checked' : ''}>
+                <span class="schedule-fanpage-option-main">
+                  <strong>${Utils.escapeHtml(fp.name)}</strong>
+                  <small>${platform.name}${connectedText}</small>
+                </span>
+              </label>
+            `;
           }).join('')}
-        </select>
+        </div>
+        <div class="form-hint">Nội dung, media, thời gian và chế độ đăng sẽ được áp dụng cho tất cả page đã chọn.</div>
       </div>
       <div class="form-group">
         <label class="form-label">Nội dung bài đăng <span style="color:var(--danger-400);">*</span></label>
@@ -843,13 +859,9 @@ const ContentPage = (() => {
       saveLabel: 'Lưu lịch đăng',
       onSave: async () => {
         const formData = Modal.getFormData();
-        const fanpage = Store.fanpages.getById(formData.fanpageId);
+        const selectedFanpages = getSelectedFanpages();
         const publishMode = formData.publishMode === 'safe_test' ? 'safe_test' : 'live';
         const contentText = (formData.content || '').trim();
-        if (!fanpage) {
-          Toast.error('Vui lòng chọn fanpage');
-          return;
-        }
         if (!contentText) {
           Toast.error('Vui lòng nhập nội dung bài đăng');
           return;
@@ -866,89 +878,110 @@ const ContentPage = (() => {
         }
 
         const mediaItems = parseMediaItems(formData.mediaItems);
-        if (fanpage.platform === 'instagram' && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
-          Toast.error('Instagram chỉ nhận media có URL công khai');
+        const selectionErrors = ScheduleBatch.validateSelection({
+          fanpages: selectedFanpages,
+          mediaItems,
+          publishMode,
+          remoteAvailable: !!window.RemoteStore?.available
+        });
+        if (selectionErrors.length) {
+          Toast.error(selectionErrors.join(' • '));
           return;
         }
-        if (fanpage.platform === 'instagram' && mediaItems.some(item => item.type === 'video')) {
-          Toast.error('Lịch đăng Instagram hiện chưa hỗ trợ video/Reels');
-          return;
-        }
-        if (publishMode === 'safe_test' && !window.RemoteStore?.available) {
-          Toast.error('Đăng thử cần backend đang hoạt động để kiểm tra với Meta');
-          return;
-        }
-        if (publishMode === 'safe_test' && !['facebook', 'instagram'].includes(fanpage.platform)) {
-          Toast.error('Chế độ đăng thử an toàn hiện chỉ hỗ trợ Facebook và Instagram');
-          return;
-        }
-        if (!fanpage.connected) {
-          Toast.warning('Fanpage chưa liên kết Meta; lịch sẽ được lưu nhưng chưa thể đăng tự động');
+        const disconnected = selectedFanpages.filter(fanpage => !fanpage.connected);
+        if (disconnected.length) {
+          Toast.warning(`${disconnected.map(fanpage => fanpage.name).join(', ')} chưa liên kết Meta; lịch vẫn được lưu nhưng chưa thể đăng tự động`);
         }
 
-        const postPayload = {
-          fanpageId: fanpage.id,
-          title: contentText.slice(0, 80),
+        const entries = ScheduleBatch.buildEntries({
+          fanpages: selectedFanpages,
           content: contentText,
           date: formData.scheduledAt.slice(0, 10),
           scheduledAt: scheduledDate.toISOString(),
-          mediaUrl: mediaItems[0]?.url || '',
           mediaItems,
-          status: 'scheduled',
-          source: 'scheduled',
           campaignId: formData.campaignId || '',
           approvalStatus: publishMode === 'safe_test' ? 'approved' : (formData.approvalStatus || 'pending'),
           publishMode
-        };
+        });
 
-        if (publishMode === 'safe_test') {
-          try {
-            Toast.info('Đang chạy đăng thử an toàn trên Meta...');
-            const saved = await RemoteStore.createPost(postPayload);
-            if (scheduledDate <= new Date()) {
-              const result = await RemoteStore.runPostTest(saved.id);
-              const instagram = result?.post?.testResult?.instagram;
-              const instagramText = instagram?.status === 'completed'
-                ? 'Instagram đã xác nhận media hợp lệ.'
-                : `Instagram chưa chạy: ${instagram?.error || 'không có kênh ghép cặp'}`;
-              Toast.success(`${fanpage.platform === 'facebook' ? 'Facebook đã tạo bài không công khai. ' : ''}${instagramText}`);
-            } else {
-              Toast.success('Đã lưu lịch đăng thử; cron sẽ chạy an toàn khi đến giờ.');
+        if (saveButton?.disabled) return;
+        if (saveButton) saveButton.disabled = true;
+        Toast.info(publishMode === 'safe_test'
+          ? `Đang xử lý đăng thử cho ${entries.length} page...`
+          : `Đang lưu ${entries.length} lịch đăng...`);
+
+        let outcome;
+        try {
+          outcome = await ScheduleBatch.execute(entries, async entry => {
+            if (!window.RemoteStore?.available) return Store.posts.create(entry.payload);
+
+            const saved = await RemoteStore.createPost(entry.payload, { refresh: false });
+            if (publishMode !== 'safe_test' || scheduledDate > new Date()) return { saved };
+
+            try {
+              const testResult = await RemoteStore.runPostTest(saved.id, { refresh: false });
+              return { saved, testResult };
+            } catch (error) {
+              // The schedule already exists and is marked failed by the server.
+              // Report the test failure without creating a duplicate on retry.
+              return { saved, testError: error instanceof Error ? error : new Error(String(error)) };
             }
-          } catch (err) {
+          });
+
+          if (window.RemoteStore?.available) {
+            await RemoteStore.loadPosts(currentMonth).catch(() => {});
             await RemoteStore.loadPending().catch(() => {});
-            Toast.error(err.message || 'Không thể chạy đăng thử');
+          }
+
+          if (outcome.failed.length) {
+            const succeededIds = new Set(outcome.succeeded.map(item => item.entry.fanpage.id));
+            fanpageCheckboxes.forEach(checkbox => {
+              if (succeededIds.has(checkbox.value)) checkbox.checked = false;
+            });
+            updateFanpageSelectionUi();
+            const failedNames = outcome.failed.map(item => item.entry.fanpage.name).join(', ');
+            Toast.error(`Đã lưu ${outcome.succeeded.length}/${entries.length} lịch. Chưa lưu được: ${failedNames}. Bạn có thể bấm lưu lại cho các page còn được chọn.`);
+            renderPage();
+            Sidebar.updateBadge();
             return;
           }
-        } else {
-          Store.posts.create(postPayload);
 
-          if (window.RemoteStore?.available && formData.approvalStatus === 'approved' && scheduledDate <= new Date()) {
-            try {
-              await RemoteStore.publishDue();
-            } catch (err) {
-              Toast.error(err.message || 'Không thể xử lý lịch đăng ngay');
-            }
+          const testFailures = outcome.succeeded.filter(item => item.value?.testError);
+          if (testFailures.length) {
+            Toast.warning(`Đã tạo đủ ${entries.length} lịch nhưng đăng thử lỗi ở: ${testFailures.map(item => item.entry.fanpage.name).join(', ')}. Có thể thử lại từ hàng đợi.`);
+          } else if (publishMode === 'safe_test') {
+            Toast.success(scheduledDate <= new Date()
+              ? `Đã hoàn tất đăng thử không công khai trên ${entries.length} page.`
+              : `Đã lưu ${entries.length} lịch đăng thử; cron sẽ chạy an toàn khi đến giờ.`);
+          } else {
+            Toast.success(formData.approvalStatus === 'approved'
+              ? `Đã lưu ${entries.length} lịch đăng bài`
+              : `Đã lưu ${entries.length} bài vào hàng chờ duyệt`);
           }
 
-          Toast.success(formData.approvalStatus === 'approved'
-            ? 'Đã lưu lịch đăng bài'
-            : 'Đã lưu và gửi bài vào hàng chờ duyệt');
+          Modal.close();
+          renderPage();
+          Sidebar.updateBadge();
+        } finally {
+          if (saveButton?.isConnected) saveButton.disabled = false;
         }
-        Modal.close();
-        renderPage();
-        Sidebar.updateBadge();
       }
     });
 
     const publishModeInputs = modalEl.querySelectorAll('input[name="publishMode"]');
     const approvalSelect = modalEl.querySelector('[data-field="approvalStatus"]');
     const scheduleInput = modalEl.querySelector('[data-field="scheduledAt"]');
-    const fanpageSelect = modalEl.querySelector('#scheduleFanpageSelect');
+    const fanpageCheckboxes = [...modalEl.querySelectorAll('.schedule-fanpage-checkbox')];
+    const fanpageCount = modalEl.querySelector('#scheduleFanpageCount');
     const safeTestNotice = modalEl.querySelector('#safeTestNotice');
     const saveButton = modalEl.querySelector('#modalSave');
+    const getSelectedFanpages = () => fanpageCheckboxes
+      .filter(checkbox => checkbox.checked)
+      .map(checkbox => Store.fanpages.getById(checkbox.value))
+      .filter(Boolean);
     const updatePublishModeUi = ({ resetTime = false } = {}) => {
       const isSafeTest = modalEl.querySelector('input[name="publishMode"]:checked')?.value === 'safe_test';
+      const selected = getSelectedFanpages();
       modalEl.querySelectorAll('.publish-mode-option').forEach(option => {
         option.classList.toggle('is-selected', !!option.querySelector('input:checked'));
       });
@@ -957,23 +990,46 @@ const ContentPage = (() => {
         if (isSafeTest) approvalSelect.value = 'approved';
       }
       if (isSafeTest && resetTime && scheduleInput) scheduleInput.value = toLocalDateTimeValue(new Date());
-      if (saveButton) saveButton.textContent = isSafeTest ? 'Chạy đăng thử' : 'Lưu lịch đăng';
+      if (saveButton) {
+        saveButton.textContent = isSafeTest
+          ? `Chạy đăng thử (${selected.length})`
+          : `Lưu ${selected.length} lịch đăng`;
+      }
       if (safeTestNotice) {
         safeTestNotice.hidden = !isSafeTest;
         if (isSafeTest) {
-          const selected = Store.fanpages.getById(fanpageSelect?.value);
-          const instagram = selected?.crossPostInstagram
-            ? Store.fanpages.getAll().find(page => page.platform === 'instagram' && page.metaPageId && page.metaPageId === selected.metaPageId)
-            : null;
-          safeTestNotice.textContent = selected?.platform === 'instagram'
-            ? 'Instagram: tạo và kiểm tra media container, không gọi bước publish.'
-            : `Facebook: bài ẩn.${instagram ? ` Instagram: kiểm tra media trên ${instagram.name}.` : ' Instagram: không chạy vì chưa bật hoặc chưa có kênh ghép cặp.'}`;
+          safeTestNotice.textContent = selected.length
+            ? selected.map(page => {
+              if (page.platform === 'instagram') return `${page.name}: chỉ kiểm tra media container.`;
+              if (page.platform !== 'facebook') return `${page.name}: chưa hỗ trợ đăng thử.`;
+              const pairedInstagram = page.crossPostInstagram
+                ? Store.fanpages.getAll().find(candidate => candidate.platform === 'instagram' && candidate.metaPageId && candidate.metaPageId === page.metaPageId)
+                : null;
+              return `${page.name}: tạo bài Facebook ẩn${pairedInstagram ? ` và kiểm tra media trên ${pairedInstagram.name}` : ''}.`;
+            }).join(' ')
+            : 'Chọn ít nhất một page để chạy đăng thử.';
         }
       }
     };
+    const updateFanpageSelectionUi = () => {
+      const selectedCount = fanpageCheckboxes.filter(checkbox => checkbox.checked).length;
+      fanpageCheckboxes.forEach(checkbox => {
+        checkbox.closest('.schedule-fanpage-option')?.classList.toggle('is-selected', checkbox.checked);
+      });
+      if (fanpageCount) fanpageCount.textContent = `Đã chọn ${selectedCount}/${fanpageCheckboxes.length}`;
+      updatePublishModeUi();
+    };
     publishModeInputs.forEach(input => input.addEventListener('change', () => updatePublishModeUi({ resetTime: input.value === 'safe_test' })));
-    fanpageSelect?.addEventListener('change', () => updatePublishModeUi());
-    updatePublishModeUi();
+    fanpageCheckboxes.forEach(checkbox => checkbox.addEventListener('change', updateFanpageSelectionUi));
+    modalEl.querySelector('#selectAllScheduleFanpages')?.addEventListener('click', () => {
+      fanpageCheckboxes.forEach(checkbox => { checkbox.checked = true; });
+      updateFanpageSelectionUi();
+    });
+    modalEl.querySelector('#clearScheduleFanpages')?.addEventListener('click', () => {
+      fanpageCheckboxes.forEach(checkbox => { checkbox.checked = false; });
+      updateFanpageSelectionUi();
+    });
+    updateFanpageSelectionUi();
 
     bindScheduleMediaControls(modalEl);
   };
