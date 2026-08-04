@@ -846,8 +846,8 @@ const ContentPage = (() => {
             <button type="button" class="btn btn-secondary" id="uploadScheduleMediaBtn">Up ảnh</button>
             <input type="file" id="scheduleMediaFileInput" accept="image/*" multiple hidden>
           </div>
-          <div class="schedule-media-list" id="scheduleMediaList"></div>
-          <div class="form-hint">Facebook hỗ trợ URL ảnh/video hoặc ảnh upload. Instagram hiện cần URL ảnh công khai; file upload/base64 và video chưa được hỗ trợ.</div>
+          <div class="schedule-media-list" id="scheduleMediaList" aria-live="polite" aria-label="Danh sách media theo thứ tự đăng"></div>
+          <div class="form-hint">Kéo thả ảnh hoặc dùng nút trái/phải để đổi thứ tự. Facebook hỗ trợ URL ảnh/video hoặc ảnh upload. Instagram hiện cần URL ảnh công khai; file upload/base64 và video chưa được hỗ trợ.</div>
         </div>
       </div>
     `;
@@ -1513,30 +1513,94 @@ const ContentPage = (() => {
     const fileInput = modalEl.querySelector('#scheduleMediaFileInput');
     const list = modalEl.querySelector('#scheduleMediaList');
     let mediaItems = [];
+    let draggedIndex = null;
+
+    const moveMedia = (fromIndex, toIndex) => {
+      const reordered = MediaGallery.reorder(mediaItems, fromIndex, toIndex);
+      if (reordered.every((item, index) => item === mediaItems[index])) return;
+      mediaItems = reordered;
+      sync();
+    };
 
     const sync = () => {
       hiddenInput.value = JSON.stringify(mediaItems);
       list.innerHTML = mediaItems.length === 0 ? `
         <div class="schedule-media-empty">Chưa có media</div>
-      ` : mediaItems.map((item, index) => `
-        <div class="schedule-media-item">
-          <div class="schedule-media-thumb">
-            <img src="${Utils.escapeHtml(item.url)}" alt="${Utils.escapeHtml(item.name || 'Media')}" loading="lazy" onerror="this.parentElement.classList.add('is-broken'); this.remove();">
+      ` : mediaItems.map((item, index) => {
+        const isVideo = item.type === 'video';
+        const displayName = item.url.startsWith('data:')
+          ? (item.name || `Ảnh upload ${index + 1}`)
+          : MediaGallery.displayName(item.url);
+        const previewUrl = MediaGallery.previewUrl(item.url);
+        const mediaType = item.url.startsWith('data:') ? 'Ảnh upload' : (isVideo ? 'Video URL' : 'Ảnh URL');
+        return `
+          <div class="schedule-media-item" draggable="true" data-index="${index}" title="Kéo để đổi thứ tự">
+            <div class="schedule-media-order" aria-label="Ảnh thứ ${index + 1}">${index + 1}</div>
+            <div class="schedule-media-thumb ${isVideo ? 'is-video' : ''}">
+              ${isVideo
+                ? '<span>VIDEO</span>'
+                : `<img src="${Utils.escapeHtml(previewUrl)}" alt="Ảnh ${index + 1}: ${Utils.escapeHtml(displayName)}" loading="lazy" draggable="false" onerror="this.parentElement.classList.add('is-broken'); this.remove();">`}
+            </div>
+            <div class="schedule-media-info">
+              <div class="schedule-media-name" title="${Utils.escapeHtml(displayName)}">${Utils.escapeHtml(displayName)}</div>
+              <div class="schedule-media-type">${mediaType} · Vị trí ${index + 1}</div>
+              <div class="schedule-media-actions">
+                <button type="button" class="btn btn-icon btn-ghost btn-sm move-schedule-media-btn" data-index="${index}" data-to="${index - 1}" aria-label="Đưa ảnh ${index + 1} sang trước" ${index === 0 ? 'disabled' : ''}>
+                  ${Utils.icons.chevronLeft}
+                </button>
+                <button type="button" class="btn btn-icon btn-ghost btn-sm move-schedule-media-btn" data-index="${index}" data-to="${index + 1}" aria-label="Đưa ảnh ${index + 1} ra sau" ${index === mediaItems.length - 1 ? 'disabled' : ''}>
+                  ${Utils.icons.chevronRight}
+                </button>
+                <button type="button" class="btn btn-icon btn-ghost btn-sm remove-schedule-media-btn" data-index="${index}" aria-label="Xóa ảnh ${index + 1}">
+                  ${Utils.icons.close}
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="schedule-media-info">
-            <div class="schedule-media-name">${Utils.escapeHtml(item.name || item.url)}</div>
-            <div class="schedule-media-type">${item.url.startsWith('data:') ? 'Ảnh upload' : (item.type === 'video' ? 'Video URL' : 'Ảnh URL')}</div>
-          </div>
-          <button type="button" class="btn btn-icon btn-ghost btn-sm remove-schedule-media-btn" data-index="${index}">
-            ${Utils.icons.close}
-          </button>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
       list.querySelectorAll('.remove-schedule-media-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           mediaItems.splice(Number(btn.dataset.index), 1);
           sync();
+        });
+      });
+
+      list.querySelectorAll('.move-schedule-media-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          moveMedia(Number(btn.dataset.index), Number(btn.dataset.to));
+        });
+      });
+
+      list.querySelectorAll('.schedule-media-item').forEach(itemEl => {
+        itemEl.addEventListener('dragstart', (event) => {
+          draggedIndex = Number(itemEl.dataset.index);
+          itemEl.classList.add('is-dragging');
+          if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', String(draggedIndex));
+          }
+        });
+        itemEl.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          itemEl.classList.add('is-drag-over');
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        });
+        itemEl.addEventListener('dragleave', () => itemEl.classList.remove('is-drag-over'));
+        itemEl.addEventListener('drop', (event) => {
+          event.preventDefault();
+          const transferIndex = Number(event.dataTransfer?.getData('text/plain'));
+          const fromIndex = Number.isInteger(transferIndex) ? transferIndex : draggedIndex;
+          itemEl.classList.remove('is-drag-over');
+          moveMedia(fromIndex, Number(itemEl.dataset.index));
+          draggedIndex = null;
+        });
+        itemEl.addEventListener('dragend', () => {
+          draggedIndex = null;
+          list.querySelectorAll('.schedule-media-item').forEach(candidate => {
+            candidate.classList.remove('is-dragging', 'is-drag-over');
+          });
         });
       });
     };
@@ -1558,7 +1622,7 @@ const ContentPage = (() => {
         return;
       }
       const normalizedUrl = normalizeMediaUrl(url);
-      const name = url.split('/').pop() || 'Media URL';
+      const name = MediaGallery.displayName(url);
       addMedia({ type: inferMediaType(normalizedUrl, name), url: normalizedUrl, name });
       urlInput.value = '';
     });
