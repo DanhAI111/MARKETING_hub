@@ -168,6 +168,7 @@ const DashboardPage = (() => {
       </div>
     `;
 
+    bindDashboardImageFallbacks(container);
     requestAnimationFrame(() => {
       drawPerformanceChart(currentMonth, selectedRange);
       drawBudgetDonut(monthlyTarget, totalExpenses, adsSpend);
@@ -297,15 +298,38 @@ const DashboardPage = (() => {
     `;
   };
 
+  const dashboardImageFallbacks = [
+    'assets/mkt-hub-redesign/content-facebook.png',
+    'assets/mkt-hub-redesign/content-tiktok.png',
+    'assets/mkt-hub-redesign/event-workshop.png'
+  ];
+
   const getPostImage = (post, index) => {
-    const raw = String(post?.mediaUrl || '').trim();
-    if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)) return Utils.escapeHtml(raw);
-    const fallbacks = [
-      'assets/mkt-hub-redesign/content-facebook.png',
-      'assets/mkt-hub-redesign/content-tiktok.png',
-      'assets/mkt-hub-redesign/event-workshop.png'
-    ];
-    return fallbacks[index % fallbacks.length];
+    const mediaItems = Array.isArray(post?.mediaItems) ? post.mediaItems : [];
+    const firstImage = mediaItems.find(item => item && item.type !== 'video' && String(item.url || '').trim());
+    const raw = String(firstImage?.url || (mediaItems.length ? '' : post?.mediaUrl) || '').trim();
+    const fallback = dashboardImageFallbacks[index % dashboardImageFallbacks.length];
+    const preview = /^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)
+      ? MediaGallery.previewUrl(raw)
+      : fallback;
+    return {
+      src: Utils.escapeHtml(preview),
+      fallback: Utils.escapeHtml(fallback)
+    };
+  };
+
+  const bindDashboardImageFallbacks = (container) => {
+    container.querySelectorAll('img[data-dashboard-image-fallback]').forEach(image => {
+      const applyFallback = () => {
+        const fallback = image.dataset.dashboardImageFallback;
+        if (!fallback || image.dataset.fallbackApplied === '1') return;
+        image.dataset.fallbackApplied = '1';
+        image.classList.add('is-fallback');
+        image.src = fallback;
+      };
+      image.addEventListener('error', applyFallback, { once: true });
+      if (image.complete && image.naturalWidth === 0) applyFallback();
+    });
   };
 
   const getPostTime = (post) => {
@@ -331,10 +355,11 @@ const DashboardPage = (() => {
         ${sorted.map((post, index) => {
           const fanpage = Store.fanpages.getById(post.fanpageId);
           const platform = Utils.getPlatformInfo(fanpage?.platform);
+          const image = getPostImage(post, index);
           return `
             <button type="button" class="dashboard-schedule-row" data-post-id="${post.id}">
               <time>${getPostTime(post)}</time>
-              <img src="${getPostImage(post, index)}" alt="" loading="lazy">
+              <img class="dashboard-schedule-thumb" src="${image.src}" data-dashboard-image-fallback="${image.fallback}" alt="" loading="lazy">
               <span>
                 <strong>${Utils.escapeHtml(post.title || post.content || 'Bài đăng chưa đặt tiêu đề')}</strong>
                 <small>${Utils.escapeHtml(platform.name || 'Nội dung')} · ${post.status === 'failed' ? 'Cần xử lý' : 'Đã lên lịch'}</small>
@@ -351,9 +376,10 @@ const DashboardPage = (() => {
     const postRows = posts.slice(0, 2).map((post, index) => {
       const fanpage = Store.fanpages.getById(post.fanpageId);
       const platform = Utils.getPlatformInfo(fanpage?.platform);
+      const image = getPostImage(post, index);
       return `
         <div class="dashboard-approval-row" data-post-id="${post.id}">
-          <img src="${getPostImage(post, index)}" alt="" loading="lazy">
+          <img class="dashboard-approval-thumb" src="${image.src}" data-dashboard-image-fallback="${image.fallback}" alt="" loading="lazy">
           <span>
             <strong>${Utils.escapeHtml(post.title || post.content || 'Nội dung chờ duyệt')}</strong>
             <small>${Utils.escapeHtml(platform.name || 'Bài đăng')} · Chờ duyệt</small>
