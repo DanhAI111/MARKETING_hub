@@ -500,11 +500,15 @@ export class Repository {
       scheduledAt: post.scheduledAt !== undefined ? post.scheduledAt : (existing?.scheduledAt || null),
       publishedAt: post.publishedAt !== undefined ? post.publishedAt : (existing?.publishedAt || null),
       permalink: post.permalink || existing?.permalink || '',
-      mediaUrl: post.mediaUrl || existing?.mediaUrl || '',
+      // Never persist a base64 data: URI in mediaUrl — it duplicates the bytes already
+      // held in mediaItems and bloats every D1 row. mediaUrl is only a thumbnail fallback.
+      mediaUrl: /^data:/i.test(post.mediaUrl || existing?.mediaUrl || '')
+        ? ''
+        : (post.mediaUrl || existing?.mediaUrl || ''),
       mediaItems: JSON.stringify(post.mediaItems !== undefined ? post.mediaItems : (existing?.mediaItems || [])),
       publishError: post.publishError !== undefined ? post.publishError : (existing?.publishError || ''),
-      sheetUrl: post.sheetUrl !== undefined ? post.sheetUrl : (existing?.sheetUrl || null),
-      sheetRowKey: post.sheetRowKey !== undefined ? post.sheetRowKey : (existing?.sheetRowKey || null),
+      sheetUrl: (post.sheetUrl !== undefined ? post.sheetUrl : existing?.sheetUrl) || null,
+      sheetRowKey: (post.sheetRowKey !== undefined ? post.sheetRowKey : existing?.sheetRowKey) || null,
       sheetDefaultFanpageId: post.sheetDefaultFanpageId !== undefined
         ? post.sheetDefaultFanpageId
         : (existing?.sheetDefaultFanpageId || null),

@@ -959,11 +959,13 @@ const upsertPost = async (post = {}) => {
     scheduledAt: post.scheduledAt !== undefined ? post.scheduledAt : (existing?.scheduledAt || null),
     publishedAt: post.publishedAt !== undefined ? post.publishedAt : (existing?.publishedAt || null),
     permalink: post.permalink || existing?.permalink || '',
-    mediaUrl: post.mediaUrl || existing?.mediaUrl || '',
+    mediaUrl: /^data:/i.test(post.mediaUrl || existing?.mediaUrl || '')
+      ? ''
+      : (post.mediaUrl || existing?.mediaUrl || ''),
     mediaItems: JSON.stringify(post.mediaItems !== undefined ? post.mediaItems : (existing?.mediaItems || [])),
     publishError: post.publishError !== undefined ? post.publishError : (existing?.publishError || ''),
-    sheetUrl: post.sheetUrl !== undefined ? post.sheetUrl : (existing?.sheetUrl || null),
-    sheetRowKey: post.sheetRowKey !== undefined ? post.sheetRowKey : (existing?.sheetRowKey || null),
+    sheetUrl: (post.sheetUrl !== undefined ? post.sheetUrl : existing?.sheetUrl) || null,
+    sheetRowKey: (post.sheetRowKey !== undefined ? post.sheetRowKey : existing?.sheetRowKey) || null,
     sheetDefaultFanpageId: post.sheetDefaultFanpageId !== undefined
       ? post.sheetDefaultFanpageId
       : (existing?.sheetDefaultFanpageId || null),
