@@ -45,6 +45,98 @@ test('publishes a Facebook video without creating a second feed share', async ()
   }
 });
 
+test('safe test creates an unpublished Facebook post and validates its Instagram container', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const call = { url: String(url), options };
+    calls.push(call);
+    if (call.url.endsWith('/page-1/photos')) return jsonResponse({ id: 'photo-1' });
+    if (call.url.endsWith('/page-1/feed')) return jsonResponse({ id: 'fb-dark-1' });
+    if (call.url.endsWith('/ig-1/media')) return jsonResponse({ id: 'ig-container-1' });
+    if (call.url.endsWith('/ig-container-1')) {
+      return jsonResponse({ id: 'ig-container-1', status_code: 'FINISHED', status: 'Finished' });
+    }
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${call.url}` } }, 500);
+  };
+
+  try {
+    const saved = [];
+    const repo = {
+      decryptPageToken: async () => 'page-token',
+      getFanpage: async () => ({
+        id: 'fp-fb',
+        platform: 'facebook',
+        metaPageId: 'page-1',
+        connected: true,
+        crossPostInstagram: true
+      }),
+      getInstagramSiblingFanpage: async () => ({
+        id: 'fp-ig',
+        platform: 'instagram',
+        instagramBusinessId: 'ig-1',
+        connected: true
+      }),
+      setPostPublishState: async (id, updates) => saved.push({ id, updates })
+    };
+    const meta = new MetaService({}, repo, 'https://example.test');
+    const result = await meta.testScheduledPost({
+      id: 'post-test-1',
+      fanpageId: 'fp-fb',
+      content: 'Safe test',
+      mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }],
+      publishMode: 'safe_test'
+    });
+
+    const feedCall = calls.find((call) => call.url.endsWith('/page-1/feed'));
+    assert.equal(feedCall.options.body.get('published'), 'false');
+    assert.ok(calls.some((call) => call.url.endsWith('/ig-1/media')));
+    assert.ok(calls.some((call) => call.url.endsWith('/ig-container-1')));
+    assert.equal(calls.some((call) => call.url.endsWith('/ig-1/media_publish')), false);
+    assert.equal(result.source, 'facebook-test');
+    assert.equal(result.testResult.facebook.objectId, 'fb-dark-1');
+    assert.equal(result.testResult.facebook.visibility, 'unpublished');
+    assert.equal(result.testResult.instagram.containerId, 'ig-container-1');
+    assert.equal(result.testResult.instagram.statusCode, 'FINISHED');
+    assert.equal(saved[0].updates.testResult.facebook.objectId, 'fb-dark-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('safe Facebook video test never sets published=true', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return jsonResponse({ id: 'video-dark-1' });
+  };
+
+  try {
+    const meta = new MetaService({}, {
+      decryptPageToken: async () => 'page-token',
+      getFanpage: async () => ({
+        id: 'fp-fb', platform: 'facebook', metaPageId: 'page-1', connected: true, crossPostInstagram: false
+      })
+    }, 'https://example.test');
+
+    const result = await meta.testScheduledPost({
+      id: 'post-video-test',
+      fanpageId: 'fp-fb',
+      content: 'Safe video test',
+      mediaItems: [{ type: 'video', url: 'https://cdn.example.test/video.mp4' }],
+      publishMode: 'safe_test'
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/page-1\/videos$/);
+    assert.equal(calls[0].options.body.get('published'), 'false');
+    assert.equal(result.testResult.facebook.objectId, 'video-dark-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // Cross-post: a Facebook page with crossPostInstagram publishes to both FB and its
 // Instagram sibling (same metaPageId).
 const makeCrossPostFetch = (calls) => async (url, options = {}) => {
