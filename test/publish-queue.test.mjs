@@ -43,3 +43,23 @@ test('processWithConcurrency runs three posts at once and preserves result order
   assert.notDeepEqual(completed, [0, 1, 2, 3, 4]);
   assert.deepEqual(results, ['post-0', 'post-1', 'post-2', 'post-3', 'post-4']);
 });
+
+test('processWithConcurrency handles empty and iterable queues with a safe minimum limit', async () => {
+  const { processWithConcurrency } = require('../shared/publish-queue.cjs');
+  let calls = 0;
+  assert.deepEqual(await processWithConcurrency([], async () => calls++), []);
+  assert.equal(calls, 0);
+
+  let active = 0;
+  let maxActive = 0;
+  const results = await processWithConcurrency(new Set([1, 2, 3]), async value => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    active--;
+    return value * 2;
+  }, 'invalid');
+
+  assert.equal(maxActive, 1);
+  assert.deepEqual(results, [2, 4, 6]);
+});
