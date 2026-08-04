@@ -22,6 +22,11 @@ test('previewUrl turns supported Google Drive links into image thumbnail URLs', 
     MediaGallery.previewUrl('https://cdn.example.com/images/hero.jpg'),
     'https://cdn.example.com/images/hero.jpg'
   );
+  assert.equal(MediaGallery.previewUrl('không-phải-url'), 'không-phải-url');
+  assert.equal(
+    MediaGallery.previewUrl('https://drive.google.com/drive/my-drive'),
+    'https://drive.google.com/drive/my-drive'
+  );
 });
 
 test('displayName provides a useful label instead of exposing a Google Drive file id', () => {
@@ -37,6 +42,7 @@ test('displayName provides a useful label instead of exposing a Google Drive fil
     MediaGallery.displayName('https://picsum.photos/id/237/600/400'),
     'picsum.photos'
   );
+  assert.equal(MediaGallery.displayName('không-phải-url'), 'Ảnh URL');
 });
 
 test('reorder moves media without mutating the original array', () => {
@@ -53,6 +59,7 @@ test('reorder leaves the order unchanged for invalid or identical positions', ()
   assert.deepEqual(MediaGallery.reorder(original, -1, 1), original);
   assert.deepEqual(MediaGallery.reorder(original, 0, 5), original);
   assert.deepEqual(MediaGallery.reorder(original, 1, 1), original);
+  assert.deepEqual(MediaGallery.reorder(original, '0', 1), original);
 });
 
 test('schedule form loads an accessible draggable gallery with explicit reorder controls', () => {
