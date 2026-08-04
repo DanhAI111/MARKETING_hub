@@ -13,6 +13,7 @@ const { sendTaskNotification, sendDailyTaskSummaryIfDue } = require('./task-noti
 const googleSheetsModule = import('../shared/google-sheets.mjs');
 const sheetSyncModule = import('../shared/sheet-sync.mjs');
 const revenuePlannerModule = import('../shared/revenue-planner.mjs');
+const { normalizePostMutation } = require('../shared/repository-helpers.cjs');
 
 const app = express();
 assertSecurityConfig();
@@ -103,33 +104,49 @@ const runSync = async (options = {}) => {
   return syncInFlight;
 };
 
+const processClaimedPost = async (post) => {
+  const safeTest = post.publishMode === 'safe_test';
+  try {
+    const output = safeTest
+      ? await meta.testScheduledPost(post)
+      : await meta.publishScheduledPost(post);
+    const timestamp = new Date().toISOString();
+    const partialError = safeTest ? (output.crossPostError || '') : '';
+    const status = partialError ? 'failed' : (safeTest ? 'tested' : 'published');
+    const saved = await repo.setPostPublishState(post.id, {
+      ...output,
+      status,
+      source: output.source || post.source || (safeTest ? 'safe-test' : 'meta'),
+      date: timestamp.slice(0, 10),
+      ...(safeTest ? { testedAt: timestamp } : { publishedAt: timestamp }),
+      publishError: output.crossPostError || ''
+    });
+    return { id: post.id, status, post: saved, ...(partialError ? { error: partialError } : {}) };
+  } catch (err) {
+    const saved = await repo.setPostPublishState(post.id, {
+      status: 'failed',
+      publishError: err.message || (safeTest ? 'Không thể chạy đăng thử' : 'Không thể đăng bài tự động')
+    });
+    return { id: post.id, status: 'failed', error: err.message, post: saved };
+  }
+};
+
 const processScheduledPosts = async () => {
   if (publishInFlight) return { skipped: true };
   publishInFlight = true;
-  const result = { startedAt: new Date().toISOString(), published: 0, failed: 0, posts: [] };
+  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, posts: [] };
   try {
     const duePosts = await repo.claimDueScheduledPosts();
     for (const post of duePosts) {
-      try {
-        const published = await meta.publishScheduledPost(post);
-        await repo.setPostPublishState(post.id, {
-          ...published,
-          status: 'published',
-          source: published.source || post.source || 'meta',
-          date: new Date().toISOString().slice(0, 10),
-          publishedAt: new Date().toISOString(),
-          publishError: published.crossPostError || ''
-        });
-        result.published++;
-        result.posts.push({ id: post.id, status: 'published' });
-      } catch (err) {
-        await repo.setPostPublishState(post.id, {
-          status: 'failed',
-          publishError: err.message || 'Không thể đăng bài tự động'
-        });
-        result.failed++;
-        result.posts.push({ id: post.id, status: 'failed', error: err.message });
-      }
+      const processed = await processClaimedPost(post);
+      if (processed.status === 'published') result.published++;
+      else if (processed.status === 'tested') result.tested++;
+      else result.failed++;
+      result.posts.push({
+        id: processed.id,
+        status: processed.status,
+        ...(processed.error ? { error: processed.error } : {})
+      });
     }
     result.finishedAt = new Date().toISOString();
     await repo.saveState('lastPublishRun', result);
@@ -221,26 +238,40 @@ app.get('/api/posts', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/posts', asyncHandler(async (req, res) => {
-  const post = await repo.upsertPost(req.body || {});
+  const post = await repo.upsertPost(normalizePostMutation(req.body || {}));
   writeAudit(req, 'create', 'post', post.id, post);
-  if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
+  if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
     publishSoon();
   }
   res.status(201).json(post);
 }));
 
 app.put('/api/posts/:id', asyncHandler(async (req, res) => {
+  const latest = await repo.getPost(req.params.id);
   await assertExpectedVersion(
-    req.body?.expectedUpdatedAt ? await repo.getPost(req.params.id) : null,
+    latest,
     req.body?.expectedUpdatedAt
   );
   const { expectedUpdatedAt, ...updates } = req.body || {};
-  const post = await repo.upsertPost({ ...updates, id: req.params.id });
+  const post = await repo.upsertPost({ ...normalizePostMutation(updates, latest), id: req.params.id });
   writeAudit(req, 'update', 'post', post.id, post);
-  if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
+  if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
     publishSoon();
   }
   res.json(post);
+}));
+
+app.post('/api/posts/:id/run-test', asyncHandler(async (req, res) => {
+  const post = await repo.claimSafeTestPost(req.params.id);
+  if (!post) {
+    const latest = await repo.getPost(req.params.id);
+    if (!latest) return res.status(404).json({ error: 'Không tìm thấy bài đăng thử.' });
+    if (latest.publishMode !== 'safe_test') return res.status(400).json({ error: 'Bài này không ở chế độ đăng thử.' });
+    return res.status(409).json({ error: 'Bài đăng thử đang được xử lý hoặc đã hoàn tất.', latest });
+  }
+  const processed = await processClaimedPost(post);
+  writeAudit(req, 'run-test', 'post', post.id, { status: processed.status });
+  return res.status(processed.status === 'failed' ? 422 : 200).json(processed);
 }));
 
 app.delete('/api/posts/:id', asyncHandler(async (req, res) => {

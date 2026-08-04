@@ -4,6 +4,7 @@ const {
   APP_COLLECTIONS: SHARED_APP_COLLECTIONS,
   APP_SINGLETONS,
   APPROVAL_STATUSES,
+  PUBLISH_MODES,
   now,
   parseJson,
   fanpageFromRow,
@@ -96,6 +97,9 @@ const initPostgres = async () => {
       "campaignId" TEXT,
       engagement TEXT,
       "approvalStatus" TEXT NOT NULL DEFAULT 'approved',
+      "publishMode" TEXT NOT NULL DEFAULT 'live',
+      "testedAt" TEXT,
+      "testResult" TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
       status TEXT NOT NULL DEFAULT 'published',
       "deletedAt" TEXT,
@@ -114,6 +118,9 @@ const initPostgres = async () => {
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "campaignId" TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS engagement TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "approvalStatus" TEXT NOT NULL DEFAULT 'approved';
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "publishMode" TEXT NOT NULL DEFAULT 'live';
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "testedAt" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "testResult" TEXT;
     ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
     ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "crossPostInstagram" BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -128,6 +135,9 @@ const initPostgres = async () => {
     CREATE INDEX IF NOT EXISTS idx_posts_approval_queue
       ON posts(status, "approvalStatus", "scheduledAt")
       WHERE status = 'scheduled';
+
+    CREATE INDEX IF NOT EXISTS idx_posts_publish_mode
+      ON posts("publishMode", status, "scheduledAt");
 
     CREATE TABLE IF NOT EXISTS sync_state (
       key TEXT PRIMARY KEY,
@@ -210,7 +220,7 @@ const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 
       const rows = await pgQuery(`
         SELECT * FROM posts
         WHERE ("deletedAt" IS NULL OR "deletedAt" = '')
-          AND status != 'published'
+          AND status NOT IN ('published', 'tested')
         ORDER BY "scheduledAt" ASC, "updatedAt" DESC
         LIMIT $1 OFFSET $2
       `, [normalizedLimit, normalizedOffset]);
@@ -219,7 +229,7 @@ const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 
     return getSqlite().prepare(`
       SELECT * FROM posts
       WHERE (deletedAt IS NULL OR deletedAt = '')
-        AND status != 'published'
+        AND status NOT IN ('published', 'tested')
       ORDER BY scheduledAt ASC, updatedAt DESC
       LIMIT ? OFFSET ?
     `).all(normalizedLimit, normalizedOffset).map(postFromRow);
@@ -342,6 +352,37 @@ const claimDueScheduledPosts = async (limit = 10) => {
     )
     RETURNING *
   `).all(timestamp, timestamp, limit).map(postFromRow);
+};
+
+const claimSafeTestPost = async (postId) => {
+  const timestamp = now();
+  if (usePostgres) {
+    const rows = await pgQuery(`
+      UPDATE posts
+      SET status = 'publishing',
+          "publishError" = '',
+          "updatedAt" = $1
+      WHERE id = $2
+        AND "publishMode" = 'safe_test'
+        AND "approvalStatus" = 'approved'
+        AND status IN ('scheduled', 'failed')
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
+      RETURNING *
+    `, [timestamp, postId]);
+    return postFromRow(rows[0]);
+  }
+  return postFromRow(getSqlite().prepare(`
+    UPDATE posts
+    SET status = 'publishing',
+        publishError = '',
+        updatedAt = ?
+    WHERE id = ?
+      AND publishMode = 'safe_test'
+      AND approvalStatus = 'approved'
+      AND status IN ('scheduled', 'failed')
+      AND (deletedAt IS NULL OR deletedAt = '')
+    RETURNING *
+  `).get(timestamp, postId));
 };
 
 const getFanpage = async (fanpageId) => {
@@ -904,6 +945,11 @@ const upsertPost = async (post = {}) => {
     approvalStatus: APPROVAL_STATUSES.has(post.approvalStatus)
       ? post.approvalStatus
       : (existing?.approvalStatus || 'approved'),
+    publishMode: PUBLISH_MODES.has(post.publishMode)
+      ? post.publishMode
+      : (existing?.publishMode || 'live'),
+    testedAt: post.testedAt !== undefined ? (post.testedAt || null) : (existing?.testedAt || null),
+    testResult: JSON.stringify(post.testResult !== undefined ? post.testResult : (existing?.testResult || null)),
     source: post.source || existing?.source || 'manual',
     status: post.status || existing?.status || 'published',
     deletedAt: post.deletedAt !== undefined
@@ -928,10 +974,10 @@ const upsertPost = async (post = {}) => {
       INSERT INTO posts (
         id, "fanpageId", "externalPostId", title, content, date, "scheduledAt", "publishedAt", permalink, "mediaUrl",
         "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", "campaignId", engagement, "approvalStatus",
-        source, status, "deletedAt", "createdAt", "updatedAt"
+        "publishMode", "testedAt", "testResult", source, status, "deletedAt", "createdAt", "updatedAt"
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
       )
       ON CONFLICT(id) DO UPDATE SET
         "fanpageId" = EXCLUDED."fanpageId",
@@ -951,6 +997,9 @@ const upsertPost = async (post = {}) => {
         "campaignId" = EXCLUDED."campaignId",
         engagement = EXCLUDED.engagement,
         "approvalStatus" = EXCLUDED."approvalStatus",
+        "publishMode" = EXCLUDED."publishMode",
+        "testedAt" = EXCLUDED."testedAt",
+        "testResult" = EXCLUDED."testResult",
         source = EXCLUDED.source,
         status = EXCLUDED.status,
         "deletedAt" = EXCLUDED."deletedAt",
@@ -959,6 +1008,7 @@ const upsertPost = async (post = {}) => {
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date, data.scheduledAt,
       data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems, data.publishError,
       data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId, data.campaignId, data.engagement, data.approvalStatus,
+      data.publishMode, data.testedAt, data.testResult,
       data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ]);
     return pruneDuplicatePublishedPosts(postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]));
@@ -968,11 +1018,11 @@ const upsertPost = async (post = {}) => {
     INSERT INTO posts (
       id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
       mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, campaignId, engagement, approvalStatus,
-      source, status, deletedAt, createdAt, updatedAt
+      publishMode, testedAt, testResult, source, status, deletedAt, createdAt, updatedAt
     ) VALUES (
       @id, @fanpageId, @externalPostId, @title, @content, @date, @scheduledAt, @publishedAt, @permalink, @mediaUrl,
       @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @campaignId, @engagement, @approvalStatus,
-      @source, @status, @deletedAt, @createdAt, @updatedAt
+      @publishMode, @testedAt, @testResult, @source, @status, @deletedAt, @createdAt, @updatedAt
     )
     ON CONFLICT(source, externalPostId) WHERE externalPostId IS NOT NULL DO UPDATE SET
       fanpageId = excluded.fanpageId,
@@ -991,6 +1041,9 @@ const upsertPost = async (post = {}) => {
       campaignId = excluded.campaignId,
       engagement = excluded.engagement,
       approvalStatus = excluded.approvalStatus,
+      publishMode = excluded.publishMode,
+      testedAt = excluded.testedAt,
+      testResult = excluded.testResult,
       status = excluded.status,
       deletedAt = excluded.deletedAt,
       updatedAt = excluded.updatedAt
@@ -1012,6 +1065,9 @@ const upsertPost = async (post = {}) => {
       campaignId = excluded.campaignId,
       engagement = excluded.engagement,
       approvalStatus = excluded.approvalStatus,
+      publishMode = excluded.publishMode,
+      testedAt = excluded.testedAt,
+      testResult = excluded.testResult,
       source = excluded.source,
       status = excluded.status,
       deletedAt = excluded.deletedAt,
@@ -1190,6 +1246,7 @@ module.exports = {
   listDueScheduledPosts,
   getPost,
   claimDueScheduledPosts,
+  claimSafeTestPost,
   getFanpage,
   getInstagramSiblingFanpage,
   getConnectedFanpages,

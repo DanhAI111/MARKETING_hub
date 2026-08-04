@@ -11,7 +11,7 @@ const ScheduledPage = (() => {
   let selectedApproval = '';
 
   // Scheduled queue excludes 'published' — those leave the queue.
-  const { published, ...STATUS_META } = Utils.POST_STATUSES;
+  const { published, tested, ...STATUS_META } = Utils.POST_STATUSES;
   const getStatusMeta = (status) => STATUS_META[status] || STATUS_META.scheduled;
 
   const formatScheduleTime = (value) => Utils.formatDateTime(value, { withYear: true });
@@ -303,10 +303,12 @@ const ScheduledPage = (() => {
     container.querySelectorAll('.retry-scheduled-post-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const postId = btn.dataset.id;
+        const post = Store.posts.getById(postId);
         if (window.RemoteStore?.available) {
           try {
             await RemoteStore.updatePost(postId, { status: 'scheduled', publishError: '' });
-            await RemoteStore.publishDue();
+            if (post?.publishMode === 'safe_test') await RemoteStore.runPostTest(postId);
+            else await RemoteStore.publishDue();
             Toast.success('Đã thử đăng lại');
           } catch (err) {
             Toast.error(err.message || 'Không thể thử đăng lại');
@@ -323,7 +325,11 @@ const ScheduledPage = (() => {
     const updateApproval = async (postId, approvalStatus) => {
       if (window.RemoteStore?.available) {
         await RemoteStore.updatePost(postId, { approvalStatus });
-        if (approvalStatus === 'approved') await RemoteStore.publishDue();
+        if (approvalStatus === 'approved') {
+          const post = Store.posts.getById(postId);
+          if (post?.publishMode === 'safe_test') await RemoteStore.runPostTest(postId);
+          else await RemoteStore.publishDue();
+        }
         else await RemoteStore.loadPending();
       } else {
         Store.posts.update(postId, { approvalStatus });

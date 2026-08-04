@@ -112,6 +112,8 @@ On first login, the frontend imports existing MKT_Hub data from browser `localSt
 
 ## Meta Publishing Notes
 
+- Manual schedules support **Đăng thử — không công khai**. Facebook creates an unpublished Page post; paired Instagram accounts create and validate a media container without calling `media_publish`.
+- Safe-test rows use their own terminal `tested` state and are excluded from published KPIs and the live pending queue. A failed Instagram validation can be retried without re-creating the Facebook dark post.
 - Facebook supports text, public image URLs, and uploaded base64 images stored with a scheduled post.
 - Inline uploads are limited to 1MB per fanpage image or 1MB total per scheduled post to stay within D1's row-size limit. Public image URLs do not use that inline storage.
 - Instagram Graph publishing requires a public image URL.

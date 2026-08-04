@@ -7,6 +7,7 @@ import { computePlan, validateInputs } from '../shared/revenue-planner.mjs';
 import { suggestAllocation } from '../shared/ai-allocation.mjs';
 import { syncScheduleSheets } from '../shared/sheet-sync.mjs';
 import { fetchGoogleSheetCsvText } from '../shared/google-sheets.mjs';
+import { normalizePostMutation } from '../shared/repository-helpers.cjs';
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status,
@@ -83,30 +84,46 @@ const syncLinkedScheduleSheets = async (repo, options = {}) => syncScheduleSheet
   }
 });
 
+const processClaimedPost = async (repo, meta, post) => {
+  const safeTest = post.publishMode === 'safe_test';
+  try {
+    const output = safeTest
+      ? await meta.testScheduledPost(post)
+      : await meta.publishScheduledPost(post);
+    const timestamp = new Date().toISOString();
+    const partialError = safeTest ? (output.crossPostError || '') : '';
+    const status = partialError ? 'failed' : (safeTest ? 'tested' : 'published');
+    const saved = await repo.setPostPublishState(post.id, {
+      ...output,
+      status,
+      source: output.source || post.source || (safeTest ? 'safe-test' : 'meta'),
+      date: timestamp.slice(0, 10),
+      ...(safeTest ? { testedAt: timestamp } : { publishedAt: timestamp }),
+      publishError: output.crossPostError || ''
+    });
+    return { id: post.id, status, post: saved, ...(partialError ? { error: partialError } : {}) };
+  } catch (error) {
+    const saved = await repo.setPostPublishState(post.id, {
+      status: 'failed',
+      publishError: error.message || (safeTest ? 'Không thể chạy đăng thử' : 'Không thể đăng bài tự động')
+    });
+    return { id: post.id, status: 'failed', error: error.message, post: saved };
+  }
+};
+
 const processScheduledPosts = async (repo, meta) => {
-  const result = { startedAt: new Date().toISOString(), published: 0, failed: 0, posts: [] };
+  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, posts: [] };
   const duePosts = await repo.claimDueScheduledPosts();
   for (const post of duePosts) {
-    try {
-      const published = await meta.publishScheduledPost(post);
-      await repo.setPostPublishState(post.id, {
-        ...published,
-        status: 'published',
-        source: published.source || post.source || 'meta',
-        date: new Date().toISOString().slice(0, 10),
-        publishedAt: new Date().toISOString(),
-        publishError: published.crossPostError || ''
-      });
-      result.published++;
-      result.posts.push({ id: post.id, status: 'published' });
-    } catch (error) {
-      await repo.setPostPublishState(post.id, {
-        status: 'failed',
-        publishError: error.message || 'Không thể đăng bài tự động'
-      });
-      result.failed++;
-      result.posts.push({ id: post.id, status: 'failed', error: error.message });
-    }
+    const processed = await processClaimedPost(repo, meta, post);
+    if (processed.status === 'published') result.published++;
+    else if (processed.status === 'tested') result.tested++;
+    else result.failed++;
+    result.posts.push({
+      id: processed.id,
+      status: processed.status,
+      ...(processed.error ? { error: processed.error } : {})
+    });
   }
   result.finishedAt = new Date().toISOString();
   await repo.saveState('lastPublishRun', result);
@@ -229,9 +246,9 @@ const handleRequest = async (request, env, context) => {
     return json(await repo.listPosts({ month, pending, limit, offset }));
   }
   if (method === 'POST' && pathname === '/api/posts') {
-    const post = await repo.upsertPost(await parseJsonBody(request));
+    const post = await repo.upsertPost(normalizePostMutation(await parseJsonBody(request)));
     audit('create', 'post', post.id, post);
-    if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
+    if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
       context.waitUntil(processScheduledPosts(repo, meta));
     }
     return json(post, 201);
@@ -241,12 +258,12 @@ const handleRequest = async (request, env, context) => {
   if (match && method === 'PUT') {
     const body = await parseJsonBody(request);
     const postId = decodeURIComponent(match[1]);
-    const latest = body.expectedUpdatedAt ? await repo.getPost(postId) : null;
+    const latest = await repo.getPost(postId);
     if (!versionMatches(latest, body.expectedUpdatedAt)) return conflict(latest);
     const { expectedUpdatedAt, ...updates } = body;
-    const post = await repo.upsertPost({ ...updates, id: postId });
+    const post = await repo.upsertPost({ ...normalizePostMutation(updates, latest), id: postId });
     audit('update', 'post', post.id, post);
-    if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
+    if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
       context.waitUntil(processScheduledPosts(repo, meta));
     }
     return json(post);
@@ -256,6 +273,21 @@ const handleRequest = async (request, env, context) => {
     await repo.deletePost(postId);
     audit('delete', 'post', postId);
     return noContent();
+  }
+
+  match = pathname.match(/^\/api\/posts\/([^/]+)\/run-test$/);
+  if (match && method === 'POST') {
+    const postId = decodeURIComponent(match[1]);
+    const post = await repo.claimSafeTestPost(postId);
+    if (!post) {
+      const latest = await repo.getPost(postId);
+      if (!latest) return json({ error: 'Không tìm thấy bài đăng thử.' }, 404);
+      if (latest.publishMode !== 'safe_test') return json({ error: 'Bài này không ở chế độ đăng thử.' }, 400);
+      return json({ error: 'Bài đăng thử đang được xử lý hoặc đã hoàn tất.', latest }, 409);
+    }
+    const processed = await processClaimedPost(repo, meta, post);
+    audit('run-test', 'post', post.id, { status: processed.status });
+    return json(processed, processed.status === 'failed' ? 422 : 200);
   }
 
   if (method === 'POST' && pathname === '/api/marketing-plans/compute') {

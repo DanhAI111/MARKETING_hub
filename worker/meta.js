@@ -121,17 +121,17 @@ export class MetaService {
     return this.graphPost(`${pageId}/photos`, params);
   }
 
-  async addFacebookVideo({ pageId, token, media, description = '' }) {
+  async addFacebookVideo({ pageId, token, media, description = '', published = true }) {
     if (!/^https?:\/\//i.test(media.url)) throw new Error('Facebook video yêu cầu URL tải công khai.');
     return this.graphPost(`${pageId}/videos`, {
       access_token: token,
       file_url: media.url,
       description,
-      published: 'true'
+      published: String(published)
     });
   }
 
-  async publishFacebookPost(fanpage, post) {
+  async publishFacebookPost(fanpage, post, { published = true } = {}) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.metaPageId) {
       throw new Error('Fanpage Facebook chưa có Page access token. Vui lòng liên kết Meta lại.');
@@ -139,7 +139,11 @@ export class MetaService {
     const message = getPostMessage(post);
     const mediaItems = await resolveMediaItems(post);
     if (!mediaItems.length) {
-      const result = await this.graphPost(`${fanpage.metaPageId}/feed`, { access_token: token, message });
+      const result = await this.graphPost(`${fanpage.metaPageId}/feed`, {
+        access_token: token,
+        message,
+        ...(published ? {} : { published: 'false' })
+      });
       return {
         externalPostId: result.id || '',
         permalink: result.id ? `https://www.facebook.com/${result.id}` : '',
@@ -152,7 +156,8 @@ export class MetaService {
           pageId: fanpage.metaPageId,
           token,
           media: mediaItems[0],
-          description: message
+          description: message,
+          published
         });
         return {
           externalPostId: result.id || '',
@@ -171,6 +176,7 @@ export class MetaService {
       const feedResult = await this.graphPost(`${fanpage.metaPageId}/feed`, {
         access_token: token,
         message,
+        ...(published ? {} : { published: 'false' }),
         attached_media: JSON.stringify([{ media_fbid: result.id }])
       });
       return {
@@ -197,6 +203,7 @@ export class MetaService {
     const result = await this.graphPost(`${fanpage.metaPageId}/feed`, {
       access_token: token,
       message,
+      ...(published ? {} : { published: 'false' }),
       attached_media: JSON.stringify(uploaded)
     });
     return {
@@ -242,6 +249,118 @@ export class MetaService {
         ? `Instagram: chỉ đăng ảnh đầu (${mediaItems.length} ảnh, chưa hỗ trợ carousel)`
         : ''
     };
+  }
+
+  async testInstagramPost(fanpage, post) {
+    const token = await this.repo.decryptPageToken(fanpage);
+    if (!token || !fanpage.instagramBusinessId) {
+      throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
+    }
+    const mediaItems = getMediaItems(post);
+    const media = (await resolveMediaItem(mediaItems[0]))[0];
+    if (!media?.url) throw new Error('Instagram yêu cầu ít nhất một ảnh có URL công khai để kiểm tra.');
+    if (!/^https?:\/\//i.test(media.url)) {
+      throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
+    }
+    if (media.type === 'video') {
+      throw new Error('Kiểm tra Instagram hiện chỉ hỗ trợ ảnh; chưa hỗ trợ video/Reels.');
+    }
+
+    const container = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+      access_token: token,
+      image_url: media.url,
+      caption: getPostMessage(post)
+    });
+    if (!container.id) throw new Error('Meta không trả về Instagram container ID.');
+
+    let details = {};
+    for (let attempt = 0; attempt < 4; attempt++) {
+      details = await this.graphGet(container.id, {
+        access_token: token,
+        fields: 'id,status_code,status'
+      });
+      const statusCode = String(details.status_code || '').toUpperCase();
+      if (!['IN_PROGRESS', ''].includes(statusCode)) break;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    const statusCode = String(details.status_code || 'CREATED').toUpperCase();
+    if (['ERROR', 'EXPIRED'].includes(statusCode)) {
+      throw new Error(details.status || `Instagram container ${statusCode.toLowerCase()}.`);
+    }
+    if (statusCode !== 'FINISHED') {
+      throw new Error(`Instagram chưa xác nhận media hợp lệ (trạng thái ${statusCode}). Hãy thử lại sau.`);
+    }
+    return {
+      containerId: container.id,
+      statusCode,
+      status: details.status || '',
+      mediaUrl: media.url
+    };
+  }
+
+  async testScheduledPost(post) {
+    const fanpage = await this.repo.getFanpage(post.fanpageId);
+    if (!fanpage) throw new Error('Không tìm thấy fanpage để kiểm tra đăng bài.');
+    if (!fanpage.connected) throw new Error('Fanpage chưa liên kết Meta.');
+
+    const completedAt = new Date().toISOString();
+    if (fanpage.platform === 'facebook') {
+      const fbResult = post.externalPostId
+        ? { externalPostId: post.externalPostId, permalink: post.permalink || '', mediaUrl: post.mediaUrl || '' }
+        : await this.publishFacebookPost(fanpage, post, { published: false });
+      const testResult = {
+        facebook: {
+          status: 'completed',
+          visibility: 'unpublished',
+          objectId: fbResult.externalPostId,
+          permalink: fbResult.permalink || ''
+        },
+        completedAt
+      };
+
+      if (!post.externalPostId && this.repo.setPostPublishState) {
+        await this.repo.setPostPublishState(post.id, {
+          ...fbResult,
+          source: 'facebook-test',
+          testResult
+        });
+      }
+
+      let crossPostError = '';
+      if (fanpage.crossPostInstagram) {
+        const igPage = await this.repo.getInstagramSiblingFanpage(fanpage.metaPageId);
+        if (!igPage) {
+          crossPostError = 'Instagram: chưa có tài khoản IG liên kết để kiểm tra';
+          testResult.instagram = { status: 'skipped', error: crossPostError };
+        } else {
+          try {
+            const igResult = await this.testInstagramPost(igPage, post);
+            testResult.instagram = { status: 'completed', mode: 'container_only', ...igResult };
+          } catch (error) {
+            crossPostError = `Instagram: ${error.message}`;
+            testResult.instagram = { status: 'failed', error: crossPostError };
+          }
+        }
+      } else {
+        testResult.instagram = { status: 'skipped', error: 'Instagram cross-post đang tắt.' };
+      }
+      return { ...fbResult, source: 'facebook-test', testResult, crossPostError };
+    }
+
+    if (fanpage.platform === 'instagram') {
+      const igResult = await this.testInstagramPost(fanpage, post);
+      return {
+        externalPostId: igResult.containerId,
+        permalink: '',
+        mediaUrl: igResult.mediaUrl,
+        source: 'instagram-test',
+        testResult: {
+          instagram: { status: 'completed', mode: 'container_only', ...igResult },
+          completedAt
+        }
+      };
+    }
+    throw new Error(`Chưa hỗ trợ đăng thử cho nền tảng ${fanpage.platform}.`);
   }
 
   async publishScheduledPost(post) {

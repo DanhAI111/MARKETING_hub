@@ -148,6 +148,8 @@ const Modal = (() => {
       const field = el.dataset.field;
       if (el.type === 'checkbox') {
         data[field] = el.checked;
+      } else if (el.type === 'radio') {
+        if (el.checked) data[field] = el.value;
       } else {
         data[field] = el.value;
       }

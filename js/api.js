@@ -204,6 +204,28 @@ const RemoteStore = (() => {
     return result;
   };
 
+  const createPost = async (post) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    const saved = await request('/api/posts', {
+      method: 'POST',
+      body: JSON.stringify(post || {})
+    });
+    await loadPending().catch(() => {});
+    return saved;
+  };
+
+  const runPostTest = async (id) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    const result = await request(`/api/posts/${encodeURIComponent(id)}/run-test`, {
+      method: 'POST',
+      body: '{}',
+      timeout: 30000
+    });
+    await loadPosts(window.Utils?.getReportingMonth?.() || '');
+    await loadPending().catch(() => {});
+    return result;
+  };
+
   const loadPosts = async (month = '', { limit = 500, offset = 0 } = {}) => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
     const params = new URLSearchParams();
@@ -287,6 +309,8 @@ const RemoteStore = (() => {
     logout,
     syncNow,
     publishDue,
+    createPost,
+    runPostTest,
     loadPosts,
     loadPending,
     syncSheetSchedules,

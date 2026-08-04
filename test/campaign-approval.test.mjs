@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import Database from 'better-sqlite3';
 
+const { normalizePostMutation } = createRequire(import.meta.url)('../shared/repository-helpers.cjs');
+
 const createRepositorySchema = (db) => db.exec(`
   CREATE TABLE posts (
     id TEXT PRIMARY KEY,
@@ -25,6 +27,9 @@ const createRepositorySchema = (db) => db.exec(`
     campaignId TEXT,
     engagement TEXT,
     approvalStatus TEXT NOT NULL DEFAULT 'approved',
+    publishMode TEXT NOT NULL DEFAULT 'live',
+    testedAt TEXT,
+    testResult TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     status TEXT NOT NULL DEFAULT 'published',
     deletedAt TEXT,
@@ -92,6 +97,20 @@ const scheduledPost = (id, approvalStatus) => ({
   approvalStatus
 });
 
+test('safe test mutations cannot be promoted to live or marked published by an API payload', () => {
+  assert.deepEqual(
+    normalizePostMutation({ publishMode: 'safe_test', status: 'published', approvalStatus: 'pending' }),
+    { publishMode: 'safe_test', status: 'scheduled', approvalStatus: 'approved' }
+  );
+  assert.deepEqual(
+    normalizePostMutation(
+      { publishMode: 'live', status: 'scheduled' },
+      { publishMode: 'safe_test', status: 'failed' }
+    ),
+    { publishMode: 'safe_test', status: 'scheduled', approvalStatus: 'approved' }
+  );
+});
+
 test('claimDueScheduledPosts publishes only approved posts', async () => {
   await withSqliteRepository(async (repo) => {
     await repo.upsertPost(scheduledPost('approved-post', 'approved'));
@@ -103,6 +122,31 @@ test('claimDueScheduledPosts publishes only approved posts', async () => {
     assert.deepEqual(claimed.map((post) => post.id), ['approved-post']);
     assert.equal((await repo.getPost('pending-post')).status, 'scheduled');
     assert.equal((await repo.getPost('rejected-post')).status, 'scheduled');
+  });
+});
+
+test('safe test posts persist their mode, claim individually, and leave the pending queue when tested', async () => {
+  await withSqliteRepository(async (repo) => {
+    const saved = await repo.upsertPost({
+      ...scheduledPost('safe-post', 'approved'),
+      publishMode: 'safe_test'
+    });
+    assert.equal(saved.publishMode, 'safe_test');
+
+    const claimed = await repo.claimSafeTestPost('safe-post');
+    assert.equal(claimed.status, 'publishing');
+    assert.equal(claimed.publishMode, 'safe_test');
+    assert.equal(await repo.claimSafeTestPost('safe-post'), undefined);
+
+    await repo.setPostPublishState('safe-post', {
+      status: 'tested',
+      testedAt: '2026-08-04T03:00:00.000Z',
+      testResult: { facebook: { visibility: 'unpublished' } }
+    });
+    const completed = await repo.getPost('safe-post');
+    assert.equal(completed.status, 'tested');
+    assert.equal(completed.testResult.facebook.visibility, 'unpublished');
+    assert.deepEqual(await repo.listPosts({ pending: true }), []);
   });
 });
 

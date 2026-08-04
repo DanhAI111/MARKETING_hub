@@ -54,6 +54,7 @@ const ContentPage = (() => {
     let totalKpi = 0;
     let totalScheduled = 0;
     let totalFailed = 0;
+    let totalTested = 0;
     const publishedCounts = new Map();
     allPosts.forEach(post => {
       const date = post.status === 'published' ? post.date : (post.scheduledAt || post.date);
@@ -62,6 +63,8 @@ const ContentPage = (() => {
         publishedCounts.set(post.fanpageId, (publishedCounts.get(post.fanpageId) || 0) + 1);
       } else if (post.status === 'failed') {
         totalFailed++;
+      } else if (post.status === 'tested') {
+        totalTested++;
       } else {
         totalScheduled++;
       }
@@ -151,6 +154,7 @@ const ContentPage = (() => {
 
           <div class="queue-status-strip">
             <span><i class="queue-dot published"></i>${totalPosted} đã đăng</span>
+            <span><i class="queue-dot tested"></i>${totalTested} đã test</span>
             <span><i class="queue-dot scheduled"></i>${totalScheduled} chờ đăng</span>
             <span><i class="queue-dot failed"></i>${totalFailed} lỗi</span>
           </div>
@@ -168,7 +172,7 @@ const ContentPage = (() => {
                   <div class="content-master-body">
                     <div class="content-master-meta">
                       <span>${Utils.escapeHtml(fanpage?.name || 'Không rõ kênh')}</span>
-                      <span>${post.status === 'published' ? Utils.formatDateShort(post.date) : formatScheduleTime(post.scheduledAt)}</span>
+                      <span>${post.status === 'published' ? Utils.formatDateShort(post.date) : formatScheduleTime(post.testedAt || post.scheduledAt)}</span>
                     </div>
                     ${renderPostItem(post)}
                   </div>
@@ -290,16 +294,20 @@ const ContentPage = (() => {
     const status = getPostStatus(post.status);
     const displayTime = post.status === 'published'
       ? (post.date ? `${post.date.split('-')[2]}/${post.date.split('-')[1]}` : '')
-      : formatScheduleTime(post.scheduledAt);
+      : formatScheduleTime(post.testedAt || post.scheduledAt);
     const mediaCount = Array.isArray(post.mediaItems) && post.mediaItems.length
       ? post.mediaItems.length
       : (post.mediaUrl ? 1 : 0);
     const thumbnailUrl = getPostThumbnail(post);
-    const permalink = post.status === 'published' ? (post.permalink || '') : '';
+    const permalink = ['published', 'tested'].includes(post.status) ? (post.permalink || '') : '';
     const linkable = /^https?:\/\//i.test(permalink);
     const eng = post.engagement;
     const engHtml = eng && (eng.likes || eng.comments || eng.shares)
       ? `<span class="post-engagement" title="Tương tác tự nhiên">Thích ${Utils.formatNumberCompact(eng.likes || 0)} · Bình luận ${Utils.formatNumberCompact(eng.comments || 0)}${eng.shares ? ` · Chia sẻ ${Utils.formatNumberCompact(eng.shares)}` : ''}</span>`
+      : '';
+    const instagramTest = post.testResult?.instagram;
+    const testSummary = post.status === 'tested'
+      ? `<span class="post-test-summary">Facebook: ẩn · Instagram: ${instagramTest?.status === 'completed' ? 'media hợp lệ' : 'không chạy'}</span>`
       : '';
     return `
       <div class="post-item ${thumbnailUrl ? 'has-thumbnail' : ''} ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
@@ -312,6 +320,7 @@ const ContentPage = (() => {
         <span class="post-date">${displayTime}</span>
         <span class="post-title-text" title="${Utils.escapeHtml(linkable ? 'Mở bài trên Facebook' : (post.publishError || post.content || post.title))}">${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</span>
         ${engHtml}
+        ${testSummary}
         ${mediaCount ? `<span class="post-media-count">${Utils.icons.image || ''}${mediaCount}</span>` : ''}
         <span class="tag ${status.className} post-status-tag">${status.label}</span>
         ${post.status === 'failed' ? `
@@ -510,7 +519,8 @@ const ContentPage = (() => {
           try {
             Toast.info('Đang thử đăng lại bài đã lên lịch...');
             await RemoteStore.updatePost(postId, { status: 'scheduled', publishError: '' });
-            await RemoteStore.publishDue();
+            if (post.publishMode === 'safe_test') await RemoteStore.runPostTest(postId);
+            else await RemoteStore.publishDue();
             Toast.success('Đã xử lý hàng đợi đăng bài');
           } catch (err) {
             Toast.error(err.message || 'Không thể thử đăng lại');
@@ -781,6 +791,20 @@ const ContentPage = (() => {
         <label class="form-label">Nội dung bài đăng <span style="color:var(--danger-400);">*</span></label>
         <textarea class="form-textarea schedule-content-input" data-field="content" rows="6" placeholder="Nhập nội dung sẽ đăng lên fanpage"></textarea>
       </div>
+      <div class="form-group">
+        <label class="form-label">Chế độ đăng</label>
+        <div class="publish-mode-selector" role="radiogroup" aria-label="Chế độ đăng bài">
+          <label class="publish-mode-option is-selected">
+            <input type="radio" name="publishMode" data-field="publishMode" value="live" checked>
+            <span><strong>Đăng thật</strong><small>Xuất bản công khai khi đến giờ.</small></span>
+          </label>
+          <label class="publish-mode-option publish-mode-option-test">
+            <input type="radio" name="publishMode" data-field="publishMode" value="safe_test">
+            <span><strong>Đăng thử — không công khai</strong><small>Facebook tạo bài ẩn; Instagram chỉ kiểm tra media container.</small></span>
+          </label>
+        </div>
+        <div class="safe-test-notice" id="safeTestNotice" hidden></div>
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Thời gian đăng <span style="color:var(--danger-400);">*</span></label>
@@ -820,6 +844,7 @@ const ContentPage = (() => {
       onSave: async () => {
         const formData = Modal.getFormData();
         const fanpage = Store.fanpages.getById(formData.fanpageId);
+        const publishMode = formData.publishMode === 'safe_test' ? 'safe_test' : 'live';
         const contentText = (formData.content || '').trim();
         if (!fanpage) {
           Toast.error('Vui lòng chọn fanpage');
@@ -849,11 +874,19 @@ const ContentPage = (() => {
           Toast.error('Lịch đăng Instagram hiện chưa hỗ trợ video/Reels');
           return;
         }
+        if (publishMode === 'safe_test' && !window.RemoteStore?.available) {
+          Toast.error('Đăng thử cần backend đang hoạt động để kiểm tra với Meta');
+          return;
+        }
+        if (publishMode === 'safe_test' && !['facebook', 'instagram'].includes(fanpage.platform)) {
+          Toast.error('Chế độ đăng thử an toàn hiện chỉ hỗ trợ Facebook và Instagram');
+          return;
+        }
         if (!fanpage.connected) {
           Toast.warning('Fanpage chưa liên kết Meta; lịch sẽ được lưu nhưng chưa thể đăng tự động');
         }
 
-        Store.posts.create({
+        const postPayload = {
           fanpageId: fanpage.id,
           title: contentText.slice(0, 80),
           content: contentText,
@@ -864,25 +897,83 @@ const ContentPage = (() => {
           status: 'scheduled',
           source: 'scheduled',
           campaignId: formData.campaignId || '',
-          approvalStatus: formData.approvalStatus || 'pending'
-        });
+          approvalStatus: publishMode === 'safe_test' ? 'approved' : (formData.approvalStatus || 'pending'),
+          publishMode
+        };
 
-        if (window.RemoteStore?.available && formData.approvalStatus === 'approved' && scheduledDate <= new Date()) {
+        if (publishMode === 'safe_test') {
           try {
-            await RemoteStore.publishDue();
+            Toast.info('Đang chạy đăng thử an toàn trên Meta...');
+            const saved = await RemoteStore.createPost(postPayload);
+            if (scheduledDate <= new Date()) {
+              const result = await RemoteStore.runPostTest(saved.id);
+              const instagram = result?.post?.testResult?.instagram;
+              const instagramText = instagram?.status === 'completed'
+                ? 'Instagram đã xác nhận media hợp lệ.'
+                : `Instagram chưa chạy: ${instagram?.error || 'không có kênh ghép cặp'}`;
+              Toast.success(`${fanpage.platform === 'facebook' ? 'Facebook đã tạo bài không công khai. ' : ''}${instagramText}`);
+            } else {
+              Toast.success('Đã lưu lịch đăng thử; cron sẽ chạy an toàn khi đến giờ.');
+            }
           } catch (err) {
-            Toast.error(err.message || 'Không thể xử lý lịch đăng ngay');
+            await RemoteStore.loadPending().catch(() => {});
+            Toast.error(err.message || 'Không thể chạy đăng thử');
+            return;
           }
-        }
+        } else {
+          Store.posts.create(postPayload);
 
-        Toast.success(formData.approvalStatus === 'approved'
-          ? 'Đã lưu lịch đăng bài'
-          : 'Đã lưu và gửi bài vào hàng chờ duyệt');
+          if (window.RemoteStore?.available && formData.approvalStatus === 'approved' && scheduledDate <= new Date()) {
+            try {
+              await RemoteStore.publishDue();
+            } catch (err) {
+              Toast.error(err.message || 'Không thể xử lý lịch đăng ngay');
+            }
+          }
+
+          Toast.success(formData.approvalStatus === 'approved'
+            ? 'Đã lưu lịch đăng bài'
+            : 'Đã lưu và gửi bài vào hàng chờ duyệt');
+        }
         Modal.close();
         renderPage();
         Sidebar.updateBadge();
       }
     });
+
+    const publishModeInputs = modalEl.querySelectorAll('input[name="publishMode"]');
+    const approvalSelect = modalEl.querySelector('[data-field="approvalStatus"]');
+    const scheduleInput = modalEl.querySelector('[data-field="scheduledAt"]');
+    const fanpageSelect = modalEl.querySelector('#scheduleFanpageSelect');
+    const safeTestNotice = modalEl.querySelector('#safeTestNotice');
+    const saveButton = modalEl.querySelector('#modalSave');
+    const updatePublishModeUi = ({ resetTime = false } = {}) => {
+      const isSafeTest = modalEl.querySelector('input[name="publishMode"]:checked')?.value === 'safe_test';
+      modalEl.querySelectorAll('.publish-mode-option').forEach(option => {
+        option.classList.toggle('is-selected', !!option.querySelector('input:checked'));
+      });
+      if (approvalSelect) {
+        approvalSelect.disabled = isSafeTest;
+        if (isSafeTest) approvalSelect.value = 'approved';
+      }
+      if (isSafeTest && resetTime && scheduleInput) scheduleInput.value = toLocalDateTimeValue(new Date());
+      if (saveButton) saveButton.textContent = isSafeTest ? 'Chạy đăng thử' : 'Lưu lịch đăng';
+      if (safeTestNotice) {
+        safeTestNotice.hidden = !isSafeTest;
+        if (isSafeTest) {
+          const selected = Store.fanpages.getById(fanpageSelect?.value);
+          const instagram = selected?.crossPostInstagram
+            ? Store.fanpages.getAll().find(page => page.platform === 'instagram' && page.metaPageId && page.metaPageId === selected.metaPageId)
+            : null;
+          safeTestNotice.textContent = selected?.platform === 'instagram'
+            ? 'Instagram: tạo và kiểm tra media container, không gọi bước publish.'
+            : `Facebook: bài ẩn.${instagram ? ` Instagram: kiểm tra media trên ${instagram.name}.` : ' Instagram: không chạy vì chưa bật hoặc chưa có kênh ghép cặp.'}`;
+        }
+      }
+    };
+    publishModeInputs.forEach(input => input.addEventListener('change', () => updatePublishModeUi({ resetTime: input.value === 'safe_test' })));
+    fanpageSelect?.addEventListener('change', () => updatePublishModeUi());
+    updatePublishModeUi();
 
     bindScheduleMediaControls(modalEl);
   };

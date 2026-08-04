@@ -211,6 +211,7 @@ const Utils = (() => {
     scheduled: { label: 'Chờ đăng', className: 'tag-warning' },
     publishing: { label: 'Đang đăng', className: 'tag-info' },
     published: { label: 'Đã đăng', className: 'tag-success' },
+    tested: { label: 'Đã test', className: 'tag-test' },
     failed: { label: 'Lỗi đăng', className: 'tag-danger' }
   };
 

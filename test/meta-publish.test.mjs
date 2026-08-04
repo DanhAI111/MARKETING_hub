@@ -54,7 +54,7 @@ test('safe test creates an unpublished Facebook post and validates its Instagram
     if (call.url.endsWith('/page-1/photos')) return jsonResponse({ id: 'photo-1' });
     if (call.url.endsWith('/page-1/feed')) return jsonResponse({ id: 'fb-dark-1' });
     if (call.url.endsWith('/ig-1/media')) return jsonResponse({ id: 'ig-container-1' });
-    if (call.url.endsWith('/ig-container-1')) {
+    if (call.url.includes('/ig-container-1?')) {
       return jsonResponse({ id: 'ig-container-1', status_code: 'FINISHED', status: 'Finished' });
     }
     return jsonResponse({ error: { message: `Unexpected Graph call: ${call.url}` } }, 500);
@@ -91,7 +91,7 @@ test('safe test creates an unpublished Facebook post and validates its Instagram
     const feedCall = calls.find((call) => call.url.endsWith('/page-1/feed'));
     assert.equal(feedCall.options.body.get('published'), 'false');
     assert.ok(calls.some((call) => call.url.endsWith('/ig-1/media')));
-    assert.ok(calls.some((call) => call.url.endsWith('/ig-container-1')));
+    assert.ok(calls.some((call) => call.url.includes('/ig-container-1?')));
     assert.equal(calls.some((call) => call.url.endsWith('/ig-1/media_publish')), false);
     assert.equal(result.source, 'facebook-test');
     assert.equal(result.testResult.facebook.objectId, 'fb-dark-1');

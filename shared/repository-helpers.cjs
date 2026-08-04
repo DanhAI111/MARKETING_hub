@@ -15,12 +15,27 @@ const APP_COLLECTIONS = [
 ];
 const APP_SINGLETONS = ['customCategories'];
 const APPROVAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
+const PUBLISH_MODES = new Set(['live', 'safe_test']);
 
 const now = () => new Date().toISOString();
 
 const parseJson = (value, fallback) => {
   if (!value) return fallback;
   try { return JSON.parse(value); } catch { return fallback; }
+};
+
+const normalizePostMutation = (input = {}, existing = null) => {
+  const publishMode = existing?.publishMode === 'safe_test' || input.publishMode === 'safe_test'
+    ? 'safe_test'
+    : 'live';
+  if (publishMode !== 'safe_test') return { ...input, publishMode };
+  const requestedStatus = ['scheduled', 'failed'].includes(input.status) ? input.status : '';
+  return {
+    ...input,
+    publishMode: 'safe_test',
+    approvalStatus: 'approved',
+    status: requestedStatus || existing?.status || 'scheduled'
+  };
 };
 
 const fanpageFromRow = (row, { includeToken = false } = {}) => {
@@ -66,6 +81,9 @@ const postFromRow = (row) => row && ({
   campaignId: row.campaignId || '',
   engagement: parseJson(row.engagement, null),
   approvalStatus: row.approvalStatus || 'approved',
+  publishMode: PUBLISH_MODES.has(row.publishMode) ? row.publishMode : 'live',
+  testedAt: row.testedAt || '',
+  testResult: parseJson(row.testResult, null),
   source: row.source,
   status: row.status,
   deletedAt: row.deletedAt || '',
@@ -79,8 +97,10 @@ module.exports = {
   APP_COLLECTIONS,
   APP_SINGLETONS,
   APPROVAL_STATUSES,
+  PUBLISH_MODES,
   now,
   parseJson,
+  normalizePostMutation,
   fanpageFromRow,
   postFromRow,
   appItemFromRow

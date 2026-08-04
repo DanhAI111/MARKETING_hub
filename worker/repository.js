@@ -4,6 +4,7 @@ import {
   APP_COLLECTIONS as SHARED_APP_COLLECTIONS,
   APP_SINGLETONS,
   APPROVAL_STATUSES,
+  PUBLISH_MODES,
   now,
   parseJson,
   fanpageFromRow,
@@ -53,7 +54,7 @@ export class Repository {
       const { results } = await this.db.prepare(
         `SELECT * FROM posts
           WHERE (deletedAt IS NULL OR deletedAt = '')
-            AND status != 'published'
+            AND status NOT IN ('published', 'tested')
           ORDER BY scheduledAt ASC, updatedAt DESC
           LIMIT ? OFFSET ?`
       ).bind(normalizedLimit, normalizedOffset).all();
@@ -122,6 +123,23 @@ export class Repository {
       RETURNING *
     `).bind(timestamp, timestamp, limit).all();
     return results.map(postFromRow);
+  }
+
+  async claimSafeTestPost(postId) {
+    const timestamp = now();
+    const row = await this.db.prepare(`
+      UPDATE posts
+      SET status = 'publishing',
+          publishError = '',
+          updatedAt = ?
+      WHERE id = ?
+        AND publishMode = 'safe_test'
+        AND approvalStatus = 'approved'
+        AND status IN ('scheduled', 'failed')
+        AND (deletedAt IS NULL OR deletedAt = '')
+      RETURNING *
+    `).bind(timestamp, postId).first();
+    return postFromRow(row);
   }
 
   async getPost(postId) {
@@ -482,6 +500,11 @@ export class Repository {
       approvalStatus: APPROVAL_STATUSES.has(post.approvalStatus)
         ? post.approvalStatus
         : (existing?.approvalStatus || 'approved'),
+      publishMode: PUBLISH_MODES.has(post.publishMode)
+        ? post.publishMode
+        : (existing?.publishMode || 'live'),
+      testedAt: post.testedAt !== undefined ? (post.testedAt || null) : (existing?.testedAt || null),
+      testResult: JSON.stringify(post.testResult !== undefined ? post.testResult : (existing?.testResult || null)),
       source: post.source || existing?.source || 'manual',
       status: post.status || existing?.status || 'published',
       deletedAt: post.deletedAt !== undefined
@@ -501,8 +524,8 @@ export class Repository {
       INSERT INTO posts (
         id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
         mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, campaignId, engagement, approvalStatus,
-        source, status, deletedAt, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        publishMode, testedAt, testResult, source, status, deletedAt, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         fanpageId = excluded.fanpageId,
         externalPostId = excluded.externalPostId,
@@ -521,6 +544,9 @@ export class Repository {
         campaignId = excluded.campaignId,
         engagement = excluded.engagement,
         approvalStatus = excluded.approvalStatus,
+        publishMode = excluded.publishMode,
+        testedAt = excluded.testedAt,
+        testResult = excluded.testResult,
         source = excluded.source,
         status = excluded.status,
         deletedAt = excluded.deletedAt,
@@ -530,6 +556,7 @@ export class Repository {
       data.scheduledAt, data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems,
       data.publishError, data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId,
       data.campaignId, data.engagement, data.approvalStatus,
+      data.publishMode, data.testedAt, data.testResult,
       data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ).run();
     return this.pruneDuplicatePublishedPosts(postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()));

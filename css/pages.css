@@ -276,6 +276,64 @@
   min-height: 140px;
 }
 
+.publish-mode-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.publish-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.publish-mode-option:hover,
+.publish-mode-option.is-selected {
+  border-color: var(--primary-400);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.publish-mode-option:active { transform: translateY(1px); }
+.publish-mode-option input { margin-top: 3px; accent-color: var(--primary-500); }
+.publish-mode-option span { display: grid; gap: 4px; }
+.publish-mode-option strong { color: var(--text-primary); font-size: 0.92rem; }
+.publish-mode-option small { color: var(--text-muted); line-height: 1.45; }
+
+.publish-mode-option-test.is-selected {
+  border-color: #a855f7;
+  background: rgba(168, 85, 247, 0.1);
+}
+
+.safe-test-notice {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: var(--radius-md);
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.08);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.tag-test {
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.post-test-summary {
+  color: #c084fc;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 .schedule-media-builder {
   display: flex;
   flex-direction: column;
@@ -538,6 +596,10 @@
 }
 
 @media (max-width: 768px) {
+  .publish-mode-selector {
+    grid-template-columns: 1fr;
+  }
+
   .schedule-media-row {
     grid-template-columns: 1fr;
   }
@@ -2537,6 +2599,7 @@ html:not([data-page="dashboard"]) .page-subtitle {
 }
 
 .queue-dot.published { background: #4ed58b; }
+.queue-dot.tested { background: #a855f7; }
 .queue-dot.scheduled { background: #9b55ee; }
 .queue-dot.failed { background: #f16670; }
 

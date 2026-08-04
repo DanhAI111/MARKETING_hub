@@ -4,6 +4,7 @@
    ═══════════════════════════════════════════ */
 
 const Store = (() => {
+  const TERMINAL_POST_STATUSES = new Set(['published', 'tested']);
   const STORE_KEY = 'marketing_hub_data';
   const VERSION = 1;
   const UI_SAMPLE_PREFIX = 'ui-sample-';
@@ -134,7 +135,7 @@ const Store = (() => {
     const data = load();
     const incoming = Array.isArray(posts) ? posts : [];
     data.posts = [
-      ...(data.posts || []).filter(post => post.status === 'published'),
+      ...(data.posts || []).filter(post => TERMINAL_POST_STATUSES.has(post.status)),
       ...incoming
     ];
     save(data);
@@ -278,8 +279,8 @@ const Store = (() => {
     remove: (id) => remove('posts', id),
     getByFanpage: (fanpageId) => getAll('posts').filter(p => p.fanpageId === fanpageId),
     getByMonth: (month) => getAll('posts').filter(p => p.status === 'published' && p.date && p.date.startsWith(month)),
-    getScheduled: () => getAll('posts').filter(p => p.status !== 'published'),
-    getScheduledByMonth: (month) => getAll('posts').filter(p => p.status !== 'published' && ((p.date && p.date.startsWith(month)) || (p.scheduledAt && p.scheduledAt.startsWith(month)))),
+    getScheduled: () => getAll('posts').filter(p => !TERMINAL_POST_STATUSES.has(p.status)),
+    getScheduledByMonth: (month) => getAll('posts').filter(p => !TERMINAL_POST_STATUSES.has(p.status) && ((p.date && p.date.startsWith(month)) || (p.scheduledAt && p.scheduledAt.startsWith(month)))),
     getScheduledDue: () => {
       const now = new Date().toISOString();
       return getAll('posts').filter(p => ['scheduled', 'failed'].includes(p.status) && p.scheduledAt && p.scheduledAt <= now);

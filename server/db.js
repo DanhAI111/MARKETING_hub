@@ -57,6 +57,9 @@ db.exec(`
     sheetUrl TEXT,
     sheetRowKey TEXT,
     sheetDefaultFanpageId TEXT,
+    publishMode TEXT NOT NULL DEFAULT 'live',
+    testedAt TEXT,
+    testResult TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     status TEXT NOT NULL DEFAULT 'published',
     deletedAt TEXT,
@@ -124,6 +127,9 @@ ensureColumn('posts', 'deletedAt', 'TEXT');
 ensureColumn('posts', 'campaignId', 'TEXT');
 ensureColumn('posts', 'engagement', 'TEXT');
 ensureColumn('posts', 'approvalStatus', "TEXT NOT NULL DEFAULT 'approved'");
+ensureColumn('posts', 'publishMode', "TEXT NOT NULL DEFAULT 'live'");
+ensureColumn('posts', 'testedAt', 'TEXT');
+ensureColumn('posts', 'testResult', 'TEXT');
 ensureColumn('app_items', 'deletedAt', 'TEXT');
 ensureColumn('fanpages', 'deletedAt', 'TEXT');
 ensureColumn('fanpages', 'crossPostInstagram', 'INTEGER NOT NULL DEFAULT 0');
@@ -139,7 +145,10 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_posts_approval_queue
     ON posts(status, approvalStatus, scheduledAt)
-    WHERE status = 'scheduled'
+    WHERE status = 'scheduled';
+
+  CREATE INDEX IF NOT EXISTS idx_posts_publish_mode
+    ON posts(publishMode, status, scheduledAt)
 `);
 
 module.exports = db;
