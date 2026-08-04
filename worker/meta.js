@@ -73,11 +73,14 @@ export class MetaService {
   }
 
   async graphGet(path, params = {}) {
+    // Keep access_token out of the query string (leaks via logs/proxies); Graph API
+    // accepts it as an Authorization: Bearer header on GET.
+    const { access_token, ...rest } = params;
     const url = new URL(`${GRAPH_BASE}/${path.replace(/^\//, '')}`);
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(rest).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
     });
-    const response = await fetch(url);
+    const response = await fetch(url, access_token ? { headers: { Authorization: `Bearer ${access_token}` } } : undefined);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(formatMetaError(body, `Meta API error ${response.status}`));
@@ -208,7 +211,8 @@ export class MetaService {
     if (!token || !fanpage.instagramBusinessId) {
       throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
     }
-    const media = (await resolveMediaItem(getMediaItems(post)[0]))[0];
+    const mediaItems = getMediaItems(post);
+    const media = (await resolveMediaItem(mediaItems[0]))[0];
     if (!media?.url) throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
     if (!/^https?:\/\//i.test(media.url)) {
       throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
@@ -231,7 +235,12 @@ export class MetaService {
     return {
       externalPostId: published.id || '',
       permalink: details.permalink || '',
-      mediaUrl: details.media_url || media.url
+      mediaUrl: details.media_url || media.url,
+      // ponytail: IG carousel not yet supported — warn instead of silently dropping
+      // extra album images. Add real carousel publish when album parity is needed.
+      warning: mediaItems.length > 1
+        ? `Instagram: chỉ đăng ảnh đầu (${mediaItems.length} ảnh, chưa hỗ trợ carousel)`
+        : ''
     };
   }
 
@@ -246,17 +255,30 @@ export class MetaService {
         ? { externalPostId: post.externalPostId, permalink: post.permalink || '', mediaUrl: post.mediaUrl || '' }
         : await this.publishFacebookPost(fanpage, post);
 
+      let crossPostError = '';
       if (fanpage.crossPostInstagram) {
         const igPage = await this.repo.getInstagramSiblingFanpage(fanpage.metaPageId);
         if (igPage) {
-          // Persist FB result before IG attempt so a failed IG keeps the FB id.
+          // FB is already live — persist it as 'published' before the IG attempt so a
+          // crash mid-IG can't strand the row in 'publishing'/'failed' (which would
+          // never reclaim and would make the user re-create → double-post to FB).
           if (!post.externalPostId) {
-            await this.repo.setPostPublishState(post.id, { ...fbResult, source: 'facebook' });
+            await this.repo.setPostPublishState(post.id, { ...fbResult, status: 'published', source: 'facebook' });
           }
-          await this.publishInstagramPost(igPage, post);
+          try {
+            const igResult = await this.publishInstagramPost(igPage, post);
+            if (igResult.warning) crossPostError = igResult.warning;
+          } catch (igErr) {
+            // FB already succeeded; do NOT throw (a throw becomes 'failed' → double-post).
+            // ponytail: IG retry is manual only. Add auto IG re-publish when a
+            // dedicated cross-post retry queue exists.
+            crossPostError = `Instagram: ${igErr.message}`;
+          }
+        } else {
+          crossPostError = 'Instagram: chưa có tài khoản IG liên kết để cross-post';
         }
       }
-      return { ...fbResult, source: 'facebook' };
+      return { ...fbResult, source: 'facebook', crossPostError };
     }
     if (fanpage.platform === 'instagram') return { ...await this.publishInstagramPost(fanpage, post), source: 'instagram' };
     throw new Error(`Chưa hỗ trợ đăng tự động cho nền tảng ${fanpage.platform}.`);
@@ -477,6 +499,8 @@ export class MetaService {
     return count;
   }
 
+  // maxFanpages default 1 = batch one fanpage per invocation (Cloudflare CPU/subrequest
+  // limits). The server mirror defaults to null (all at once); this difference is intentional.
   async syncAll({ cursor = null, maxFanpages = 1, postLimit = 100 } = {}) {
     const fanpages = (await this.repo.getConnectedFanpages())
       .sort((a, b) => `${a.name || ''}:${a.id}`.localeCompare(`${b.name || ''}:${b.id}`));

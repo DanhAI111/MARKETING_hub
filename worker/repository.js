@@ -139,7 +139,7 @@ export class Repository {
     if (!metaPageId) return null;
     return fanpageFromRow(
       await this.db.prepare(
-        "SELECT * FROM fanpages WHERE metaPageId = ? AND platform = 'instagram' AND (deletedAt IS NULL OR deletedAt = '') LIMIT 1"
+        "SELECT * FROM fanpages WHERE metaPageId = ? AND platform = 'instagram' AND (deletedAt IS NULL OR deletedAt = '') ORDER BY connected DESC, updatedAt DESC LIMIT 1"
       ).bind(metaPageId).first(),
       { includeToken: true }
     );

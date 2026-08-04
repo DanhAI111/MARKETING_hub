@@ -357,14 +357,14 @@ const getInstagramSiblingFanpage = async (metaPageId) => {
   if (!metaPageId) return null;
   if (usePostgres) {
     const rows = await pgQuery(
-      'SELECT * FROM fanpages WHERE "metaPageId" = $1 AND platform = $2 AND ("deletedAt" IS NULL OR "deletedAt" = \'\') LIMIT 1',
+      'SELECT * FROM fanpages WHERE "metaPageId" = $1 AND platform = $2 AND ("deletedAt" IS NULL OR "deletedAt" = \'\') ORDER BY connected DESC, "updatedAt" DESC LIMIT 1',
       [metaPageId, 'instagram']
     );
     return fanpageFromRow(rows[0], { includeToken: true });
   }
   return fanpageFromRow(
     getSqlite()
-      .prepare('SELECT * FROM fanpages WHERE metaPageId = ? AND platform = ? AND (deletedAt IS NULL OR deletedAt = \'\') LIMIT 1')
+      .prepare('SELECT * FROM fanpages WHERE metaPageId = ? AND platform = ? AND (deletedAt IS NULL OR deletedAt = \'\') ORDER BY connected DESC, updatedAt DESC LIMIT 1')
       .get(metaPageId, 'instagram'),
     { includeToken: true }
   );

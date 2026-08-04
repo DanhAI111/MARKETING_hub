@@ -95,7 +95,7 @@ const processScheduledPosts = async (repo, meta) => {
         source: published.source || post.source || 'meta',
         date: new Date().toISOString().slice(0, 10),
         publishedAt: new Date().toISOString(),
-        publishError: ''
+        publishError: published.crossPostError || ''
       });
       result.published++;
       result.posts.push({ id: post.id, status: 'published' });

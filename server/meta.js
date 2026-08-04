@@ -55,11 +55,14 @@ const authUrl = (state) => {
 };
 
 const graphGet = async (path, params = {}) => {
+  // Keep access_token out of the query string (leaks via logs/proxies); Graph API
+  // accepts it as an Authorization: Bearer header on GET.
+  const { access_token, ...rest } = params;
   const url = new URL(`${GRAPH_BASE}/${path.replace(/^\//, '')}`);
-  Object.entries(params).forEach(([key, value]) => {
+  Object.entries(rest).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
   });
-  const res = await fetch(url);
+  const res = await fetch(url, access_token ? { headers: { Authorization: `Bearer ${access_token}` } } : undefined);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const message = formatMetaError(body, `Meta API error ${res.status}`);
@@ -220,7 +223,8 @@ const publishInstagramPost = async (fanpage, post) => {
     throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
   }
 
-  const media = (await resolveMediaItem(getMediaItems(post)[0]))[0];
+  const mediaItems = getMediaItems(post);
+  const media = (await resolveMediaItem(mediaItems[0]))[0];
   if (!media?.url) {
     throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
   }
@@ -247,7 +251,12 @@ const publishInstagramPost = async (fanpage, post) => {
   return {
     externalPostId: published.id || '',
     permalink: details.permalink || '',
-    mediaUrl: details.media_url || media.url
+    mediaUrl: details.media_url || media.url,
+    // ponytail: IG carousel not yet supported — warn instead of silently dropping
+    // extra album images. Add real carousel publish when album parity is needed.
+    warning: mediaItems.length > 1
+      ? `Instagram: chỉ đăng ảnh đầu (${mediaItems.length} ảnh, chưa hỗ trợ carousel)`
+      : ''
   };
 };
 
@@ -271,18 +280,30 @@ const publishScheduledPost = async (post) => {
       fbResult = await publishFacebookPost(fanpage, post);
     }
 
+    let crossPostError = '';
     if (fanpage.crossPostInstagram) {
       const igPage = await repo.getInstagramSiblingFanpage(fanpage.metaPageId);
       if (igPage) {
-        // Persist the FB result before attempting IG so a failed IG post marks
-        // the row 'failed' without losing the FB post id (retry skips FB above).
+        // FB is already live — persist it as 'published' before the IG attempt so a
+        // crash mid-IG can't strand the row in 'publishing'/'failed' (which would
+        // never reclaim and would make the user re-create → double-post to FB).
         if (!post.externalPostId) {
-          await repo.setPostPublishState(post.id, { ...fbResult, source: 'facebook' });
+          await repo.setPostPublishState(post.id, { ...fbResult, status: 'published', source: 'facebook' });
         }
-        await publishInstagramPost(igPage, post);
+        try {
+          const igResult = await publishInstagramPost(igPage, post);
+          if (igResult.warning) crossPostError = igResult.warning;
+        } catch (igErr) {
+          // FB already succeeded; do NOT throw (a throw becomes 'failed' → double-post).
+          // ponytail: IG retry is manual only. Add auto IG re-publish when a
+          // dedicated cross-post retry queue exists.
+          crossPostError = `Instagram: ${igErr.message}`;
+        }
+      } else {
+        crossPostError = 'Instagram: chưa có tài khoản IG liên kết để cross-post';
       }
     }
-    return { ...fbResult, source: 'facebook' };
+    return { ...fbResult, source: 'facebook', crossPostError };
   }
   if (fanpage.platform === 'instagram') {
     return { ...await publishInstagramPost(fanpage, post), source: 'instagram' };
@@ -515,6 +536,9 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
   return count;
 };
 
+// maxFanpages default null = sync all fanpages in one pass. The worker mirror
+// defaults to 1 on purpose (Cloudflare CPU/subrequest limits force batching); the
+// server has no such cap, so the defaults intentionally differ.
 const syncAll = async ({ cursor = null, maxFanpages = null, postLimit = 100 } = {}) => {
   const fanpages = (await repo.getConnectedFanpages())
     .sort((a, b) => `${a.name || ''}:${a.id}`.localeCompare(`${b.name || ''}:${b.id}`));
