@@ -33,7 +33,8 @@
     try {
       const url = new URL(rawUrl);
       const lastSegment = url.pathname.split('/').filter(Boolean).pop();
-      return lastSegment ? decodeURIComponent(lastSegment) : url.hostname;
+      const decodedSegment = lastSegment ? decodeURIComponent(lastSegment) : '';
+      return /\.[a-z0-9]{2,8}$/i.test(decodedSegment) ? decodedSegment : url.hostname;
     } catch {
       return 'Ảnh URL';
     }
