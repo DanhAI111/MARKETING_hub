@@ -1112,7 +1112,7 @@ const ContentPage = (() => {
               content: item.content,
               date: item.localDate,
               scheduledAt: item.scheduledAt,
-              mediaUrl: item.mediaItems[0]?.url || '',
+              mediaUrl: /^data:/i.test(item.mediaItems[0]?.url || '') ? '' : (item.mediaItems[0]?.url || ''),
               mediaItems: item.mediaItems,
               status: 'scheduled',
               source: 'scheduled'

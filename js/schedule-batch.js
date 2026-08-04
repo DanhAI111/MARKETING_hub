@@ -73,7 +73,7 @@
       content,
       date,
       scheduledAt,
-      mediaUrl: mediaItems[0]?.url || '',
+      mediaUrl: /^data:/i.test(mediaItems[0]?.url || '') ? '' : (mediaItems[0]?.url || ''),
       mediaItems: cloneMediaItems(mediaItems),
       status: 'scheduled',
       source: 'scheduled',
