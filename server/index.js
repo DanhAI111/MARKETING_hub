@@ -14,6 +14,7 @@ const googleSheetsModule = import('../shared/google-sheets.mjs');
 const sheetSyncModule = import('../shared/sheet-sync.mjs');
 const revenuePlannerModule = import('../shared/revenue-planner.mjs');
 const { normalizePostMutation } = require('../shared/repository-helpers.cjs');
+const { processWithConcurrency } = require('../shared/publish-queue.cjs');
 
 const app = express();
 assertSecurityConfig();
@@ -21,6 +22,8 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost');
 const ROOT_DIR = path.join(__dirname, '..');
 const INDEX_HTML = path.join(ROOT_DIR, 'manage_MKT.html');
+const PUBLISH_CONCURRENCY = 3;
+const PUBLISH_LEASE_MS = 10 * 60 * 1000;
 let lastSync = null;
 let syncInFlight = null;
 let publishInFlight = false;
@@ -134,11 +137,17 @@ const processClaimedPost = async (post) => {
 const processScheduledPosts = async () => {
   if (publishInFlight) return { skipped: true };
   publishInFlight = true;
-  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, posts: [] };
+  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, released: 0, posts: [] };
   try {
+    result.released = await repo.failStalePublishingPosts(
+      new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
+    );
     const duePosts = await repo.claimDueScheduledPosts();
-    for (const post of duePosts) {
-      const processed = await processClaimedPost(post);
+    const processedPosts = await processWithConcurrency(duePosts,
+      post => processClaimedPost(post),
+      PUBLISH_CONCURRENCY
+    );
+    for (const processed of processedPosts) {
       if (processed.status === 'published') result.published++;
       else if (processed.status === 'tested') result.tested++;
       else result.failed++;

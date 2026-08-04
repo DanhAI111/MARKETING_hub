@@ -8,6 +8,10 @@ import { suggestAllocation } from '../shared/ai-allocation.mjs';
 import { syncScheduleSheets } from '../shared/sheet-sync.mjs';
 import { fetchGoogleSheetCsvText } from '../shared/google-sheets.mjs';
 import { normalizePostMutation } from '../shared/repository-helpers.cjs';
+import { processWithConcurrency } from '../shared/publish-queue.cjs';
+
+const PUBLISH_CONCURRENCY = 3;
+const PUBLISH_LEASE_MS = 10 * 60 * 1000;
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status,
@@ -112,10 +116,16 @@ const processClaimedPost = async (repo, meta, post) => {
 };
 
 const processScheduledPosts = async (repo, meta) => {
-  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, posts: [] };
+  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, released: 0, posts: [] };
+  result.released = await repo.failStalePublishingPosts(
+    new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
+  );
   const duePosts = await repo.claimDueScheduledPosts();
-  for (const post of duePosts) {
-    const processed = await processClaimedPost(repo, meta, post);
+  const processedPosts = await processWithConcurrency(duePosts,
+    post => processClaimedPost(repo, meta, post),
+    PUBLISH_CONCURRENCY
+  );
+  for (const processed of processedPosts) {
     if (processed.status === 'published') result.published++;
     else if (processed.status === 'tested') result.tested++;
     else result.failed++;
@@ -466,12 +476,9 @@ export default {
     const repo = new Repository(env);
     const origin = env.PUBLIC_BASE_URL || 'https://marketing-hub.workers.dev';
     const meta = new MetaService(env, repo, origin);
-    const processQueue = async () => {
-      await syncLinkedScheduleSheets(repo);
-      return processScheduledPosts(repo, meta);
-    };
     const tasks = [
-      processQueue(),
+      processScheduledPosts(repo, meta),
+      syncLinkedScheduleSheets(repo),
       repo.cleanupOAuthStates(),
       repo.cleanupRateLimits(),
       sendDailyTaskSummaryIfDue(env, repo, controller.scheduledTime)

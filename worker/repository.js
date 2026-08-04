@@ -125,6 +125,19 @@ export class Repository {
     return results.map(postFromRow);
   }
 
+  async failStalePublishingPosts(staleBefore) {
+    const result = await this.db.prepare(`
+      UPDATE posts
+      SET status = 'failed',
+          publishError = 'Lần đăng trước bị gián đoạn. Hãy thử lại để tiếp tục đăng bài.',
+          updatedAt = ?
+      WHERE status = 'publishing'
+        AND updatedAt < ?
+        AND (deletedAt IS NULL OR deletedAt = '')
+    `).bind(now(), staleBefore).run();
+    return Number(result?.meta?.changes || result?.changes || 0);
+  }
+
   async claimSafeTestPost(postId) {
     const timestamp = now();
     const row = await this.db.prepare(`

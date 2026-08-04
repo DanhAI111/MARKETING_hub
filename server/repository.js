@@ -354,6 +354,33 @@ const claimDueScheduledPosts = async (limit = 10) => {
   `).all(timestamp, timestamp, limit).map(postFromRow);
 };
 
+const failStalePublishingPosts = async (staleBefore) => {
+  const timestamp = now();
+  const publishError = 'Lần đăng trước bị gián đoạn. Hãy thử lại để tiếp tục đăng bài.';
+  if (usePostgres) {
+    const rows = await pgQuery(`
+      UPDATE posts
+      SET status = 'failed',
+          "publishError" = $1,
+          "updatedAt" = $2
+      WHERE status = 'publishing'
+        AND "updatedAt" < $3
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
+      RETURNING id
+    `, [publishError, timestamp, staleBefore]);
+    return rows.length;
+  }
+  return getSqlite().prepare(`
+    UPDATE posts
+    SET status = 'failed',
+        publishError = ?,
+        updatedAt = ?
+    WHERE status = 'publishing'
+      AND updatedAt < ?
+      AND (deletedAt IS NULL OR deletedAt = '')
+  `).run(publishError, timestamp, staleBefore).changes;
+};
+
 const claimSafeTestPost = async (postId) => {
   const timestamp = now();
   if (usePostgres) {
@@ -1246,6 +1273,7 @@ module.exports = {
   listDueScheduledPosts,
   getPost,
   claimDueScheduledPosts,
+  failStalePublishingPosts,
   claimSafeTestPost,
   getFanpage,
   getInstagramSiblingFanpage,
