@@ -33,6 +33,10 @@ test('displayName provides a useful label instead of exposing a Google Drive fil
     MediaGallery.displayName('https://cdn.example.com/images/hero%20banner.jpg'),
     'hero banner.jpg'
   );
+  assert.equal(
+    MediaGallery.displayName('https://picsum.photos/id/237/600/400'),
+    'picsum.photos'
+  );
 });
 
 test('reorder moves media without mutating the original array', () => {
