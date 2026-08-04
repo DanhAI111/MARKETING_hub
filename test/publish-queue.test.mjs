@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+
+const require = createRequire(import.meta.url);
+const workerSource = fs.readFileSync(new URL('../worker/index.js', import.meta.url), 'utf8');
+const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+
+test('scheduled worker starts publishing without waiting for Google Sheets sync', () => {
+  assert.match(
+    workerSource,
+    /const tasks = \[\s*processScheduledPosts\(repo, meta\),\s*syncLinkedScheduleSheets\(repo\)/
+  );
+  assert.doesNotMatch(
+    workerSource,
+    /await syncLinkedScheduleSheets\(repo\);\s*return processScheduledPosts\(repo, meta\)/
+  );
+});
+
+test('worker and server publishing queues use the shared bounded-concurrency helper', () => {
+  assert.match(workerSource, /processWithConcurrency\(duePosts/);
+  assert.match(serverSource, /processWithConcurrency\(duePosts/);
+});
+
+test('processWithConcurrency runs three posts at once and preserves result order', async () => {
+  const { processWithConcurrency } = require('../shared/publish-queue.cjs');
+  let active = 0;
+  let maxActive = 0;
+  const completed = [];
+  const delays = [35, 5, 20, 1, 10];
+
+  const results = await processWithConcurrency(delays, async (delay, index) => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, delay));
+    completed.push(index);
+    active--;
+    return `post-${index}`;
+  }, 3);
+
+  assert.equal(maxActive, 3);
+  assert.notDeepEqual(completed, [0, 1, 2, 3, 4]);
+  assert.deepEqual(results, ['post-0', 'post-1', 'post-2', 'post-3', 'post-4']);
+});

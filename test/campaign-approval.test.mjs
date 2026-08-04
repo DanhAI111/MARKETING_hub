@@ -125,6 +125,31 @@ test('claimDueScheduledPosts publishes only approved posts', async () => {
   });
 });
 
+test('stale publishing posts become failed while an active publishing lease is preserved', async () => {
+  await withSqliteRepository(async (repo, db) => {
+    await repo.upsertPost(scheduledPost('stale-post', 'approved'));
+    await repo.upsertPost(scheduledPost('active-post', 'approved'));
+    db.prepare(`
+      UPDATE posts
+      SET status = 'publishing', updatedAt = ?
+      WHERE id = ?
+    `).run('2026-08-04T07:00:00.000Z', 'stale-post');
+    db.prepare(`
+      UPDATE posts
+      SET status = 'publishing', updatedAt = ?
+      WHERE id = ?
+    `).run('2026-08-04T08:59:00.000Z', 'active-post');
+
+    const released = await repo.failStalePublishingPosts('2026-08-04T08:50:00.000Z');
+
+    assert.equal(released, 1);
+    const stale = await repo.getPost('stale-post');
+    assert.equal(stale.status, 'failed');
+    assert.match(stale.publishError, /gián đoạn/i);
+    assert.equal((await repo.getPost('active-post')).status, 'publishing');
+  });
+});
+
 test('safe test posts persist their mode, claim individually, and leave the pending queue when tested', async () => {
   await withSqliteRepository(async (repo) => {
     const saved = await repo.upsertPost({
