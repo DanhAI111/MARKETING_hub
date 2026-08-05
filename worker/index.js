@@ -12,6 +12,12 @@ import { processWithConcurrency } from '../shared/publish-queue.cjs';
 
 const PUBLISH_CONCURRENCY = 3;
 const PUBLISH_LEASE_MS = 10 * 60 * 1000;
+// Cloudflare kills a cron invocation that exceeds its CPU/wall-clock budget with
+// no JS error, stranding every claimed post in 'publishing'. Each post can do a
+// Drive HEAD + a photo upload + a feed call, so a big batch blows the budget:
+// proven in prod on 2026-08-05 — 1 post published fine, a batch of 7 was silently
+// killed mid-run. The 1-min cron drains a backlog a few posts at a time instead.
+const PUBLISH_BATCH_LIMIT = 3;
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status,
@@ -94,6 +100,17 @@ const processClaimedPost = async (repo, meta, post) => {
     const output = safeTest
       ? await meta.testScheduledPost(post)
       : await meta.publishScheduledPost(post);
+    // IG video (Reels) defers across cron ticks while Instagram encodes. Park the
+    // containerId and return the post to 'scheduled' so the next tick re-claims and
+    // does a cheap FINISHED check — never a blocking poll (publish-stale-root-cause).
+    if (output.deferred) {
+      const saved = await repo.setPostPublishState(post.id, {
+        status: 'scheduled',
+        igContainerId: output.igContainerId || post.igContainerId || '',
+        publishError: ''
+      });
+      return { id: post.id, status: 'deferred', post: saved };
+    }
     const timestamp = new Date().toISOString();
     const partialError = safeTest ? (output.crossPostError || '') : '';
     const status = partialError ? 'failed' : (safeTest ? 'tested' : 'published');
@@ -120,7 +137,7 @@ const processScheduledPosts = async (repo, meta) => {
   result.released = await repo.failStalePublishingPosts(
     new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
   );
-  const duePosts = await repo.claimDueScheduledPosts();
+  const duePosts = await repo.claimDueScheduledPosts(PUBLISH_BATCH_LIMIT);
   const processedPosts = await processWithConcurrency(duePosts,
     post => processClaimedPost(repo, meta, post),
     PUBLISH_CONCURRENCY
@@ -128,6 +145,7 @@ const processScheduledPosts = async (repo, meta) => {
   for (const processed of processedPosts) {
     if (processed.status === 'published') result.published++;
     else if (processed.status === 'tested') result.tested++;
+    else if (processed.status === 'deferred') result.deferred = (result.deferred || 0) + 1;
     else result.failed++;
     result.posts.push({
       id: processed.id,

@@ -84,6 +84,7 @@ const postFromRow = (row) => row && ({
   publishMode: PUBLISH_MODES.has(row.publishMode) ? row.publishMode : 'live',
   testedAt: row.testedAt || '',
   testResult: parseJson(row.testResult, null),
+  igContainerId: row.igContainerId || '',
   source: row.source,
   status: row.status,
   deletedAt: row.deletedAt || '',

@@ -131,6 +131,35 @@ export class MetaService {
     });
   }
 
+  async createInstagramVideoContainer(igId, token, videoUrl, caption) {
+    if (!/^https?:\/\//i.test(videoUrl)) {
+      throw new Error('Instagram video yêu cầu URL tải công khai (không nhận file local/base64).');
+    }
+    // IG video = Reels: media_type=REELS + video_url (image path uses image_url).
+    return this.graphPost(`${igId}/media`, {
+      access_token: token,
+      media_type: 'REELS',
+      video_url: videoUrl,
+      caption
+    });
+  }
+
+  // Single cheap status check (one graphGet, ~no CPU) for the deferred 2-tick flow.
+  // Returns the uppercased status_code; throws only on IG terminal failure so a stuck
+  // encode ends the post instead of deferring forever. Blocking poll is NOT allowed in
+  // the Worker — it blows Cloudflare's per-invocation CPU budget (publish-stale-root-cause).
+  async checkInstagramContainerStatus(containerId, token) {
+    const details = await this.graphGet(containerId, {
+      access_token: token,
+      fields: 'status_code,status'
+    });
+    const statusCode = String(details.status_code || '').toUpperCase();
+    if (['ERROR', 'EXPIRED'].includes(statusCode)) {
+      throw new Error(details.status || `Instagram xử lý video thất bại (${statusCode.toLowerCase()}).`);
+    }
+    return statusCode;
+  }
+
   async publishFacebookPost(fanpage, post, { published = true } = {}) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.metaPageId) {
@@ -224,17 +253,30 @@ export class MetaService {
     if (!/^https?:\/\//i.test(media.url)) {
       throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
     }
+    // IG video (Reels) encodes async (30-90s). Polling to FINISHED inside one cron tick
+    // blows Cloudflare's CPU budget, so we defer across ticks: tick 1 creates the container
+    // and parks its id (post stays 'scheduled' → re-claimed next tick); later ticks do one
+    // cheap status check and publish once FINISHED. See migrations/0012_ig_video_container.sql.
+    let containerId;
     if (media.type === 'video') {
-      throw new Error('Lịch đăng Instagram hiện chỉ hỗ trợ ảnh; chưa hỗ trợ video/Reels.');
+      if (!post.igContainerId) {
+        const created = await this.createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post));
+        return { deferred: true, igContainerId: created.id };
+      }
+      const statusCode = await this.checkInstagramContainerStatus(post.igContainerId, token);
+      if (statusCode !== 'FINISHED') return { deferred: true, igContainerId: post.igContainerId };
+      containerId = post.igContainerId;
+    } else {
+      const created = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+        access_token: token,
+        image_url: media.url,
+        caption: getPostMessage(post)
+      });
+      containerId = created.id;
     }
-    const container = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
-      access_token: token,
-      image_url: media.url,
-      caption: getPostMessage(post)
-    });
     const published = await this.graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
       access_token: token,
-      creation_id: container.id
+      creation_id: containerId
     });
     const details = published.id
       ? await this.graphGet(published.id, { access_token: token, fields: 'permalink,media_url' }).catch(() => ({}))
@@ -243,6 +285,7 @@ export class MetaService {
       externalPostId: published.id || '',
       permalink: details.permalink || '',
       mediaUrl: details.media_url || media.url,
+      igContainerId: '', // published → clear the mid-flight marker
       // ponytail: IG carousel not yet supported — warn instead of silently dropping
       // extra album images. Add real carousel publish when album parity is needed.
       warning: mediaItems.length > 1
@@ -262,15 +305,13 @@ export class MetaService {
     if (!/^https?:\/\//i.test(media.url)) {
       throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
     }
-    if (media.type === 'video') {
-      throw new Error('Kiểm tra Instagram hiện chỉ hỗ trợ ảnh; chưa hỗ trợ video/Reels.');
-    }
-
-    const container = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
-      access_token: token,
-      image_url: media.url,
-      caption: getPostMessage(post)
-    });
+    const container = media.type === 'video'
+      ? await this.createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post))
+      : await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+          access_token: token,
+          image_url: media.url,
+          caption: getPostMessage(post)
+        });
     if (!container.id) throw new Error('Meta không trả về Instagram container ID.');
 
     let details = {};
@@ -386,7 +427,10 @@ export class MetaService {
           }
           try {
             const igResult = await this.publishInstagramPost(igPage, post);
-            if (igResult.warning) crossPostError = igResult.warning;
+            // FB is already live, so we can't defer/reclaim for IG video async encoding
+            // here — surface it as a manual-retry note instead of stranding the post.
+            if (igResult.deferred) crossPostError = 'Instagram: video đang xử lý (Reels), hãy đăng lại IG sau khi encode xong.';
+            else if (igResult.warning) crossPostError = igResult.warning;
           } catch (igErr) {
             // FB already succeeded; do NOT throw (a throw becomes 'failed' → double-post).
             // ponytail: IG retry is manual only. Add auto IG re-publish when a

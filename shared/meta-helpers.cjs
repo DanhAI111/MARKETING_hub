@@ -14,6 +14,27 @@ const DEFAULT_SCOPES = [
   'instagram_content_publish'
 ];
 
+// Drive fetches run inside the Cloudflare cron. A hung request has no built-in
+// deadline, so one stuck Drive URL would consume the whole run's wall-clock and
+// strand every claimed post in 'publishing'. Bound each fetch so a slow Drive
+// fails a single post instead of the batch.
+const DRIVE_FETCH_TIMEOUT_MS = 8000;
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = DRIVE_FETCH_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`Hết thời gian tải media từ Google Drive (>${Math.round(timeoutMs / 1000)}s). Hãy thử lại hoặc kiểm tra quyền chia sẻ.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const formatMetaError = (body, fallback) => {
   const metaError = body?.error;
   if (!metaError) return fallback;
@@ -62,7 +83,7 @@ const decodeHtml = (value = '') => value
 
 const listGoogleDriveFolderMedia = async (folderId) => {
   const url = `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}#grid`;
-  const response = await fetch(url, { redirect: 'follow' });
+  const response = await fetchWithTimeout(url, { redirect: 'follow' });
   if (!response.ok) {
     throw new Error(`Không thể đọc folder Google Drive (HTTP ${response.status}). Hãy bật quyền "Anyone with the link".`);
   }
@@ -115,7 +136,7 @@ const resolveMediaItem = async (media) => {
     return [resolved];
   }
 
-  const response = await fetch(resolved.url, { method: 'HEAD', redirect: 'follow' });
+  const response = await fetchWithTimeout(resolved.url, { method: 'HEAD', redirect: 'follow' });
   if (!response.ok) {
     throw new Error(`Không thể tải media từ Google Drive (HTTP ${response.status}). Hãy bật quyền "Anyone with the link".`);
   }
@@ -160,6 +181,8 @@ module.exports = {
   GRAPH_BASE,
   DEFAULT_SCOPES,
   formatMetaError,
+  fetchWithTimeout,
+  DRIVE_FETCH_TIMEOUT_MS,
   getGoogleDriveFileId,
   getGoogleDriveFolderId,
   normalizeMediaUrl,

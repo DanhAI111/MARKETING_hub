@@ -134,6 +134,39 @@ const addFacebookVideo = async ({ pageId, token, media, description = '', publis
   });
 };
 
+const createInstagramVideoContainer = async (igId, token, videoUrl, caption) => {
+  if (!/^https?:\/\//i.test(videoUrl)) {
+    throw new Error('Instagram video yêu cầu URL tải công khai (không nhận file local/base64).');
+  }
+  // IG video = Reels: media_type=REELS + video_url (image path uses image_url).
+  return graphPost(`${igId}/media`, {
+    access_token: token,
+    media_type: 'REELS',
+    video_url: videoUrl,
+    caption
+  });
+};
+
+// Poll container status_code until FINISHED before media_publish. Bounded so a stuck
+// encode fails one post, not the whole cron invocation. Delays are await-I/O (low CPU).
+const waitInstagramContainerReady = async (containerId, token) => {
+  const POLL_ATTEMPTS = 20;
+  const POLL_DELAY_MS = 3000;
+  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+    const details = await graphGet(containerId, {
+      access_token: token,
+      fields: 'status_code,status'
+    });
+    const statusCode = String(details.status_code || '').toUpperCase();
+    if (statusCode === 'FINISHED') return;
+    if (['ERROR', 'EXPIRED'].includes(statusCode)) {
+      throw new Error(details.status || `Instagram xử lý video thất bại (${statusCode.toLowerCase()}).`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_DELAY_MS));
+  }
+  throw new Error('Instagram chưa xử lý xong video sau thời gian chờ. Bài sẽ tự thử lại ở lần đăng sau.');
+};
+
 const publishFacebookPost = async (fanpage, post, { published = true } = {}) => {
   const token = repo.decryptPageToken(fanpage);
   if (!token || !fanpage.metaPageId) {
@@ -235,15 +268,15 @@ const publishInstagramPost = async (fanpage, post) => {
   if (!/^https?:\/\//i.test(media.url)) {
     throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
   }
-  if (media.type === 'video') {
-    throw new Error('Lịch đăng Instagram hiện chỉ hỗ trợ ảnh; chưa hỗ trợ video/Reels.');
-  }
-
-  const container = await graphPost(`${fanpage.instagramBusinessId}/media`, {
-    access_token: token,
-    image_url: media.url,
-    caption: getPostMessage(post)
-  });
+  const container = media.type === 'video'
+    ? await createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post))
+    : await graphPost(`${fanpage.instagramBusinessId}/media`, {
+        access_token: token,
+        image_url: media.url,
+        caption: getPostMessage(post)
+      });
+  // IG video containers process async — media_publish 400s until status FINISHED.
+  if (media.type === 'video') await waitInstagramContainerReady(container.id, token);
   const published = await graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
     access_token: token,
     creation_id: container.id
@@ -275,15 +308,13 @@ const testInstagramPost = async (fanpage, post) => {
   if (!/^https?:\/\//i.test(media.url)) {
     throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
   }
-  if (media.type === 'video') {
-    throw new Error('Kiểm tra Instagram hiện chỉ hỗ trợ ảnh; chưa hỗ trợ video/Reels.');
-  }
-
-  const container = await graphPost(`${fanpage.instagramBusinessId}/media`, {
-    access_token: token,
-    image_url: media.url,
-    caption: getPostMessage(post)
-  });
+  const container = media.type === 'video'
+    ? await createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post))
+    : await graphPost(`${fanpage.instagramBusinessId}/media`, {
+        access_token: token,
+        image_url: media.url,
+        caption: getPostMessage(post)
+      });
   if (!container.id) throw new Error('Meta không trả về Instagram container ID.');
 
   let details = {};

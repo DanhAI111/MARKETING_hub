@@ -25,9 +25,6 @@
     if (instagramPages.length && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
       errors.push(`${instagramNames}: Instagram chỉ nhận media có URL công khai`);
     }
-    if (instagramPages.length && mediaItems.some(item => item.type === 'video')) {
-      errors.push(`${instagramNames}: lịch đăng Instagram hiện chưa hỗ trợ video/Reels`);
-    }
 
     if (publishMode === 'safe_test' && !remoteAvailable) {
       errors.push('Đăng thử cần backend đang hoạt động để kiểm tra với Meta');

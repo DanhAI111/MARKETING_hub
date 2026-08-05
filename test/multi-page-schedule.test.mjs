@@ -59,8 +59,19 @@ test('validateSelection requires at least one page and applies Instagram media c
     remoteAvailable: true
   });
 
+  // base64 media still rejected — IG needs a public URL
   assert.ok(errors.some(error => error.includes('Instagram One') && error.includes('URL công khai')));
-  assert.ok(errors.some(error => error.includes('Instagram One') && error.includes('video/Reels')));
+  // IG video/Reels is now supported — a public video URL must NOT be blocked
+  assert.ok(!errors.some(error => error.includes('video/Reels')));
+
+  // a public video URL alone passes validation for Instagram
+  const videoOk = ScheduleBatch.validateSelection({
+    fanpages: [instagram],
+    mediaItems: [{ type: 'video', url: 'https://example.com/reel.mp4' }],
+    publishMode: 'live',
+    remoteAvailable: true
+  });
+  assert.deepEqual(videoOk, []);
 });
 
 test('validateSelection blocks duplicate Instagram delivery caused by selecting a paired cross-post destination', () => {

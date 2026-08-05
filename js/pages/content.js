@@ -1248,9 +1248,6 @@ const ContentPage = (() => {
       if (fanpage?.platform === 'instagram' && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
         errors.push('Instagram cần URL ảnh công khai');
       }
-      if (fanpage?.platform === 'instagram' && mediaItems.some(item => item.type === 'video')) {
-        errors.push('Instagram chưa hỗ trợ video/Reels');
-      }
 
       return {
         valid: errors.length === 0,

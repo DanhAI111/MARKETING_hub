@@ -522,6 +522,7 @@ export class Repository {
         : (existing?.publishMode || 'live'),
       testedAt: post.testedAt !== undefined ? (post.testedAt || null) : (existing?.testedAt || null),
       testResult: JSON.stringify(post.testResult !== undefined ? post.testResult : (existing?.testResult || null)),
+      igContainerId: post.igContainerId !== undefined ? (post.igContainerId || null) : (existing?.igContainerId || null),
       source: post.source || existing?.source || 'manual',
       status: post.status || existing?.status || 'published',
       deletedAt: post.deletedAt !== undefined
@@ -541,8 +542,8 @@ export class Repository {
       INSERT INTO posts (
         id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
         mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, campaignId, engagement, approvalStatus,
-        publishMode, testedAt, testResult, source, status, deletedAt, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        publishMode, testedAt, testResult, igContainerId, source, status, deletedAt, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         fanpageId = excluded.fanpageId,
         externalPostId = excluded.externalPostId,
@@ -564,6 +565,7 @@ export class Repository {
         publishMode = excluded.publishMode,
         testedAt = excluded.testedAt,
         testResult = excluded.testResult,
+        igContainerId = excluded.igContainerId,
         source = excluded.source,
         status = excluded.status,
         deletedAt = excluded.deletedAt,
@@ -573,7 +575,7 @@ export class Repository {
       data.scheduledAt, data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems,
       data.publishError, data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId,
       data.campaignId, data.engagement, data.approvalStatus,
-      data.publishMode, data.testedAt, data.testResult,
+      data.publishMode, data.testedAt, data.testResult, data.igContainerId,
       data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ).run();
     return this.pruneDuplicatePublishedPosts(postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()));

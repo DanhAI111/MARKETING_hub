@@ -329,3 +329,121 @@ test('graphGet with no access_token sends no Authorization header', async () => 
     globalThis.fetch = originalFetch;
   }
 });
+
+// IG video defers across cron ticks (no blocking poll — Cloudflare CPU budget).
+// Tick 1: create the REELS container and park its id, no publish yet.
+test('defers an Instagram video on the first tick by creating a REELS container', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    calls.push({ url: u, body: options.body });
+    if (u.endsWith('/ig-1/media')) return jsonResponse({ id: 'reel-container-1' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'Reel caption', mediaItems: [{ type: 'video', url: 'https://cdn.example.test/reel.mp4' }] }
+    );
+    // deferred, not published
+    assert.equal(result.deferred, true);
+    assert.equal(result.igContainerId, 'reel-container-1');
+    // container must be created as a REELS video, not an image
+    const container = calls.find((c) => c.url.endsWith('/ig-1/media'));
+    assert.equal(container.body.get('media_type'), 'REELS');
+    assert.equal(container.body.get('video_url'), 'https://cdn.example.test/reel.mp4');
+    assert.equal(container.body.get('image_url'), null);
+    // must NOT publish on the first tick
+    assert.equal(calls.some((c) => c.url.endsWith('/ig-1/media_publish')), false, 'no publish on tick 1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// Tick 2: container already parked. FINISHED → single status check, then media_publish.
+test('publishes a deferred Instagram video once its container is FINISHED', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes('/reel-container-1')) return jsonResponse({ status_code: 'FINISHED' });
+    if (u.endsWith('/ig-1/media_publish')) return jsonResponse({ id: 'ig-reel-1' });
+    if (u.includes('/ig-reel-1')) return jsonResponse({ permalink: 'https://instagram.com/reel/1', media_url: 'https://cdn/reel.mp4' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'Reel caption', igContainerId: 'reel-container-1', mediaItems: [{ type: 'video', url: 'https://cdn.example.test/reel.mp4' }] }
+    );
+    assert.equal(result.externalPostId, 'ig-reel-1');
+    assert.equal(result.permalink, 'https://instagram.com/reel/1');
+    assert.equal(result.igContainerId, '', 'container marker cleared after publish');
+    // no second container created — reused the parked one
+    assert.equal(calls.some((u) => u.endsWith('/ig-1/media')), false, 'no new container');
+    assert.ok(calls.some((u) => u.includes('/reel-container-1')), 'checked parked container status');
+    assert.ok(calls.some((u) => u.endsWith('/ig-1/media_publish')), 'published parked container');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// Still encoding → defer again (reuse the same container id), never publish.
+test('re-defers a deferred Instagram video while its container is still processing', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes('/reel-container-1')) return jsonResponse({ status_code: 'IN_PROGRESS' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'Reel caption', igContainerId: 'reel-container-1', mediaItems: [{ type: 'video', url: 'https://cdn.example.test/reel.mp4' }] }
+    );
+    assert.equal(result.deferred, true);
+    assert.equal(result.igContainerId, 'reel-container-1');
+    assert.equal(calls.some((u) => u.endsWith('/ig-1/media_publish')), false, 'not published while processing');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fails a deferred Instagram video whose container reports an error status', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/reel-container-2')) return jsonResponse({ status_code: 'ERROR', status: 'Định dạng video không hợp lệ' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    await assert.rejects(
+      meta.publishInstagramPost(
+        { platform: 'instagram', instagramBusinessId: 'ig-1' },
+        { content: 'Reel caption', igContainerId: 'reel-container-2', mediaItems: [{ type: 'video', url: 'https://cdn.example.test/reel.mp4' }] }
+      ),
+      /Định dạng video không hợp lệ/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('rejects an Instagram video that is not a public URL', async () => {
+  const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+  await assert.rejects(
+    meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'Reel caption', mediaItems: [{ type: 'video', url: 'data:video/mp4;base64,AAAA' }] }
+    ),
+    /công khai/
+  );
+});
