@@ -90,22 +90,31 @@ const listGoogleDriveFolderMedia = async (folderId) => {
     throw new Error(`Không thể đọc folder Google Drive (HTTP ${response.status}). Hãy bật quyền "Anyone with the link".`);
   }
   const html = await response.text();
-  const entries = [];
+  const images = [];
+  const videos = [];
   const pattern = /<div class="flip-entry"[^>]*id="entry-([^"]+)"[\s\S]*?<div class="flip-entry-title">([^<]+)<\/div>/g;
   for (const match of html.matchAll(pattern)) {
     const name = decodeHtml(match[2]).trim();
-    if (!/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name)) continue;
-    entries.push({
-      type: 'image',
-      url: googleDriveThumbnailUrl(match[1]),
-      name
-    });
+    if (/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name)) {
+      images.push({ type: 'image', url: googleDriveThumbnailUrl(match[1]), name });
+    } else if (isVideoName(name)) {
+      // Video needs the real file, not a thumbnail — use the direct-download URL
+      // (same form normalizeMediaUrl produces for single Drive files).
+      videos.push({
+        type: 'video',
+        url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(match[1])}&export=download&confirm=t`,
+        name
+      });
+    }
   }
-  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-  if (!entries.length) {
-    throw new Error('Folder Google Drive không có ảnh hợp lệ hoặc chưa được chia sẻ công khai.');
-  }
-  return entries.slice(0, 10);
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  images.sort(byName);
+  videos.sort(byName);
+  // FB/IG posts carry either photos or exactly one video. Photos win when both
+  // exist (previous behavior); a video-only folder publishes its first video.
+  if (images.length) return images.slice(0, 10);
+  if (videos.length) return [videos[0]];
+  throw new Error('Folder Google Drive không có ảnh/video hợp lệ hoặc chưa được chia sẻ công khai.');
 };
 
 const filenameFromDisposition = (value = '') => {

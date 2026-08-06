@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { MetaService } from '../worker/meta.js';
 
 const require = createRequire(import.meta.url);
-const { getGoogleDriveFolderId } = require('../shared/meta-helpers.cjs');
+const { getGoogleDriveFolderId, listGoogleDriveFolderMedia } = require('../shared/meta-helpers.cjs');
 
 // Users logged into multiple Google accounts copy account-scoped /drive/u/<n>/folders/<id>
 // links. The old regex only matched /drive/folders/ → the folder URL was treated as a
@@ -25,6 +25,38 @@ test('extracts Drive folder id from both plain and account-scoped URLs', () => {
   // non-folder URLs stay non-folders
   assert.equal(getGoogleDriveFolderId('https://drive.google.com/file/d/f1/view'), '');
   assert.equal(getGoogleDriveFolderId('https://example.com/drive/u/1/folders/evil'), '');
+});
+
+const folderHtml = (entries) => entries
+  .map(([id, name]) => `<div class="flip-entry" id="entry-${id}"><div class="flip-entry-title">${name}</div></div>`)
+  .join('\n');
+
+// Drive folders can hold videos too. A video must resolve to the direct-download
+// URL (a thumbnail of a video is a still image → Meta rejects/mangles it).
+test('folder listing returns a direct-download video when the folder has only videos', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(folderHtml([['vid1', 'clip.mp4'], ['vid2', 'clip2.mov']]), { status: 200 });
+  try {
+    const items = await listGoogleDriveFolderMedia('folder-1');
+    assert.equal(items.length, 1, 'exactly one video (FB/IG allow one video per post)');
+    assert.equal(items[0].type, 'video');
+    assert.equal(items[0].url, 'https://drive.usercontent.google.com/download?id=vid1&export=download&confirm=t');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('folder listing prefers images and keeps thumbnail URLs for them', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(folderHtml([['img1', 'a.png'], ['vid1', 'clip.mp4']]), { status: 200 });
+  try {
+    const items = await listGoogleDriveFolderMedia('folder-1');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].type, 'image');
+    assert.match(items[0].url, /thumbnail\?id=img1/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('publishes a Facebook video without creating a second feed share', async () => {
