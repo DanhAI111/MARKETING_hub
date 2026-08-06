@@ -953,6 +953,8 @@ const ContentPage = (() => {
             Toast.success(scheduledDate <= new Date()
               ? `Đã hoàn tất đăng thử không công khai trên ${entries.length} page.`
               : `Đã lưu ${entries.length} lịch đăng thử; cron sẽ chạy an toàn khi đến giờ.`);
+          } else if (scheduledDate <= new Date()) {
+            Toast.success(`Đã gửi đăng ngay ${entries.length} bài — hệ thống đang đăng, trạng thái sẽ cập nhật trong ít phút.`);
           } else {
             Toast.success(formData.approvalStatus === 'approved'
               ? `Đã lưu ${entries.length} lịch đăng bài`
@@ -975,6 +977,20 @@ const ContentPage = (() => {
     const fanpageCount = modalEl.querySelector('#scheduleFanpageCount');
     const safeTestNotice = modalEl.querySelector('#safeTestNotice');
     const saveButton = modalEl.querySelector('#modalSave');
+    // "Đăng ngay" = same save flow with time pinned to now + approved; the server
+    // (POST /api/posts) auto-runs the publish queue when scheduledAt <= now.
+    const publishNowButton = document.createElement('button');
+    publishNowButton.type = 'button';
+    publishNowButton.className = 'btn btn-secondary';
+    publishNowButton.id = 'modalPublishNow';
+    saveButton?.before(publishNowButton);
+    publishNowButton.addEventListener('click', () => {
+      const scheduleInputEl = modalEl.querySelector('[data-field="scheduledAt"]');
+      const approvalSelectEl = modalEl.querySelector('[data-field="approvalStatus"]');
+      if (scheduleInputEl) scheduleInputEl.value = toLocalDateTimeValue(new Date());
+      if (approvalSelectEl) approvalSelectEl.value = 'approved';
+      saveButton?.click();
+    });
     const getSelectedFanpages = () => fanpageCheckboxes
       .filter(checkbox => checkbox.checked)
       .map(checkbox => Store.fanpages.getById(checkbox.value))
@@ -995,6 +1011,9 @@ const ContentPage = (() => {
           ? `Chạy đăng thử (${selected.length})`
           : `Lưu ${selected.length} lịch đăng`;
       }
+      // Safe test already runs immediately — a second immediate button would be noise.
+      publishNowButton.hidden = isSafeTest;
+      publishNowButton.textContent = `Đăng ngay (${selected.length})`;
       if (safeTestNotice) {
         safeTestNotice.hidden = !isSafeTest;
         if (isSafeTest) {
