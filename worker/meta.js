@@ -253,31 +253,46 @@ export class MetaService {
     if (!/^https?:\/\//i.test(media.url)) {
       throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
     }
-    // IG video (Reels) encodes async (30-90s). Polling to FINISHED inside one cron tick
-    // blows Cloudflare's CPU budget, so we defer across ticks: tick 1 creates the container
-    // and parks its id (post stays 'scheduled' → re-claimed next tick); later ticks do one
-    // cheap status check and publish once FINISHED. See migrations/0012_ig_video_container.sql.
-    let containerId;
-    if (media.type === 'video') {
-      if (!post.igContainerId) {
+    // IG media processes async server-side (video 30-90s; images usually instant, but a
+    // slow source like a Drive download can lag). Polling to FINISHED inside one cron tick
+    // blows Cloudflare's CPU budget, so we defer across ticks: create the container, park
+    // its id (post stays 'scheduled' → re-claimed next tick); later ticks do one cheap
+    // status check and publish once FINISHED. See migrations/0012_ig_video_container.sql.
+    let containerId = post.igContainerId || '';
+    if (!containerId) {
+      if (media.type === 'video') {
         const created = await this.createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post));
         return { deferred: true, igContainerId: created.id };
       }
-      const statusCode = await this.checkInstagramContainerStatus(post.igContainerId, token);
-      if (statusCode !== 'FINISHED') return { deferred: true, igContainerId: post.igContainerId };
-      containerId = post.igContainerId;
-    } else {
       const created = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
         access_token: token,
         image_url: media.url,
         caption: getPostMessage(post)
       });
       containerId = created.id;
+    } else {
+      // Parked container from an earlier tick (video, or an image Meta reported not
+      // ready). Throws on ERROR/EXPIRED so a broken media fails instead of looping.
+      const statusCode = await this.checkInstagramContainerStatus(containerId, token);
+      if (statusCode !== 'FINISHED') return { deferred: true, igContainerId: containerId };
     }
-    const published = await this.graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
-      access_token: token,
-      creation_id: containerId
-    });
+    let published;
+    try {
+      published = await this.graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
+        access_token: token,
+        creation_id: containerId
+      });
+    } catch (error) {
+      // Meta 9007/2207027 "Media ID is not available" = container still processing
+      // (seen in prod with image containers sourced from slow Drive URLs). Not a
+      // failure — park the container and publish on a later tick.
+      const code = error.meta?.error?.code;
+      const subcode = error.meta?.error?.error_subcode;
+      if (code === 9007 || subcode === 2207027) {
+        return { deferred: true, igContainerId: containerId };
+      }
+      throw error;
+    }
     const details = published.id
       ? await this.graphGet(published.id, { access_token: token, fields: 'permalink,media_url' }).catch(() => ({}))
       : {};

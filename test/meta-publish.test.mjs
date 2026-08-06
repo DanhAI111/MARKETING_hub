@@ -473,6 +473,56 @@ test('re-defers a deferred Instagram video while its container is still processi
   }
 });
 
+// Meta 9007/2207027 "Media ID is not available" = image container still processing
+// (happens with slow sources like Drive downloads). Must defer, not fail.
+test('defers an Instagram image when media_publish says the container is not ready', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/ig-1/media')) return jsonResponse({ id: 'img-container-1' });
+    if (u.endsWith('/ig-1/media_publish')) {
+      return jsonResponse({ error: { message: 'Media ID is not available', code: 9007, error_subcode: 2207027 } }, 400);
+    }
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'Caption', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }] }
+    );
+    assert.equal(result.deferred, true);
+    assert.equal(result.igContainerId, 'img-container-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('publishes a parked Instagram image container once FINISHED without recreating it', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes('/img-container-1')) return jsonResponse({ status_code: 'FINISHED' });
+    if (u.endsWith('/ig-1/media_publish')) return jsonResponse({ id: 'ig-img-1' });
+    if (u.includes('/ig-img-1')) return jsonResponse({ permalink: 'https://instagram.com/p/1' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'Caption', igContainerId: 'img-container-1', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }] }
+    );
+    assert.equal(result.externalPostId, 'ig-img-1');
+    assert.equal(result.igContainerId, '', 'marker cleared');
+    assert.equal(calls.some((u) => u.endsWith('/ig-1/media')), false, 'no duplicate container');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('fails a deferred Instagram video whose container reports an error status', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
