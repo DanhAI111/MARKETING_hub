@@ -473,6 +473,81 @@ test('re-defers a deferred Instagram video while its container is still processi
   }
 });
 
+// Multiple images = a real IG carousel: child containers with is_carousel_item,
+// then a CAROUSEL parent referencing them, then one media_publish.
+test('publishes multiple Instagram images as a carousel', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    calls.push({ url: u, body: options.body });
+    if (u.endsWith('/ig-1/media')) {
+      const isChild = options.body?.get('is_carousel_item') === 'true';
+      if (isChild) return jsonResponse({ id: `child-${calls.filter(c => c.body?.get?.('is_carousel_item') === 'true').length}` });
+      return jsonResponse({ id: 'carousel-1' });
+    }
+    if (u.endsWith('/ig-1/media_publish')) return jsonResponse({ id: 'ig-carousel-post' });
+    if (u.includes('/ig-carousel-post')) return jsonResponse({ permalink: 'https://instagram.com/p/car1' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      {
+        content: 'Album caption',
+        mediaItems: [
+          { type: 'image', url: 'https://cdn.example.test/1.jpg' },
+          { type: 'image', url: 'https://cdn.example.test/2.jpg' },
+          { type: 'image', url: 'https://cdn.example.test/3.jpg' }
+        ]
+      }
+    );
+    assert.equal(result.externalPostId, 'ig-carousel-post');
+    assert.equal(result.warning, '', 'no "only first image" warning anymore');
+    const children = calls.filter((c) => c.body?.get?.('is_carousel_item') === 'true');
+    assert.equal(children.length, 3, 'one child container per image');
+    assert.equal(children[0].body.get('image_url'), 'https://cdn.example.test/1.jpg');
+    const parent = calls.find((c) => c.body?.get?.('media_type') === 'CAROUSEL');
+    assert.ok(parent, 'carousel parent container created');
+    assert.equal(parent.body.get('children'), 'child-1,child-2,child-3');
+    assert.equal(parent.body.get('caption'), 'Album caption');
+    // caption only on the parent, not the children
+    assert.equal(children.every((c) => !c.body.get('caption')), true);
+    const publishes = calls.filter((c) => c.url.endsWith('/ig-1/media_publish'));
+    assert.equal(publishes.length, 1, 'single publish for the whole carousel');
+    assert.equal(publishes[0].body.get('creation_id'), 'carousel-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('single Instagram image still publishes as a plain image container', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    calls.push({ url: u, body: options.body });
+    if (u.endsWith('/ig-1/media')) return jsonResponse({ id: 'img-1' });
+    if (u.endsWith('/ig-1/media_publish')) return jsonResponse({ id: 'ig-img-post' });
+    if (u.includes('/ig-img-post')) return jsonResponse({ permalink: 'https://instagram.com/p/img1' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { content: 'One image', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/1.jpg' }] }
+    );
+    assert.equal(result.externalPostId, 'ig-img-post');
+    const container = calls.find((c) => c.url.endsWith('/ig-1/media'));
+    assert.equal(container.body.get('media_type'), null, 'no CAROUSEL for single image');
+    assert.equal(container.body.get('is_carousel_item'), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // Meta 9007/2207027 "Media ID is not available" = image container still processing
 // (happens with slow sources like Drive downloads). Must defer, not fail.
 test('defers an Instagram image when media_publish says the container is not ready', async () => {

@@ -242,17 +242,40 @@ export class MetaService {
     };
   }
 
+  // Carousel (2-10 images): one child container per image, then a CAROUSEL container
+  // referencing the children. Caption lives on the carousel container only.
+  async createInstagramCarouselContainer(igId, token, images, caption) {
+    const children = [];
+    for (const image of images) {
+      const child = await this.graphPost(`${igId}/media`, {
+        access_token: token,
+        image_url: image.url,
+        is_carousel_item: 'true'
+      });
+      if (!child.id) throw new Error('Meta không trả về container ID cho ảnh trong carousel.');
+      children.push(child.id);
+    }
+    return this.graphPost(`${igId}/media`, {
+      access_token: token,
+      media_type: 'CAROUSEL',
+      children: children.join(','),
+      caption
+    });
+  }
+
   async publishInstagramPost(fanpage, post) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.instagramBusinessId) {
       throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
     }
-    const mediaItems = getMediaItems(post);
-    const media = (await resolveMediaItem(mediaItems[0]))[0];
+    const mediaItems = await resolveMediaItems(post);
+    const media = mediaItems[0];
     if (!media?.url) throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
-    if (!/^https?:\/\//i.test(media.url)) {
+    const publicItems = mediaItems.filter((item) => /^https?:\/\//i.test(item.url || ''));
+    if (!publicItems.length) {
       throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
     }
+    const images = publicItems.filter((item) => item.type !== 'video');
     // IG media processes async server-side (video 30-90s; images usually instant, but a
     // slow source like a Drive download can lag). Polling to FINISHED inside one cron tick
     // blows Cloudflare's CPU budget, so we defer across ticks: create the container, park
@@ -264,11 +287,13 @@ export class MetaService {
         const created = await this.createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post));
         return { deferred: true, igContainerId: created.id };
       }
-      const created = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
-        access_token: token,
-        image_url: media.url,
-        caption: getPostMessage(post)
-      });
+      const created = images.length > 1
+        ? await this.createInstagramCarouselContainer(fanpage.instagramBusinessId, token, images, getPostMessage(post))
+        : await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+            access_token: token,
+            image_url: (images[0] || publicItems[0]).url,
+            caption: getPostMessage(post)
+          });
       containerId = created.id;
     } else {
       // Parked container from an earlier tick (video, or an image Meta reported not
@@ -301,10 +326,9 @@ export class MetaService {
       permalink: details.permalink || '',
       mediaUrl: details.media_url || media.url,
       igContainerId: '', // published → clear the mid-flight marker
-      // ponytail: IG carousel not yet supported — warn instead of silently dropping
-      // extra album images. Add real carousel publish when album parity is needed.
-      warning: mediaItems.length > 1
-        ? `Instagram: chỉ đăng ảnh đầu (${mediaItems.length} ảnh, chưa hỗ trợ carousel)`
+      // resolveMediaItems caps at 10 (= Meta's carousel limit); video posts carry one video.
+      warning: media.type === 'video' && mediaItems.length > 1
+        ? `Instagram: bài video chỉ đăng video đầu (${mediaItems.length} media)`
         : ''
     };
   }

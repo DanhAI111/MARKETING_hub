@@ -254,29 +254,55 @@ const publishFacebookPost = async (fanpage, post, { published = true } = {}) => 
   };
 };
 
+// Carousel (2-10 images): one child container per image, then a CAROUSEL container
+// referencing the children. Caption lives on the carousel container only.
+const createInstagramCarouselContainer = async (igId, token, images, caption) => {
+  const children = [];
+  for (const image of images) {
+    const child = await graphPost(`${igId}/media`, {
+      access_token: token,
+      image_url: image.url,
+      is_carousel_item: 'true'
+    });
+    if (!child.id) throw new Error('Meta không trả về container ID cho ảnh trong carousel.');
+    children.push(child.id);
+  }
+  return graphPost(`${igId}/media`, {
+    access_token: token,
+    media_type: 'CAROUSEL',
+    children: children.join(','),
+    caption
+  });
+};
+
 const publishInstagramPost = async (fanpage, post) => {
   const token = repo.decryptPageToken(fanpage);
   if (!token || !fanpage.instagramBusinessId) {
     throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
   }
 
-  const mediaItems = getMediaItems(post);
-  const media = (await resolveMediaItem(mediaItems[0]))[0];
+  const mediaItems = await resolveMediaItems(post);
+  const media = mediaItems[0];
   if (!media?.url) {
     throw new Error('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
   }
-  if (!/^https?:\/\//i.test(media.url)) {
+  const publicItems = mediaItems.filter((item) => /^https?:\/\//i.test(item.url || ''));
+  if (!publicItems.length) {
     throw new Error('Instagram Graph API không nhận file local/base64. Vui lòng dùng URL ảnh công khai.');
   }
+  const images = publicItems.filter((item) => item.type !== 'video');
   const container = media.type === 'video'
     ? await createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post))
-    : await graphPost(`${fanpage.instagramBusinessId}/media`, {
-        access_token: token,
-        image_url: media.url,
-        caption: getPostMessage(post)
-      });
-  // IG video containers process async — media_publish 400s until status FINISHED.
-  if (media.type === 'video') await waitInstagramContainerReady(container.id, token);
+    : images.length > 1
+      ? await createInstagramCarouselContainer(fanpage.instagramBusinessId, token, images, getPostMessage(post))
+      : await graphPost(`${fanpage.instagramBusinessId}/media`, {
+          access_token: token,
+          image_url: (images[0] || publicItems[0]).url,
+          caption: getPostMessage(post)
+        });
+  // IG video (and sometimes carousel/image) containers process async — media_publish
+  // 400s until status FINISHED. Node has no CPU limit, so a bounded blocking poll is fine.
+  if (media.type === 'video' || images.length > 1) await waitInstagramContainerReady(container.id, token);
   const published = await graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
     access_token: token,
     creation_id: container.id
@@ -289,10 +315,9 @@ const publishInstagramPost = async (fanpage, post) => {
     externalPostId: published.id || '',
     permalink: details.permalink || '',
     mediaUrl: details.media_url || media.url,
-    // ponytail: IG carousel not yet supported — warn instead of silently dropping
-    // extra album images. Add real carousel publish when album parity is needed.
-    warning: mediaItems.length > 1
-      ? `Instagram: chỉ đăng ảnh đầu (${mediaItems.length} ảnh, chưa hỗ trợ carousel)`
+    // resolveMediaItems caps at 10 (= Meta's carousel limit); video posts carry one video.
+    warning: media.type === 'video' && mediaItems.length > 1
+      ? `Instagram: bài video chỉ đăng video đầu (${mediaItems.length} media)`
       : ''
   };
 };

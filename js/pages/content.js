@@ -847,7 +847,7 @@ const ContentPage = (() => {
             <input type="file" id="scheduleMediaFileInput" accept="image/*" multiple hidden>
           </div>
           <div class="schedule-media-list" id="scheduleMediaList" aria-live="polite" aria-label="Danh sách media theo thứ tự đăng"></div>
-          <div class="form-hint">Kéo thả ảnh hoặc dùng nút trái/phải để đổi thứ tự. Facebook hỗ trợ URL ảnh/video hoặc ảnh upload. Instagram hiện cần URL ảnh công khai; file upload/base64 và video chưa được hỗ trợ.</div>
+          <div class="form-hint">Kéo thả ảnh hoặc dùng nút trái/phải để đổi thứ tự. Facebook hỗ trợ URL ảnh/video hoặc ảnh upload. Instagram cần URL công khai (không nhận file upload/base64): nhiều ảnh sẽ đăng thành carousel (tối đa 10), video đăng thành Reels.</div>
         </div>
       </div>
     `;
