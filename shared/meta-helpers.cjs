@@ -58,7 +58,9 @@ const getGoogleDriveFolderId = (rawUrl) => {
   try {
     const url = new URL(rawUrl);
     if (!/(^|\.)drive\.google\.com$/i.test(url.hostname)) return '';
-    return url.pathname.match(/\/drive\/folders\/([^/]+)/)?.[1] || '';
+    // Match /drive/folders/<id> AND account-scoped /drive/u/<n>/folders/<id> —
+    // the /u/<n>/ form is what users copy when logged into multiple Google accounts.
+    return url.pathname.match(/\/folders\/([^/?#]+)/)?.[1] || '';
   } catch {
     return '';
   }

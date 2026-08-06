@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { MetaService } from '../worker/meta.js';
+
+const require = createRequire(import.meta.url);
+const { getGoogleDriveFolderId } = require('../shared/meta-helpers.cjs');
+
+// Users logged into multiple Google accounts copy account-scoped /drive/u/<n>/folders/<id>
+// links. The old regex only matched /drive/folders/ → the folder URL was treated as a
+// direct image → Facebook rejected it ("Invalid parameter"/"image format not supported").
+test('extracts Drive folder id from both plain and account-scoped URLs', () => {
+  assert.equal(
+    getGoogleDriveFolderId('https://drive.google.com/drive/folders/abc123'),
+    'abc123'
+  );
+  assert.equal(
+    getGoogleDriveFolderId('https://drive.google.com/drive/u/1/folders/1WJ6tyJ8AVVC05SyxqXpdXAW9UUnSB-w-'),
+    '1WJ6tyJ8AVVC05SyxqXpdXAW9UUnSB-w-'
+  );
+  assert.equal(
+    getGoogleDriveFolderId('https://drive.google.com/drive/u/0/folders/xyz?usp=sharing'),
+    'xyz'
+  );
+  // non-folder URLs stay non-folders
+  assert.equal(getGoogleDriveFolderId('https://drive.google.com/file/d/f1/view'), '');
+  assert.equal(getGoogleDriveFolderId('https://example.com/drive/u/1/folders/evil'), '');
+});
 
 test('publishes a Facebook video without creating a second feed share', async () => {
   const originalFetch = globalThis.fetch;
