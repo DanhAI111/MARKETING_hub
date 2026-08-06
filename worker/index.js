@@ -10,14 +10,18 @@ import { fetchGoogleSheetCsvText } from '../shared/google-sheets.mjs';
 import { normalizePostMutation } from '../shared/repository-helpers.cjs';
 import { processWithConcurrency } from '../shared/publish-queue.cjs';
 
-const PUBLISH_CONCURRENCY = 3;
-const PUBLISH_LEASE_MS = 10 * 60 * 1000;
 // Cloudflare kills a cron invocation that exceeds its CPU/wall-clock budget with
-// no JS error, stranding every claimed post in 'publishing'. Each post can do a
-// Drive HEAD + a photo upload + a feed call, so a big batch blows the budget:
-// proven in prod on 2026-08-05 — 1 post published fine, a batch of 7 was silently
-// killed mid-run. The 1-min cron drains a backlog a few posts at a time instead.
-const PUBLISH_BATCH_LIMIT = 3;
+// no JS error, stranding every claimed post in 'publishing'. A single post is NOT
+// cheap: a Google Drive *folder* mediaUrl expands to a carousel of up to 10 images,
+// each doing its own /photos upload before the feed call — one carousel ≈ a dozen
+// Meta subrequests + a Drive fetch. Proven in prod 2026-08-05: 1 post published
+// fine, a broadcast of 7 carousels (batch 3 × concurrency 3 = 3 heavy posts in
+// parallel) was silently isolate-killed mid-run and stale-swept to 'failed'.
+// So we publish strictly ONE post per tick, sequentially — the guaranteed-safe
+// unit (a lone post fits the budget). The 1-min cron drains any backlog 1/tick.
+const PUBLISH_CONCURRENCY = 1;
+const PUBLISH_LEASE_MS = 10 * 60 * 1000;
+const PUBLISH_BATCH_LIMIT = 1;
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status,
