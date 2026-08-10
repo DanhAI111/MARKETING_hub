@@ -16,9 +16,11 @@ import {
   resolveMediaItem,
   resolveMediaItems,
   getOldestSyncDate,
+  getFacebookPostThumbnail,
   extractFacebookEngagement,
   extractInstagramEngagement
 } from '../shared/meta-helpers.cjs';
+import { getPostRetentionCutoff, isWithinPostRetention } from '../shared/repository-helpers.cjs';
 
 // Worker-specific: Blob from a data URL using atob/Uint8Array (no Node Buffer).
 const dataUrlToBlob = (dataUrl) => {
@@ -661,7 +663,8 @@ export class MetaService {
   async fetchFacebookPostBatch(fanpage, token, limit = 100) {
     const postEdges = ['published_posts', 'posts', 'feed'];
     const fieldSets = [
-      'id,message,created_time,updated_time,permalink_url,full_picture,shares,reactions.summary(total_count),comments.summary(total_count)',
+      'id,message,created_time,updated_time,permalink_url,full_picture,attachments{media,subattachments},shares,reactions.summary(total_count),comments.summary(total_count)',
+      'id,message,created_time,updated_time,permalink_url,full_picture,attachments{media,subattachments}',
       'id,message,created_time,updated_time,permalink_url,full_picture',
       'id,created_time,updated_time'
     ];
@@ -694,8 +697,10 @@ export class MetaService {
     let count = 0;
     const syncedIds = [];
     const syncedDates = [];
+    const cutoff = getPostRetentionCutoff();
     for (const post of posts) {
       const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
+      if (!isWithinPostRetention(publishedAt, cutoff)) continue;
       syncedIds.push(post.id);
       syncedDates.push(publishedAt);
       await this.repo.upsertPost({
@@ -706,7 +711,7 @@ export class MetaService {
         date: publishedAt.slice(0, 10),
         publishedAt,
         permalink: post.permalink_url || '',
-        mediaUrl: post.full_picture || '',
+        mediaUrl: getFacebookPostThumbnail(post),
         engagement: extractFacebookEngagement(post),
         source: 'facebook',
         status: 'published'
@@ -741,8 +746,10 @@ export class MetaService {
     let count = 0;
     const syncedIds = [];
     const syncedDates = [];
+    const cutoff = getPostRetentionCutoff();
     for (const item of media.data || []) {
       const publishedAt = item.timestamp || new Date().toISOString();
+      if (!isWithinPostRetention(publishedAt, cutoff)) continue;
       syncedIds.push(item.id);
       syncedDates.push(publishedAt);
       await this.repo.upsertPost({
@@ -828,6 +835,7 @@ export class MetaService {
     result.nextCursor = nextCursor < fanpages.length ? nextCursor : 0;
     result.hasMore = nextCursor < fanpages.length;
     result.finishedAt = new Date().toISOString();
+    result.expiredPosts = await this.repo.cleanupOldPublishedPosts?.(getPostRetentionCutoff()) || 0;
     await this.repo.saveState('lastMetaSyncCursor', result.nextCursor);
     await this.repo.saveState('lastMetaSync', result);
     return result;

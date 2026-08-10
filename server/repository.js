@@ -6,6 +6,7 @@ const {
   APPROVAL_STATUSES,
   PUBLISH_MODES,
   now,
+  getPostRetentionCutoff,
   parseJson,
   fanpageFromRow,
   postFromRow,
@@ -246,16 +247,35 @@ const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 
       LIMIT ? OFFSET ?
     `).all(normalizedLimit, normalizedOffset).map(postFromRow);
   }
+  const cutoff = getPostRetentionCutoff();
+  const cutoffDate = cutoff.slice(0, 10);
   if (usePostgres) {
     const rows = monthPrefix
       ? await pgQuery(`
         SELECT * FROM posts
         WHERE ("deletedAt" IS NULL OR "deletedAt" = '')
           AND (date LIKE $1 OR "scheduledAt" LIKE $2)
+          AND (status != 'published' OR (
+            CASE
+              WHEN "publishedAt" IS NOT NULL AND "publishedAt" != '' THEN "publishedAt" >= $3
+              ELSE date >= $4
+            END
+          ))
+        ORDER BY date DESC, "updatedAt" DESC
+        LIMIT $5 OFFSET $6
+      `, [`${monthPrefix}%`, `${monthPrefix}%`, cutoff, cutoffDate, normalizedLimit, normalizedOffset])
+      : await pgQuery(`
+        SELECT * FROM posts
+        WHERE ("deletedAt" IS NULL OR "deletedAt" = '')
+          AND (status != 'published' OR (
+            CASE
+              WHEN "publishedAt" IS NOT NULL AND "publishedAt" != '' THEN "publishedAt" >= $1
+              ELSE date >= $2
+            END
+          ))
         ORDER BY date DESC, "updatedAt" DESC
         LIMIT $3 OFFSET $4
-      `, [`${monthPrefix}%`, `${monthPrefix}%`, normalizedLimit, normalizedOffset])
-      : await pgQuery('SELECT * FROM posts WHERE "deletedAt" IS NULL OR "deletedAt" = \'\' ORDER BY date DESC, "updatedAt" DESC LIMIT $1 OFFSET $2', [normalizedLimit, normalizedOffset]);
+      `, [cutoff, cutoffDate, normalizedLimit, normalizedOffset]);
     return rows.map(postFromRow);
   }
   return monthPrefix
@@ -263,11 +283,27 @@ const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 
       SELECT * FROM posts
       WHERE (deletedAt IS NULL OR deletedAt = '')
         AND (date LIKE ? OR scheduledAt LIKE ?)
+        AND (status != 'published' OR (
+          CASE
+            WHEN publishedAt IS NOT NULL AND publishedAt != '' THEN publishedAt >= ?
+            ELSE date >= ?
+          END
+        ))
       ORDER BY date DESC, updatedAt DESC
       LIMIT ? OFFSET ?
-    `).all(`${monthPrefix}%`, `${monthPrefix}%`, normalizedLimit, normalizedOffset).map(postFromRow)
-    : getSqlite().prepare('SELECT * FROM posts WHERE deletedAt IS NULL OR deletedAt = \'\' ORDER BY date DESC, updatedAt DESC LIMIT ? OFFSET ?')
-      .all(normalizedLimit, normalizedOffset).map(postFromRow);
+    `).all(`${monthPrefix}%`, `${monthPrefix}%`, cutoff, cutoffDate, normalizedLimit, normalizedOffset).map(postFromRow)
+    : getSqlite().prepare(`
+      SELECT * FROM posts
+      WHERE (deletedAt IS NULL OR deletedAt = '')
+        AND (status != 'published' OR (
+          CASE
+            WHEN publishedAt IS NOT NULL AND publishedAt != '' THEN publishedAt >= ?
+            ELSE date >= ?
+          END
+        ))
+      ORDER BY date DESC, updatedAt DESC
+      LIMIT ? OFFSET ?
+    `).all(cutoff, cutoffDate, normalizedLimit, normalizedOffset).map(postFromRow);
 };
 
 const listSheetSyncPosts = async () => {
@@ -1203,6 +1239,37 @@ const markMissingSyncedPostsDeleted = async ({ fanpageId, source, externalPostId
   return result.changes || 0;
 };
 
+const cleanupOldPublishedPosts = async (cutoff = getPostRetentionCutoff()) => {
+  const normalizedCutoff = new Date(cutoff).toISOString();
+  const cutoffDate = normalizedCutoff.slice(0, 10);
+  const timestamp = now();
+  if (usePostgres) {
+    const rows = await pgQuery(`
+      UPDATE posts
+      SET "deletedAt" = $1, "updatedAt" = $1
+      WHERE status = 'published'
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
+        AND (
+          ("publishedAt" IS NOT NULL AND "publishedAt" != '' AND "publishedAt" < $2)
+          OR (("publishedAt" IS NULL OR "publishedAt" = '') AND date < $3)
+        )
+      RETURNING id
+    `, [timestamp, normalizedCutoff, cutoffDate]);
+    return rows.length;
+  }
+  const result = getSqlite().prepare(`
+    UPDATE posts
+    SET deletedAt = ?, updatedAt = ?
+    WHERE status = 'published'
+      AND (deletedAt IS NULL OR deletedAt = '')
+      AND (
+        (publishedAt IS NOT NULL AND publishedAt != '' AND publishedAt < ?)
+        OR ((publishedAt IS NULL OR publishedAt = '') AND date < ?)
+      )
+  `).run(timestamp, timestamp, normalizedCutoff, cutoffDate);
+  return result.changes || 0;
+};
+
 const deletePost = async (postId) => {
   const timestamp = now();
   if (usePostgres) {
@@ -1335,6 +1402,7 @@ module.exports = {
   deleteFanpage,
   upsertPost,
   markMissingSyncedPostsDeleted,
+  cleanupOldPublishedPosts,
   deletePost,
   setPostPublishState,
   saveMetaAccount,

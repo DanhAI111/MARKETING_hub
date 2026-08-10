@@ -276,6 +276,9 @@ test('Facebook sync persists organic reactions, comments, and shares', async () 
       id: 'fb-post-1',
       message: 'Launch',
       created_time: '2026-07-25T01:00:00.000Z',
+      attachments: {
+        data: [{ media: { image: { src: 'https://cdn.example.test/fb-video-thumbnail.jpg' } } }]
+      },
       reactions: { summary: { total_count: 123 } },
       comments: { summary: { total_count: 45 } },
       shares: { count: 6 }
@@ -298,6 +301,7 @@ test('Facebook sync persists organic reactions, comments, and shares', async () 
     { likes: 123, comments: 45, shares: 6, reach: 0 }
   );
   assert.match(saved[0].engagement.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(saved[0].mediaUrl, 'https://cdn.example.test/fb-video-thumbnail.jpg');
 });
 
 test('Instagram sync persists like and comment counts', async () => {

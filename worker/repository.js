@@ -6,6 +6,7 @@ import {
   APPROVAL_STATUSES,
   PUBLISH_MODES,
   now,
+  getPostRetentionCutoff,
   parseJson,
   fanpageFromRow,
   postFromRow,
@@ -61,20 +62,30 @@ export class Repository {
       return results.map(postFromRow);
     }
     const monthPrefix = String(month || '').trim();
+    const cutoff = getPostRetentionCutoff();
+    const cutoffDate = cutoff.slice(0, 10);
+    const retentionClause = `(status != 'published' OR (
+      CASE
+        WHEN publishedAt IS NOT NULL AND publishedAt != '' THEN publishedAt >= ?
+        ELSE date >= ?
+      END
+    ))`;
     const sql = monthPrefix
       ? `SELECT * FROM posts
           WHERE (deletedAt IS NULL OR deletedAt = '')
             AND (date LIKE ? OR scheduledAt LIKE ?)
+            AND ${retentionClause}
           ORDER BY date DESC, updatedAt DESC
           LIMIT ? OFFSET ?`
       : `SELECT * FROM posts
-          WHERE deletedAt IS NULL OR deletedAt = ''
+          WHERE (deletedAt IS NULL OR deletedAt = '')
+            AND ${retentionClause}
           ORDER BY date DESC, updatedAt DESC
           LIMIT ? OFFSET ?`;
     const statement = this.db.prepare(sql);
     const { results } = monthPrefix
-      ? await statement.bind(`${monthPrefix}%`, `${monthPrefix}%`, normalizedLimit, normalizedOffset).all()
-      : await statement.bind(normalizedLimit, normalizedOffset).all();
+      ? await statement.bind(`${monthPrefix}%`, `${monthPrefix}%`, cutoff, cutoffDate, normalizedLimit, normalizedOffset).all()
+      : await statement.bind(cutoff, cutoffDate, normalizedLimit, normalizedOffset).all();
     return results.map(postFromRow);
   }
 
@@ -622,6 +633,22 @@ export class Repository {
       WHERE ${clauses.join(' AND ')}
     `).bind(...params).run();
     return result.meta?.changes || 0;
+  }
+
+  async cleanupOldPublishedPosts(cutoff = getPostRetentionCutoff()) {
+    const normalizedCutoff = new Date(cutoff).toISOString();
+    const timestamp = now();
+    const result = await this.db.prepare(`
+      UPDATE posts
+      SET deletedAt = ?, updatedAt = ?
+      WHERE status = 'published'
+        AND (deletedAt IS NULL OR deletedAt = '')
+        AND (
+          (publishedAt IS NOT NULL AND publishedAt != '' AND publishedAt < ?)
+          OR ((publishedAt IS NULL OR publishedAt = '') AND date < ?)
+        )
+    `).bind(timestamp, timestamp, normalizedCutoff, normalizedCutoff.slice(0, 10)).run();
+    return Number(result?.meta?.changes || result?.changes || 0);
   }
 
   async deletePost(postId) {

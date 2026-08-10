@@ -17,9 +17,11 @@ const {
   resolveMediaItem,
   resolveMediaItems,
   getOldestSyncDate,
+  getFacebookPostThumbnail,
   extractFacebookEngagement,
   extractInstagramEngagement
 } = require('../shared/meta-helpers.cjs');
+const { getPostRetentionCutoff, isWithinPostRetention } = require('../shared/repository-helpers.cjs');
 
 const configuredScopes = () => {
   const raw = process.env.META_SCOPES || DEFAULT_SCOPES.join(',');
@@ -624,7 +626,8 @@ const connectPages = async (userAccessToken) => {
 const fetchFacebookPostBatch = async (fanpage, token, limit = 100) => {
   const postEdges = ['published_posts', 'posts', 'feed'];
   const fieldSets = [
-    'id,message,created_time,updated_time,permalink_url,full_picture,shares,reactions.summary(total_count),comments.summary(total_count)',
+    'id,message,created_time,updated_time,permalink_url,full_picture,attachments{media,subattachments},shares,reactions.summary(total_count),comments.summary(total_count)',
+    'id,message,created_time,updated_time,permalink_url,full_picture,attachments{media,subattachments}',
     'id,message,created_time,updated_time,permalink_url,full_picture',
     'id,created_time,updated_time'
   ];
@@ -657,8 +660,10 @@ const syncFacebookPosts = async (fanpage, { limit = 100 } = {}) => {
   let count = 0;
   const syncedIds = [];
   const syncedDates = [];
+  const cutoff = getPostRetentionCutoff();
   for (const post of posts) {
     const publishedAt = post.created_time || post.updated_time || new Date().toISOString();
+    if (!isWithinPostRetention(publishedAt, cutoff)) continue;
     syncedIds.push(post.id);
     syncedDates.push(publishedAt);
     await repo.upsertPost({
@@ -669,7 +674,7 @@ const syncFacebookPosts = async (fanpage, { limit = 100 } = {}) => {
       date: publishedAt.slice(0, 10),
       publishedAt,
       permalink: post.permalink_url || '',
-      mediaUrl: post.full_picture || '',
+      mediaUrl: getFacebookPostThumbnail(post),
       engagement: extractFacebookEngagement(post),
       source: 'facebook',
       status: 'published'
@@ -704,8 +709,10 @@ const syncInstagramMedia = async (fanpage, { limit = 100 } = {}) => {
   let count = 0;
   const syncedIds = [];
   const syncedDates = [];
+  const cutoff = getPostRetentionCutoff();
   for (const item of media.data || []) {
     const publishedAt = item.timestamp || new Date().toISOString();
+    if (!isWithinPostRetention(publishedAt, cutoff)) continue;
     syncedIds.push(item.id);
     syncedDates.push(publishedAt);
     await repo.upsertPost({
@@ -784,6 +791,7 @@ const syncAll = async ({ cursor = null, maxFanpages = null, postLimit = 100 } = 
   result.nextCursor = nextCursor < fanpages.length ? nextCursor : 0;
   result.hasMore = nextCursor < fanpages.length;
   result.finishedAt = new Date().toISOString();
+  result.expiredPosts = await repo.cleanupOldPublishedPosts?.(getPostRetentionCutoff()) || 0;
   await repo.saveState('lastMetaSyncCursor', result.nextCursor);
   await repo.saveState('lastMetaSync', result);
   return result;

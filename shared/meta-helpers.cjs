@@ -169,6 +169,22 @@ const getOldestSyncDate = (dates = []) => dates
   .map((value) => String(value).slice(0, 10))
   .sort()[0] || '';
 
+const getFacebookPostThumbnail = (post = {}) => {
+  const findAttachmentImage = (attachments = [], depth = 0) => {
+    if (depth > 2) return '';
+    for (const attachment of attachments || []) {
+      const direct = attachment?.media?.image?.src || attachment?.media?.source || '';
+      if (direct) return direct;
+      const nested = findAttachmentImage(attachment?.subattachments?.data || [], depth + 1);
+      if (nested) return nested;
+    }
+    return '';
+  };
+  return post.full_picture
+    || findAttachmentImage(post.attachments?.data || [])
+    || '';
+};
+
 // Organic engagement from a Facebook post edge (reactions/comments/shares summaries).
 const extractFacebookEngagement = (post = {}) => ({
   likes: post.reactions?.summary?.total_count ?? post.likes?.summary?.total_count ?? 0,
@@ -207,6 +223,7 @@ module.exports = {
   resolveMediaItem,
   resolveMediaItems,
   getOldestSyncDate,
+  getFacebookPostThumbnail,
   extractFacebookEngagement,
   extractInstagramEngagement
 };

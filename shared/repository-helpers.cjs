@@ -19,6 +19,42 @@ const PUBLISH_MODES = new Set(['live', 'safe_test']);
 
 const now = () => new Date().toISOString();
 
+const POST_RETENTION_MONTHS = 2;
+
+// Subtract calendar months without JavaScript's end-of-month rollover (for
+// example, March 31 -> March 3 when February has fewer days). The returned ISO
+// timestamp is shared by Node, D1 queries, and Meta ingestion.
+const getPostRetentionCutoff = (reference) => {
+  // Default retention is day-based so all requests made during one day share
+  // the same boundary. Supplying a reference preserves its exact time for
+  // deterministic jobs/tests.
+  const defaultReference = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+  const input = reference ?? defaultReference;
+  const date = input instanceof Date ? new Date(input.getTime()) : new Date(input);
+  if (Number.isNaN(date.getTime())) throw new TypeError('Invalid post retention reference date');
+  const targetYear = date.getUTCFullYear();
+  const targetMonth = date.getUTCMonth() - POST_RETENTION_MONTHS;
+  const lastTargetDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const cutoff = new Date(Date.UTC(
+    targetYear,
+    targetMonth,
+    Math.min(date.getUTCDate(), lastTargetDay),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    date.getUTCSeconds(),
+    date.getUTCMilliseconds()
+  ));
+  return cutoff.toISOString();
+};
+
+const isWithinPostRetention = (publishedAt, cutoff = getPostRetentionCutoff()) => {
+  const timestamp = new Date(publishedAt).getTime();
+  const cutoffTimestamp = new Date(cutoff).getTime();
+  return Number.isFinite(timestamp)
+    && Number.isFinite(cutoffTimestamp)
+    && timestamp >= cutoffTimestamp;
+};
+
 const parseJson = (value, fallback) => {
   if (!value) return fallback;
   try { return JSON.parse(value); } catch { return fallback; }
@@ -99,7 +135,10 @@ module.exports = {
   APP_SINGLETONS,
   APPROVAL_STATUSES,
   PUBLISH_MODES,
+  POST_RETENTION_MONTHS,
   now,
+  getPostRetentionCutoff,
+  isWithinPostRetention,
   parseJson,
   normalizePostMutation,
   fanpageFromRow,

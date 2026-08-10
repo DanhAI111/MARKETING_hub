@@ -47,12 +47,29 @@ test('post rows render lazy thumbnails and progressively reveal long lists', () 
   );
 });
 
+test('post thumbnails normalize previews, fall back through channel context, and bind image errors', () => {
+  const postRendererSource = contentSource.slice(
+    contentSource.indexOf('const renderPostItem ='),
+    contentSource.indexOf('// ── Bind Events ──')
+  );
+
+  assert.match(postRendererSource, /MediaGallery\.previewUrl\(/);
+  assert.match(postRendererSource, /fanpage\??\.imageUrl/);
+  assert.match(postRendererSource, /platformPlaceholderIcon\(\)/);
+  assert.doesNotMatch(contentSource, /\sonerror\s*=/i);
+  assert.match(contentSource, /addEventListener\(\s*['"]error['"]/);
+});
+
 test('Instagram sync stores a still thumbnail for videos', () => {
   assert.match(metaSource, /media_type/);
   assert.match(
     metaSource,
     /item\.media_type === 'VIDEO'\s*\?\s*\(item\.thumbnail_url \|\| item\.media_url \|\| ''\)/
   );
+});
+
+test('Facebook sync requests attachment media for video and album thumbnails', () => {
+  assert.match(metaSource, /attachments\{media,subattachments\}/);
 });
 
 test('D1 missing-post pruning binds the synced ID list as one JSON parameter', async () => {

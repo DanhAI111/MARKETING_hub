@@ -166,7 +166,7 @@ const ContentPage = (() => {
               return `
                 <article class="content-master-post">
                   <div class="content-master-channel" style="--channel-color:${platform?.color || '#64748b'}">
-                    ${imageUrl ? `<img src="${Utils.escapeHtml(imageUrl)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();">` : ''}
+                    ${imageUrl ? `<img src="${Utils.escapeHtml(imageUrl)}" alt="" loading="lazy" data-content-remove-on-error>` : ''}
                     <span class="fanpage-avatar-fallback">${Utils.escapeHtml(getInitials(fanpage?.name || 'Page'))}</span>
                   </div>
                   <div class="content-master-body">
@@ -174,7 +174,7 @@ const ContentPage = (() => {
                       <span>${Utils.escapeHtml(fanpage?.name || 'Không rõ kênh')}</span>
                       <span>${post.status === 'published' ? Utils.formatDateShort(post.date) : formatScheduleTime(post.testedAt || post.scheduledAt)}</span>
                     </div>
-                    ${renderPostItem(post)}
+                    ${renderPostItem(post, fanpage)}
                   </div>
                 </article>
               `;
@@ -270,7 +270,7 @@ const ContentPage = (() => {
       <div class="fanpage-control-item">
         <div class="fanpage-control-main">
           <span class="fanpage-control-avatar" style="color:${platform.color};background:${platform.color}18">
-            ${imageUrl ? `<img src="${Utils.escapeHtml(imageUrl)}" alt="${Utils.escapeHtml(fp.name)}" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();">` : ''}
+            ${imageUrl ? `<img src="${Utils.escapeHtml(imageUrl)}" alt="${Utils.escapeHtml(fp.name)}" loading="lazy" data-content-remove-on-error>` : ''}
             <span class="fanpage-avatar-fallback">${Utils.escapeHtml(getInitials(fp.name))}</span>
           </span>
           <div>
@@ -290,7 +290,7 @@ const ContentPage = (() => {
     `;
   };
 
-  const renderPostItem = (post) => {
+  const renderPostItem = (post, fanpage) => {
     const status = getPostStatus(post.status);
     const displayTime = post.status === 'published'
       ? (post.date ? `${post.date.split('-')[2]}/${post.date.split('-')[1]}` : '')
@@ -298,7 +298,9 @@ const ContentPage = (() => {
     const mediaCount = Array.isArray(post.mediaItems) && post.mediaItems.length
       ? post.mediaItems.length
       : (post.mediaUrl ? 1 : 0);
-    const thumbnailUrl = getPostThumbnail(post);
+    const thumbnailUrl = getPostThumbnail(post, fanpage);
+    const channelFallback = normalizeThumbnailUrl(fanpage?.imageUrl);
+    const platformFallback = getPlatformThumbnailFallback(fanpage?.platform);
     const permalink = ['published', 'tested'].includes(post.status) ? (post.permalink || '') : '';
     const linkable = /^https?:\/\//i.test(permalink);
     const eng = post.engagement;
@@ -313,8 +315,8 @@ const ContentPage = (() => {
       <div class="post-item ${thumbnailUrl ? 'has-thumbnail' : ''} ${post.status === 'failed' ? 'post-item-failed' : ''} ${linkable ? 'post-item-linkable' : ''}"${linkable ? ` data-permalink="${Utils.escapeHtml(permalink)}"` : ''}>
         ${thumbnailUrl ? `
           <span class="post-thumbnail">
-            <img class="post-thumbnail-image" src="${Utils.escapeHtml(thumbnailUrl)}" alt="" loading="lazy" decoding="async" onerror="this.parentElement.classList.add('is-broken'); this.remove();">
-            <span class="post-thumbnail-fallback">${Utils.icons.image || ''}</span>
+            <img class="post-thumbnail-image" src="${Utils.escapeHtml(thumbnailUrl)}" alt="" loading="lazy" decoding="async" data-post-thumbnail data-channel-fallback="${Utils.escapeHtml(channelFallback)}" data-platform-fallback="${Utils.escapeHtml(platformFallback)}">
+            <span class="post-thumbnail-fallback">${platformPlaceholderIcon()}</span>
           </span>
         ` : ''}
         <span class="post-date">${displayTime}</span>
@@ -335,29 +337,44 @@ const ContentPage = (() => {
     `;
   };
 
-  const getPostThumbnail = (post = {}) => {
+  const normalizeThumbnailUrl = (rawValue = '') => {
+    const raw = String(rawValue || '').trim();
+    if (!raw || /\.(mp4|mov|webm)(?:$|[?#])/i.test(raw)) return '';
+    if (/^data:image\//i.test(raw)) return raw;
+    const safe = Utils.safeUrl(raw);
+    if (safe === '#') return '';
+    return MediaGallery.previewUrl(safe);
+  };
+
+  const getPlatformThumbnailFallback = (platform = '') => (
+    String(platform).toLowerCase() === 'facebook'
+      ? 'assets/mkt-hub-redesign/content-facebook.png'
+      : 'assets/mkt-hub-redesign/event-workshop.png'
+  );
+
+  const getPostThumbnail = (post = {}, fanpage = null) => {
     const mediaItems = Array.isArray(post.mediaItems) ? post.mediaItems : [];
     const still = mediaItems.find(item => {
       const type = String(item?.type || '').toLowerCase();
       return item?.thumbnailUrl || item?.thumbnail_url || (item?.url && type !== 'video');
     });
-    const raw = String(
+    const raw = (
       still?.thumbnailUrl
       || still?.thumbnail_url
       || still?.url
       || post.thumbnailUrl
       || post.mediaUrl
       || ''
-    ).trim();
-    if (!raw || /\.(mp4|mov|webm)(?:$|[?#])/i.test(raw)) return '';
-    if (/^data:image\//i.test(raw)) return raw;
-    const safe = Utils.safeUrl(raw);
-    return safe === '#' ? '' : safe;
+    );
+    return normalizeThumbnailUrl(raw)
+      || normalizeThumbnailUrl(fanpage?.imageUrl)
+      || getPlatformThumbnailFallback(fanpage?.platform);
   };
 
   // ── Bind Events ──
 
   const bindEvents = () => {
+    bindContentImageFallbacks();
     // Month picker
     container.querySelector('#prevMonthBtn')?.addEventListener('click', async () => {
       currentMonth = Utils.getPrevMonth(currentMonth);
@@ -533,6 +550,36 @@ const ContentPage = (() => {
         Sidebar.updateBadge();
       });
     });
+  };
+
+  const bindContentImageFallbacks = () => {
+    container.querySelectorAll('img[data-content-remove-on-error]').forEach(image => {
+      const removeBrokenImage = () => {
+        image.parentElement?.classList.add('is-fallback');
+        image.remove();
+      };
+      image.addEventListener('error', removeBrokenImage, { once: true });
+      if (image.complete && image.naturalWidth === 0) removeBrokenImage();
+    });
+
+    container.querySelectorAll('img[data-post-thumbnail]').forEach(image => {
+      const applyNextFallback = () => {
+        const stage = Number(image.dataset.fallbackStage || 0);
+        const candidates = [image.dataset.channelFallback, image.dataset.platformFallback]
+          .filter(Boolean);
+        const next = candidates.find((candidate, index) => index >= stage && candidate !== image.getAttribute('src'));
+        if (next) {
+          image.dataset.fallbackStage = String(candidates.indexOf(next) + 1);
+          image.src = next;
+          return;
+        }
+        image.parentElement?.classList.add('is-broken');
+        image.remove();
+      };
+      image.addEventListener('error', applyNextFallback);
+      if (image.complete && image.naturalWidth === 0) applyNextFallback();
+    });
+
   };
 
   // ── Modals ──
@@ -1555,7 +1602,7 @@ const ContentPage = (() => {
             <div class="schedule-media-thumb ${isVideo ? 'is-video' : ''}">
               ${isVideo
                 ? '<span>VIDEO</span>'
-                : `<img src="${Utils.escapeHtml(previewUrl)}" alt="Ảnh ${index + 1}: ${Utils.escapeHtml(displayName)}" loading="lazy" draggable="false" onerror="this.parentElement.classList.add('is-broken'); this.remove();">`}
+                : `<img src="${Utils.escapeHtml(previewUrl)}" alt="Ảnh ${index + 1}: ${Utils.escapeHtml(displayName)}" loading="lazy" draggable="false" data-media-preview>`}
             </div>
             <div class="schedule-media-info">
               <div class="schedule-media-name" title="${Utils.escapeHtml(displayName)}">${Utils.escapeHtml(displayName)}</div>
@@ -1575,6 +1622,15 @@ const ContentPage = (() => {
           </div>
         `;
       }).join('');
+
+      list.querySelectorAll('img[data-media-preview]').forEach(image => {
+        const removeBrokenPreview = () => {
+          image.parentElement?.classList.add('is-broken');
+          image.remove();
+        };
+        image.addEventListener('error', removeBrokenPreview, { once: true });
+        if (image.complete && image.naturalWidth === 0) removeBrokenPreview();
+      });
 
       list.querySelectorAll('.remove-schedule-media-btn').forEach(btn => {
         btn.addEventListener('click', () => {
