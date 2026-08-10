@@ -128,8 +128,18 @@ export class Repository {
   async failStalePublishingPosts(staleBefore) {
     const result = await this.db.prepare(`
       UPDATE posts
-      SET status = 'failed',
-          publishError = 'Lần đăng trước bị gián đoạn. Hãy thử lại để tiếp tục đăng bài.',
+      SET status = CASE
+            WHEN publishMode = 'safe_test' THEN 'scheduled'
+            WHEN COALESCE(externalPostId, '') != '' THEN 'published'
+            WHEN COALESCE(igContainerId, '') != '' THEN 'scheduled'
+            ELSE 'failed'
+          END,
+          publishError = CASE
+            WHEN publishMode = 'safe_test'
+              OR COALESCE(externalPostId, '') != ''
+              OR COALESCE(igContainerId, '') != '' THEN ''
+            ELSE 'Lần đăng trước bị gián đoạn. Hãy thử lại để tiếp tục đăng bài.'
+          END,
           updatedAt = ?
       WHERE status = 'publishing'
         AND updatedAt < ?

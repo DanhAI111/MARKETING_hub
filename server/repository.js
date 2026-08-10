@@ -25,6 +25,17 @@ const getSqlite = () => {
   return sqliteDb;
 };
 
+let sqlitePostContainerColumnReady = false;
+const ensureSqlitePostContainerColumn = () => {
+  if (sqlitePostContainerColumnReady) return;
+  const db = getSqlite();
+  const postColumns = db.prepare('PRAGMA table_info(posts)').all().map((column) => column.name);
+  if (!postColumns.includes('igContainerId')) {
+    db.exec('ALTER TABLE posts ADD COLUMN igContainerId TEXT');
+  }
+  sqlitePostContainerColumnReady = true;
+};
+
 const getPool = () => {
   if (!pgPool) {
     const { Pool } = require('pg');
@@ -121,6 +132,7 @@ const initPostgres = async () => {
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "publishMode" TEXT NOT NULL DEFAULT 'live';
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "testedAt" TEXT;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS "testResult" TEXT;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS "igContainerId" TEXT;
     ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "deletedAt" TEXT;
     ALTER TABLE fanpages ADD COLUMN IF NOT EXISTS "crossPostInstagram" BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -183,7 +195,7 @@ const init = async () => {
     await initPostgres();
     return;
   }
-  getSqlite();
+  ensureSqlitePostContainerColumn();
 };
 
 const assertAppCollection = (collection) => {
@@ -360,8 +372,18 @@ const failStalePublishingPosts = async (staleBefore) => {
   if (usePostgres) {
     const rows = await pgQuery(`
       UPDATE posts
-      SET status = 'failed',
-          "publishError" = $1,
+      SET status = CASE
+            WHEN "publishMode" = 'safe_test' THEN 'scheduled'
+            WHEN COALESCE("externalPostId", '') != '' THEN 'published'
+            WHEN COALESCE("igContainerId", '') != '' THEN 'scheduled'
+            ELSE 'failed'
+          END,
+          "publishError" = CASE
+            WHEN "publishMode" = 'safe_test'
+              OR COALESCE("externalPostId", '') != ''
+              OR COALESCE("igContainerId", '') != '' THEN ''
+            ELSE $1
+          END,
           "updatedAt" = $2
       WHERE status = 'publishing'
         AND "updatedAt" < $3
@@ -370,10 +392,21 @@ const failStalePublishingPosts = async (staleBefore) => {
     `, [publishError, timestamp, staleBefore]);
     return rows.length;
   }
+  ensureSqlitePostContainerColumn();
   return getSqlite().prepare(`
     UPDATE posts
-    SET status = 'failed',
-        publishError = ?,
+    SET status = CASE
+          WHEN publishMode = 'safe_test' THEN 'scheduled'
+          WHEN COALESCE(externalPostId, '') != '' THEN 'published'
+          WHEN COALESCE(igContainerId, '') != '' THEN 'scheduled'
+          ELSE 'failed'
+        END,
+        publishError = CASE
+          WHEN publishMode = 'safe_test'
+            OR COALESCE(externalPostId, '') != ''
+            OR COALESCE(igContainerId, '') != '' THEN ''
+          ELSE ?
+        END,
         updatedAt = ?
     WHERE status = 'publishing'
       AND updatedAt < ?
@@ -946,6 +979,7 @@ const pruneDuplicatePublishedPosts = async (post) => {
 };
 
 const upsertPost = async (post = {}) => {
+  if (!usePostgres) ensureSqlitePostContainerColumn();
   const timestamp = now();
   const existing = postFromRow(await findPostRow(post));
   const postId = existing?.id || post.id || id();
@@ -979,6 +1013,7 @@ const upsertPost = async (post = {}) => {
       : (existing?.publishMode || 'live'),
     testedAt: post.testedAt !== undefined ? (post.testedAt || null) : (existing?.testedAt || null),
     testResult: JSON.stringify(post.testResult !== undefined ? post.testResult : (existing?.testResult || null)),
+    igContainerId: post.igContainerId !== undefined ? (post.igContainerId || null) : (existing?.igContainerId || null),
     source: post.source || existing?.source || 'manual',
     status: post.status || existing?.status || 'published',
     deletedAt: post.deletedAt !== undefined
@@ -1003,10 +1038,10 @@ const upsertPost = async (post = {}) => {
       INSERT INTO posts (
         id, "fanpageId", "externalPostId", title, content, date, "scheduledAt", "publishedAt", permalink, "mediaUrl",
         "mediaItems", "publishError", "sheetUrl", "sheetRowKey", "sheetDefaultFanpageId", "campaignId", engagement, "approvalStatus",
-        "publishMode", "testedAt", "testResult", source, status, "deletedAt", "createdAt", "updatedAt"
+        "publishMode", "testedAt", "testResult", "igContainerId", source, status, "deletedAt", "createdAt", "updatedAt"
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
       )
       ON CONFLICT(id) DO UPDATE SET
         "fanpageId" = EXCLUDED."fanpageId",
@@ -1029,6 +1064,7 @@ const upsertPost = async (post = {}) => {
         "publishMode" = EXCLUDED."publishMode",
         "testedAt" = EXCLUDED."testedAt",
         "testResult" = EXCLUDED."testResult",
+        "igContainerId" = EXCLUDED."igContainerId",
         source = EXCLUDED.source,
         status = EXCLUDED.status,
         "deletedAt" = EXCLUDED."deletedAt",
@@ -1037,7 +1073,7 @@ const upsertPost = async (post = {}) => {
       data.id, data.fanpageId, data.externalPostId, data.title, data.content, data.date, data.scheduledAt,
       data.publishedAt, data.permalink, data.mediaUrl, data.mediaItems, data.publishError,
       data.sheetUrl, data.sheetRowKey, data.sheetDefaultFanpageId, data.campaignId, data.engagement, data.approvalStatus,
-      data.publishMode, data.testedAt, data.testResult,
+      data.publishMode, data.testedAt, data.testResult, data.igContainerId,
       data.source, data.status, data.deletedAt, data.createdAt, data.updatedAt
     ]);
     return pruneDuplicatePublishedPosts(postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]));
@@ -1047,11 +1083,11 @@ const upsertPost = async (post = {}) => {
     INSERT INTO posts (
       id, fanpageId, externalPostId, title, content, date, scheduledAt, publishedAt, permalink, mediaUrl,
       mediaItems, publishError, sheetUrl, sheetRowKey, sheetDefaultFanpageId, campaignId, engagement, approvalStatus,
-      publishMode, testedAt, testResult, source, status, deletedAt, createdAt, updatedAt
+      publishMode, testedAt, testResult, igContainerId, source, status, deletedAt, createdAt, updatedAt
     ) VALUES (
       @id, @fanpageId, @externalPostId, @title, @content, @date, @scheduledAt, @publishedAt, @permalink, @mediaUrl,
       @mediaItems, @publishError, @sheetUrl, @sheetRowKey, @sheetDefaultFanpageId, @campaignId, @engagement, @approvalStatus,
-      @publishMode, @testedAt, @testResult, @source, @status, @deletedAt, @createdAt, @updatedAt
+      @publishMode, @testedAt, @testResult, @igContainerId, @source, @status, @deletedAt, @createdAt, @updatedAt
     )
     ON CONFLICT(source, externalPostId) WHERE externalPostId IS NOT NULL DO UPDATE SET
       fanpageId = excluded.fanpageId,
@@ -1073,6 +1109,7 @@ const upsertPost = async (post = {}) => {
       publishMode = excluded.publishMode,
       testedAt = excluded.testedAt,
       testResult = excluded.testResult,
+      igContainerId = excluded.igContainerId,
       status = excluded.status,
       deletedAt = excluded.deletedAt,
       updatedAt = excluded.updatedAt
@@ -1097,6 +1134,7 @@ const upsertPost = async (post = {}) => {
       publishMode = excluded.publishMode,
       testedAt = excluded.testedAt,
       testResult = excluded.testResult,
+      igContainerId = excluded.igContainerId,
       source = excluded.source,
       status = excluded.status,
       deletedAt = excluded.deletedAt,

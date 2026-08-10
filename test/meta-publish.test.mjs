@@ -387,6 +387,92 @@ test('graphGet with no access_token sends no Authorization header', async () => 
   }
 });
 
+const neverCompletingFetch = (_url, options = {}) => new Promise((resolve, reject) => {
+  const fallback = setTimeout(() => reject(new Error('fetch mock was not aborted')), 300);
+  options.signal?.addEventListener('abort', () => {
+    clearTimeout(fallback);
+    reject(new DOMException('The operation was aborted.', 'AbortError'));
+  }, { once: true });
+});
+
+test('graphGet aborts a Meta Graph request at the configured deadline', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = neverCompletingFetch;
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {}, 'https://example.test');
+    const startedAt = Date.now();
+    await assert.rejects(
+      meta.graphGet('me/accounts', { access_token: 'secret-token' }),
+      (error) => error?.code === 'META_GRAPH_TIMEOUT'
+    );
+    assert.ok(Date.now() - startedAt < 250, 'GET timeout must be bounded');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('graphPost aborts a Meta Graph request at the configured deadline', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = neverCompletingFetch;
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {}, 'https://example.test');
+    const startedAt = Date.now();
+    await assert.rejects(
+      meta.graphPost('ig-1/media', { access_token: 'secret-token' }),
+      (error) => error?.code === 'META_GRAPH_TIMEOUT'
+    );
+    assert.ok(Date.now() - startedAt < 250, 'POST timeout must be bounded');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+const responseWithStalledJson = (options = {}) => ({
+  ok: true,
+  status: 200,
+  json: () => new Promise((resolve, reject) => {
+    const fallback = setTimeout(() => reject(new Error('response body mock was not aborted')), 300);
+    options.signal?.addEventListener('abort', () => {
+      clearTimeout(fallback);
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    }, { once: true });
+  })
+});
+
+test('graphGet and graphPost keep the timeout active while parsing the response body', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options = {}) => responseWithStalledJson(options);
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {}, 'https://example.test');
+    await assert.rejects(
+      meta.graphGet('me/accounts', { access_token: 'secret-token' }),
+      (error) => error?.code === 'META_GRAPH_TIMEOUT'
+    );
+    await assert.rejects(
+      meta.graphPost('ig-1/media', { access_token: 'secret-token' }),
+      (error) => error?.code === 'META_GRAPH_TIMEOUT'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('graphGet and graphPost preserve the empty-object fallback for non-JSON bodies', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => { throw new SyntaxError('Unexpected token'); }
+  });
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {}, 'https://example.test');
+    assert.deepEqual(await meta.graphGet('me/accounts'), {});
+    assert.deepEqual(await meta.graphPost('ig-1/media'), {});
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // IG video defers across cron ticks (no blocking poll — Cloudflare CPU budget).
 // Tick 1: create the REELS container and park its id, no publish yet.
 test('defers an Instagram video on the first tick by creating a REELS container', async () => {
@@ -543,6 +629,194 @@ test('single Instagram image still publishes as a plain image container', async 
     const container = calls.find((c) => c.url.endsWith('/ig-1/media'));
     assert.equal(container.body.get('media_type'), null, 'no CAROUSEL for single image');
     assert.equal(container.body.get('is_carousel_item'), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('persists a newly created Instagram container before calling media_publish', async () => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    if (u.endsWith('/ig-1/media')) return jsonResponse({ id: 'img-container-persisted' });
+    if (u.endsWith('/ig-1/media_publish')) {
+      events.push({ type: 'publish', creationId: options.body.get('creation_id') });
+      return jsonResponse({ id: 'ig-img-persisted' });
+    }
+    if (u.includes('/ig-img-persisted')) return jsonResponse({ permalink: 'https://instagram.com/p/persisted' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, {
+      decryptPageToken: async () => 'ig-token',
+      setPostPublishState: async (id, updates) => events.push({ type: 'persist', id, updates })
+    }, 'https://example.test');
+    await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { id: 'post-persist', content: 'One image', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/1.jpg' }] }
+    );
+
+    assert.deepEqual(events.map((event) => event.type), ['persist', 'publish']);
+    assert.equal(events[0].id, 'post-persist');
+    assert.equal(events[0].updates.igContainerId, 'img-container-persisted');
+    assert.equal(events[1].creationId, 'img-container-persisted');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('defers with the persisted container when media_publish times out', async () => {
+  const originalFetch = globalThis.fetch;
+  const saved = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    if (u.endsWith('/ig-1/media')) return jsonResponse({ id: 'img-container-timeout' });
+    if (u.endsWith('/ig-1/media_publish')) return neverCompletingFetch(url, options);
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {
+      decryptPageToken: async () => 'ig-token',
+      setPostPublishState: async (id, updates) => saved.push({ id, updates })
+    }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { id: 'post-timeout', content: 'Caption', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }] }
+    );
+
+    assert.equal(result.deferred, true);
+    assert.equal(result.igContainerId, 'img-container-timeout');
+    assert.equal(saved[0].updates.igContainerId, 'img-container-timeout');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('defers safely when Instagram container creation times out before an id is known', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/ig-1/media')) return neverCompletingFetch(url, options);
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${url}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {
+      decryptPageToken: async () => 'ig-token'
+    }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      {
+        id: 'post-create-timeout',
+        content: 'Caption',
+        mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }]
+      }
+    );
+
+    assert.equal(result.deferred, true);
+    assert.equal(result.igContainerId, '');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('defers a status-check timeout with the same parked Instagram container', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes('/parked-container-timeout')) return neverCompletingFetch(url, options);
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${url}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, {
+      decryptPageToken: async () => 'ig-token'
+    }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      {
+        id: 'post-status-timeout',
+        content: 'Caption',
+        igContainerId: 'parked-container-timeout',
+        mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }]
+      }
+    );
+
+    assert.equal(result.deferred, true);
+    assert.equal(result.igContainerId, 'parked-container-timeout');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('recreates an EXPIRED parked Instagram container before publishing', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    calls.push({ url: u, body: options.body });
+    if (u.includes('/expired-container')) return jsonResponse({ status_code: 'EXPIRED', status: 'Expired' });
+    if (u.endsWith('/ig-1/media')) return jsonResponse({ id: 'replacement-container' });
+    if (u.endsWith('/ig-1/media_publish')) return jsonResponse({ id: 'ig-recovered' });
+    if (u.includes('/ig-recovered')) return jsonResponse({ permalink: 'https://instagram.com/p/recovered' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const saved = [];
+    const meta = new MetaService({}, {
+      decryptPageToken: async () => 'ig-token',
+      setPostPublishState: async (id, updates) => saved.push({ id, updates })
+    }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      {
+        id: 'post-expired',
+        content: 'Caption',
+        igContainerId: 'expired-container',
+        mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }]
+      }
+    );
+
+    assert.equal(result.externalPostId, 'ig-recovered');
+    assert.equal(calls.filter((call) => call.url.endsWith('/ig-1/media')).length, 1);
+    const publishCall = calls.find((call) => call.url.endsWith('/ig-1/media_publish'));
+    assert.equal(publishCall.body.get('creation_id'), 'replacement-container');
+    assert.equal(saved.at(-1).updates.igContainerId, 'replacement-container');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('treats a PUBLISHED parked Instagram container as terminal without publishing again', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes('/published-container')) {
+      return jsonResponse({
+        status_code: 'PUBLISHED',
+        status: 'Published'
+      });
+    }
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${u}` } }, 500);
+  };
+  try {
+    const meta = new MetaService({}, { decryptPageToken: async () => 'ig-token' }, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      {
+        id: 'post-published',
+        content: 'Caption',
+        igContainerId: 'published-container',
+        mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }]
+      }
+    );
+
+    assert.equal(result.recovered, true);
+    assert.equal(result.externalPostId, '');
+    assert.equal(result.permalink, '');
+    assert.equal(result.igContainerId, '');
+    assert.ok(calls[0].includes('fields=status_code%2Cstatus'));
+    assert.equal(calls.some((url) => url.endsWith('/ig-1/media')), false);
+    assert.equal(calls.some((url) => url.endsWith('/ig-1/media_publish')), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

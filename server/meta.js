@@ -54,6 +54,38 @@ const authUrl = (state) => {
   return url.toString();
 };
 
+const graphTimeoutMs = () => {
+  const configured = Number(process.env.META_GRAPH_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.min(configured, 60_000)
+    : 15_000;
+};
+
+const fetchGraph = async (url, options) => {
+  const controller = new AbortController();
+  const timeoutMs = graphTimeoutMs();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...(options || {}), signal: controller.signal });
+    let body = {};
+    try {
+      body = await response.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+    }
+    return { response, body };
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;
+    const timeoutError = new Error(`Meta Graph request timed out after ${timeoutMs}ms.`);
+    timeoutError.code = 'META_GRAPH_TIMEOUT';
+    timeoutError.retryable = true;
+    timeoutError.cause = error;
+    throw timeoutError;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const graphGet = async (path, params = {}) => {
   // Keep access_token out of the query string (leaks via logs/proxies); Graph API
   // accepts it as an Authorization: Bearer header on GET.
@@ -62,8 +94,10 @@ const graphGet = async (path, params = {}) => {
   Object.entries(rest).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
   });
-  const res = await fetch(url, access_token ? { headers: { Authorization: `Bearer ${access_token}` } } : undefined);
-  const body = await res.json().catch(() => ({}));
+  const { response: res, body } = await fetchGraph(
+    url,
+    access_token ? { headers: { Authorization: `Bearer ${access_token}` } } : undefined
+  );
   if (!res.ok) {
     const message = formatMetaError(body, `Meta API error ${res.status}`);
     const err = new Error(message);
@@ -90,8 +124,7 @@ const graphPost = async (path, params = {}, { multipart = false } = {}) => {
     });
   }
 
-  const res = await fetch(url, { method: 'POST', body });
-  const responseBody = await res.json().catch(() => ({}));
+  const { response: res, body: responseBody } = await fetchGraph(url, { method: 'POST', body });
   if (!res.ok) {
     const message = formatMetaError(responseBody, `Meta API error ${res.status}`);
     const err = new Error(message);

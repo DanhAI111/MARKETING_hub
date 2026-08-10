@@ -60,6 +60,38 @@ export class MetaService {
     return configured;
   }
 
+  graphTimeoutMs() {
+    const configured = Number(this.env.META_GRAPH_TIMEOUT_MS);
+    return Number.isFinite(configured) && configured > 0
+      ? Math.min(configured, 60_000)
+      : 15_000;
+  }
+
+  async fetchGraph(url, options) {
+    const controller = new AbortController();
+    const timeoutMs = this.graphTimeoutMs();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...(options || {}), signal: controller.signal });
+      let body = {};
+      try {
+        body = await response.json();
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+      }
+      return { response, body };
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      const timeoutError = new Error(`Meta Graph request timed out after ${timeoutMs}ms.`);
+      timeoutError.code = 'META_GRAPH_TIMEOUT';
+      timeoutError.retryable = true;
+      timeoutError.cause = error;
+      throw timeoutError;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   authUrl(state) {
     const configured = this.assertConfigured();
     const url = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
@@ -80,8 +112,10 @@ export class MetaService {
     Object.entries(rest).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
     });
-    const response = await fetch(url, access_token ? { headers: { Authorization: `Bearer ${access_token}` } } : undefined);
-    const body = await response.json().catch(() => ({}));
+    const { response, body } = await this.fetchGraph(
+      url,
+      access_token ? { headers: { Authorization: `Bearer ${access_token}` } } : undefined
+    );
     if (!response.ok) {
       const error = new Error(formatMetaError(body, `Meta API error ${response.status}`));
       error.status = response.status;
@@ -99,8 +133,7 @@ export class MetaService {
         multipart ? body.append(key, value) : body.set(key, value);
       }
     });
-    const response = await fetch(url, { method: 'POST', body });
-    const responseBody = await response.json().catch(() => ({}));
+    const { response, body: responseBody } = await this.fetchGraph(url, { method: 'POST', body });
     if (!response.ok) {
       const error = new Error(formatMetaError(responseBody, `Meta API error ${response.status}`));
       error.status = response.status;
@@ -145,8 +178,8 @@ export class MetaService {
   }
 
   // Single cheap status check (one graphGet, ~no CPU) for the deferred 2-tick flow.
-  // Returns the uppercased status_code; throws only on IG terminal failure so a stuck
-  // encode ends the post instead of deferring forever. Blocking poll is NOT allowed in
+  // Returns lifecycle details so callers can distinguish retryable expiry from a
+  // terminal publish. Blocking poll is NOT allowed in
   // the Worker — it blows Cloudflare's per-invocation CPU budget (publish-stale-root-cause).
   async checkInstagramContainerStatus(containerId, token) {
     const details = await this.graphGet(containerId, {
@@ -154,10 +187,10 @@ export class MetaService {
       fields: 'status_code,status'
     });
     const statusCode = String(details.status_code || '').toUpperCase();
-    if (['ERROR', 'EXPIRED'].includes(statusCode)) {
+    if (statusCode === 'ERROR') {
       throw new Error(details.status || `Instagram xử lý video thất bại (${statusCode.toLowerCase()}).`);
     }
-    return statusCode;
+    return { ...details, statusCode };
   }
 
   async publishFacebookPost(fanpage, post, { published = true } = {}) {
@@ -282,24 +315,63 @@ export class MetaService {
     // its id (post stays 'scheduled' → re-claimed next tick); later ticks do one cheap
     // status check and publish once FINISHED. See migrations/0012_ig_video_container.sql.
     let containerId = post.igContainerId || '';
-    if (!containerId) {
-      if (media.type === 'video') {
-        const created = await this.createInstagramVideoContainer(fanpage.instagramBusinessId, token, media.url, getPostMessage(post));
-        return { deferred: true, igContainerId: created.id };
+    if (containerId) {
+      let lifecycle;
+      try {
+        lifecycle = await this.checkInstagramContainerStatus(containerId, token);
+      } catch (error) {
+        if (error.code === 'META_GRAPH_TIMEOUT') {
+          return { deferred: true, igContainerId: containerId };
+        }
+        throw error;
       }
-      const created = images.length > 1
-        ? await this.createInstagramCarouselContainer(fanpage.instagramBusinessId, token, images, getPostMessage(post))
-        : await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
-            access_token: token,
-            image_url: (images[0] || publicItems[0]).url,
-            caption: getPostMessage(post)
-          });
+      if (lifecycle.statusCode === 'PUBLISHED') {
+        return {
+          externalPostId: post.externalPostId || '',
+          permalink: post.permalink || '',
+          mediaUrl: post.mediaUrl || media.url,
+          igContainerId: '',
+          recovered: true,
+          warning: ''
+        };
+      }
+      if (lifecycle.statusCode === 'EXPIRED') containerId = '';
+      else if (lifecycle.statusCode !== 'FINISHED') {
+        return { deferred: true, igContainerId: containerId };
+      }
+    }
+    if (!containerId) {
+      let created;
+      try {
+        created = media.type === 'video'
+          ? await this.createInstagramVideoContainer(
+              fanpage.instagramBusinessId,
+              token,
+              media.url,
+              getPostMessage(post)
+            )
+          : images.length > 1
+            ? await this.createInstagramCarouselContainer(
+                fanpage.instagramBusinessId,
+                token,
+                images,
+                getPostMessage(post)
+              )
+            : await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+                access_token: token,
+                image_url: (images[0] || publicItems[0]).url,
+                caption: getPostMessage(post)
+              });
+      } catch (error) {
+        if (error.code === 'META_GRAPH_TIMEOUT') return { deferred: true, igContainerId: '' };
+        throw error;
+      }
+      if (!created?.id) throw new Error('Meta không trả về Instagram container ID.');
       containerId = created.id;
-    } else {
-      // Parked container from an earlier tick (video, or an image Meta reported not
-      // ready). Throws on ERROR/EXPIRED so a broken media fails instead of looping.
-      const statusCode = await this.checkInstagramContainerStatus(containerId, token);
-      if (statusCode !== 'FINISHED') return { deferred: true, igContainerId: containerId };
+      if (post.id && this.repo.setPostPublishState) {
+        await this.repo.setPostPublishState(post.id, { igContainerId: containerId });
+      }
+      if (media.type === 'video') return { deferred: true, igContainerId: containerId };
     }
     let published;
     try {
@@ -313,7 +385,7 @@ export class MetaService {
       // failure — park the container and publish on a later tick.
       const code = error.meta?.error?.code;
       const subcode = error.meta?.error?.error_subcode;
-      if (code === 9007 || subcode === 2207027) {
+      if (error.code === 'META_GRAPH_TIMEOUT' || code === 9007 || subcode === 2207027) {
         return { deferred: true, igContainerId: containerId };
       }
       throw error;

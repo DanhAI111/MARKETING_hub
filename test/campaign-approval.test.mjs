@@ -30,6 +30,7 @@ const createRepositorySchema = (db) => db.exec(`
     publishMode TEXT NOT NULL DEFAULT 'live',
     testedAt TEXT,
     testResult TEXT,
+    igContainerId TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     status TEXT NOT NULL DEFAULT 'published',
     deletedAt TEXT,
@@ -125,15 +126,52 @@ test('claimDueScheduledPosts publishes only approved posts', async () => {
   });
 });
 
-test('stale publishing posts become failed while an active publishing lease is preserved', async () => {
+test('server upsertPost persists and updates an Instagram container id', async () => {
+  await withSqliteRepository(async (repo) => {
+    const inserted = await repo.upsertPost({
+      ...scheduledPost('container-round-trip', 'approved'),
+      igContainerId: 'ig-container-first'
+    });
+    assert.equal(inserted.igContainerId, 'ig-container-first');
+    assert.equal((await repo.getPost('container-round-trip')).igContainerId, 'ig-container-first');
+
+    const updated = await repo.upsertPost({
+      ...inserted,
+      igContainerId: 'ig-container-replacement'
+    });
+    assert.equal(updated.igContainerId, 'ig-container-replacement');
+    assert.equal((await repo.getPost('container-round-trip')).igContainerId, 'ig-container-replacement');
+  });
+});
+
+test('stale publishing posts requeue recoverable containers without retrying completed or unrecoverable work', async () => {
   await withSqliteRepository(async (repo, db) => {
-    await repo.upsertPost(scheduledPost('stale-post', 'approved'));
+    await repo.upsertPost({
+      ...scheduledPost('stale-container', 'approved'),
+      igContainerId: 'ig-container-1'
+    });
+    await repo.upsertPost({
+      ...scheduledPost('stale-published', 'approved'),
+      externalPostId: 'ig-post-1'
+    });
+    await repo.upsertPost({
+      ...scheduledPost('stale-safe-test', 'approved'),
+      publishMode: 'safe_test',
+      externalPostId: 'fb-unpublished-test-1'
+    });
+    await repo.upsertPost(scheduledPost('stale-unrecoverable', 'approved'));
     await repo.upsertPost(scheduledPost('active-post', 'approved'));
     db.prepare(`
       UPDATE posts
       SET status = 'publishing', updatedAt = ?
-      WHERE id = ?
-    `).run('2026-08-04T07:00:00.000Z', 'stale-post');
+      WHERE id IN (?, ?, ?, ?)
+    `).run(
+      '2026-08-04T07:00:00.000Z',
+      'stale-container',
+      'stale-published',
+      'stale-safe-test',
+      'stale-unrecoverable'
+    );
     db.prepare(`
       UPDATE posts
       SET status = 'publishing', updatedAt = ?
@@ -142,10 +180,19 @@ test('stale publishing posts become failed while an active publishing lease is p
 
     const released = await repo.failStalePublishingPosts('2026-08-04T08:50:00.000Z');
 
-    assert.equal(released, 1);
-    const stale = await repo.getPost('stale-post');
-    assert.equal(stale.status, 'failed');
-    assert.match(stale.publishError, /gián đoạn/i);
+    assert.equal(released, 4);
+    const staleContainer = await repo.getPost('stale-container');
+    assert.equal(staleContainer.status, 'scheduled');
+    assert.equal(staleContainer.igContainerId, 'ig-container-1');
+    assert.equal(staleContainer.publishError, '');
+    assert.equal((await repo.getPost('stale-published')).status, 'published');
+    const staleSafeTest = await repo.getPost('stale-safe-test');
+    assert.equal(staleSafeTest.status, 'scheduled');
+    assert.equal(staleSafeTest.publishMode, 'safe_test');
+    assert.equal(staleSafeTest.externalPostId, 'fb-unpublished-test-1');
+    const staleUnrecoverable = await repo.getPost('stale-unrecoverable');
+    assert.equal(staleUnrecoverable.status, 'failed');
+    assert.match(staleUnrecoverable.publishError, /gián đoạn/i);
     assert.equal((await repo.getPost('active-post')).status, 'publishing');
   });
 });
