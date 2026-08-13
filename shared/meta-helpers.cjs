@@ -66,10 +66,13 @@ const getGoogleDriveFolderId = (rawUrl) => {
   }
 };
 
+const googleDriveDownloadUrl = (fileId) =>
+  `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`;
+
 const normalizeMediaUrl = (rawUrl) => {
   const fileId = getGoogleDriveFileId(rawUrl);
   return fileId
-    ? `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`
+    ? googleDriveDownloadUrl(fileId)
     : rawUrl;
 };
 
@@ -165,14 +168,14 @@ const listGoogleDriveFolderMedia = async (folderId) => {
     const videoLabel = /alt="[^"]*video[^"]*"/i.test(entryMarkup);
     if (/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name) || imageLabel) {
       seenIds.add(fileId);
-      images.push({ type: 'image', url: googleDriveThumbnailUrl(fileId), name });
+      images.push({ type: 'image', url: googleDriveDownloadUrl(fileId), name });
     } else if (isVideoName(name) || videoLabel) {
       seenIds.add(fileId);
       // Video needs the real file, not a thumbnail — use the direct-download URL
       // (same form normalizeMediaUrl produces for single Drive files).
       videos.push({
         type: 'video',
-        url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`,
+        url: googleDriveDownloadUrl(fileId),
         name
       });
     }
@@ -181,11 +184,11 @@ const listGoogleDriveFolderMedia = async (folderId) => {
     if (seenIds.has(item.id)) continue;
     seenIds.add(item.id);
     if (item.type === 'image') {
-      images.push({ type: 'image', url: googleDriveThumbnailUrl(item.id), name: item.name });
+      images.push({ type: 'image', url: googleDriveDownloadUrl(item.id), name: item.name });
     } else {
       videos.push({
         type: 'video',
-        url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(item.id)}&export=download&confirm=t`,
+        url: googleDriveDownloadUrl(item.id),
         name: item.name
       });
     }
