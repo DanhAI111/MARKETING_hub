@@ -190,6 +190,7 @@ test('Worker Meta sync ignores expired Facebook and Instagram history and runs r
   const savedPosts = [];
   const pruned = [];
   const cleanupCalls = [];
+  const requestedLimits = [];
   const repo = {
     decryptPageToken: async () => 'page-token',
     getConnectedFanpages: async () => [
@@ -223,14 +224,18 @@ test('Worker Meta sync ignores expired Facebook and Instagram history and runs r
   };
   const meta = new MetaService({}, repo, 'https://example.test');
   meta.refreshFanpageProfile = async (fanpage) => fanpage;
-  meta.fetchFacebookPostBatch = async () => ({
+  meta.fetchFacebookPostBatch = async (_fanpage, _token, limit) => {
+    requestedLimits.push(limit);
+    return ({
     posts: [
       { id: 'fb-expired', created_time: '2026-01-01T00:00:00.000Z' },
       { id: 'fb-recent', created_time: recentTimestamp }
     ]
-  });
-  meta.graphGet = async (path) => {
+    });
+  };
+  meta.graphGet = async (path, params) => {
     assert.match(path, /instagram-business-1\/media/);
+    requestedLimits.push(params.limit);
     return {
       data: [
         { id: 'ig-expired', timestamp: '2026-01-01T00:00:00.000Z' },
@@ -247,5 +252,7 @@ test('Worker Meta sync ignores expired Facebook and Instagram history and runs r
     pruned.map((entry) => entry.externalPostIds),
     [['fb-recent'], ['ig-recent']]
   );
+  assert.deepEqual(requestedLimits, [25, 25], 'Worker sync must cap each Meta page below the CPU-heavy 100-post batch');
+  assert.equal(result.postLimit, 25);
   assert.ok(cleanupCalls.length >= 1, 'Meta sync must invoke repository retention cleanup');
 });
