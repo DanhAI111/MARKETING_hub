@@ -780,6 +780,52 @@ test('durable Instagram cross-post never mistakes a completed Facebook job for a
   );
 });
 
+test('Facebook cross-post keeps publishing Instagram when the Facebook durable job is already completed', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = makeCrossPostFetch(calls);
+  try {
+    const facebookJob = {
+      postId: 'durable-cross-post',
+      platform: 'facebook',
+      stage: 'completed',
+      resolvedMedia: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }],
+      childContainerIds: ['photo-1'],
+      parentContainerId: 'fb-1',
+      attemptCount: 3
+    };
+    const repo = {
+      decryptPageToken: async () => 'page-token',
+      getFanpage: async () => ({
+        id: 'fp-fb', platform: 'facebook', metaPageId: 'page-1',
+        connected: true, crossPostInstagram: true
+      }),
+      getInstagramSiblingFanpage: async () => ({
+        id: 'fp-ig', platform: 'instagram', metaPageId: 'page-1',
+        instagramBusinessId: 'ig-1', connected: true
+      }),
+      getPublishJob: async () => facebookJob,
+      savePublishJob: async () => { throw new Error('must not overwrite the Facebook checkpoint'); },
+      recordPublishAttempt: async () => {},
+      setPostPublishState: async () => {}
+    };
+    const meta = new MetaService({}, repo, 'https://example.test');
+    const result = await meta.publishScheduledPost({
+      id: facebookJob.postId,
+      fanpageId: 'fp-fb',
+      content: 'Cross-post',
+      externalPostId: 'fb-1',
+      mediaItems: facebookJob.resolvedMedia
+    });
+
+    assert.equal(result.crossPostError, '');
+    assert.equal(calls.filter((url) => url.endsWith('/page-1/feed')).length, 0);
+    assert.equal(calls.filter((url) => url.endsWith('/ig-1/media_publish')).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('single Instagram image still publishes as a plain image container', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
