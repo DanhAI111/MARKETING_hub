@@ -55,13 +55,6 @@ const clampInt = (value, { fallback, min = 0, max = Number.MAX_SAFE_INTEGER }) =
   return Math.min(max, Math.max(min, num));
 };
 
-// Kick off scheduled publishing in the background without blocking the response,
-// but do NOT unref: an unref'd timer is dropped if the process exits, silently
-// losing the publish. Errors are logged.
-const publishSoon = () => {
-  Promise.resolve().then(() => processScheduledPosts())
-    .catch((err) => console.error('Immediate publish failed:', err.message));
-};
 const assertExpectedVersion = async (latest, expectedUpdatedAt) => {
   if (!expectedUpdatedAt || latest?.updatedAt === expectedUpdatedAt) return;
   const err = new Error('Dữ liệu đã thay đổi');
@@ -113,6 +106,14 @@ const processClaimedPost = async (post) => {
     const output = safeTest
       ? await meta.testScheduledPost(post)
       : await meta.publishScheduledPost(post);
+    if (output.deferred) {
+      const saved = await repo.setPostPublishState(post.id, {
+        status: 'scheduled',
+        igContainerId: output.igContainerId || post.igContainerId || '',
+        publishError: ''
+      });
+      return { id: post.id, status: 'deferred', post: saved };
+    }
     const timestamp = new Date().toISOString();
     const partialError = safeTest ? (output.crossPostError || '') : '';
     const status = partialError ? 'failed' : (safeTest ? 'tested' : 'published');
@@ -137,12 +138,13 @@ const processClaimedPost = async (post) => {
 const processScheduledPosts = async () => {
   if (publishInFlight) return { skipped: true };
   publishInFlight = true;
-  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, released: 0, posts: [] };
+  const result = { startedAt: new Date().toISOString(), processed: 0, published: 0, tested: 0, failed: 0, released: 0, posts: [] };
   try {
     result.released = await repo.failStalePublishingPosts(
       new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
     );
     const duePosts = await repo.claimDueScheduledPosts();
+    result.processed = duePosts.length;
     const processedPosts = await processWithConcurrency(duePosts,
       post => processClaimedPost(post),
       PUBLISH_CONCURRENCY
@@ -150,6 +152,7 @@ const processScheduledPosts = async () => {
     for (const processed of processedPosts) {
       if (processed.status === 'published') result.published++;
       else if (processed.status === 'tested') result.tested++;
+      else if (processed.status === 'deferred') result.deferred = (result.deferred || 0) + 1;
       else result.failed++;
       result.posts.push({
         id: processed.id,
@@ -158,7 +161,9 @@ const processScheduledPosts = async () => {
       });
     }
     result.finishedAt = new Date().toISOString();
-    await repo.saveState('lastPublishRun', result);
+    await repo.saveState('lastPublishHeartbeat', result);
+    if (result.processed || result.released) await repo.saveState('lastPublishRun', result);
+    if (result.failed) await repo.saveState('lastPublishFailure', result);
     return result;
   } finally {
     publishInFlight = false;
@@ -194,9 +199,12 @@ app.get('/api/health', asyncHandler(async (req, res) => {
     ok: true,
     authRequired: auth.required(),
     metaConfigured: !!(process.env.META_APP_ID && process.env.META_APP_SECRET),
+    buildSha: process.env.BUILD_SHA || 'unknown',
     lastSync: lastSync || await repo.getState('lastMetaSync'),
     publisher: {
       lastRun: await repo.getState('lastPublishRun'),
+      lastHeartbeat: await repo.getState('lastPublishHeartbeat'),
+      lastFailure: await repo.getState('lastPublishFailure'),
       inFlight: publishInFlight
     }
   });
@@ -249,9 +257,6 @@ app.get('/api/posts', asyncHandler(async (req, res) => {
 app.post('/api/posts', asyncHandler(async (req, res) => {
   const post = await repo.upsertPost(normalizePostMutation(req.body || {}));
   writeAudit(req, 'create', 'post', post.id, post);
-  if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
-    publishSoon();
-  }
   res.status(201).json(post);
 }));
 
@@ -264,10 +269,19 @@ app.put('/api/posts/:id', asyncHandler(async (req, res) => {
   const { expectedUpdatedAt, ...updates } = req.body || {};
   const post = await repo.upsertPost({ ...normalizePostMutation(updates, latest), id: req.params.id });
   writeAudit(req, 'update', 'post', post.id, post);
-  if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
-    publishSoon();
-  }
   res.json(post);
+}));
+
+app.post('/api/posts/:id/retry', asyncHandler(async (req, res) => {
+  const post = await repo.requeuePostForRetry(req.params.id);
+  if (!post) {
+    const latest = await repo.getPost(req.params.id);
+    if (!latest) return res.status(404).json({ error: 'Không tìm thấy bài đăng.' });
+    if (latest.publishMode !== 'live') return res.status(400).json({ error: 'Bài đăng thử dùng thao tác chạy thử riêng.' });
+    return res.status(409).json({ error: 'Bài không ở trạng thái lỗi hoặc đã được đưa vào hàng đợi.', latest });
+  }
+  writeAudit(req, 'retry', 'post', post.id, { status: 'queued' });
+  return res.status(202).json({ id: post.id, status: 'queued', post });
 }));
 
 app.post('/api/posts/:id/run-test', asyncHandler(async (req, res) => {
@@ -377,12 +391,10 @@ app.post('/api/sync', rateLimit('sync', { limit: 60, windowSeconds: 60 }), async
 }));
 
 app.post('/api/publish-due', rateLimit('publish-due', { limit: 30, windowSeconds: 60 }), asyncHandler(async (req, res) => {
-  // Run sheet sync in the background (see worker/index.js) so a slow/hanging
-  // Google Sheets fetch can't stall or fail the publish response.
-  if (req.query.syncSheets === '1') {
+  const publisher = await processScheduledPosts();
+  if (req.query.syncSheets === '1' && publisher.processed === 0) {
     syncLinkedScheduleSheets().catch((err) => console.error('Background sheet sync failed:', err.message));
   }
-  const publisher = await processScheduledPosts();
   res.json(publisher);
 }));
 

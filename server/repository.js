@@ -10,6 +10,8 @@ const {
   parseJson,
   fanpageFromRow,
   postFromRow,
+  publishJobFromRow,
+  publishAttemptFromRow,
   appItemFromRow
 } = require('../shared/repository-helpers.cjs');
 
@@ -188,6 +190,40 @@ const initPostgres = async () => {
 
     CREATE INDEX IF NOT EXISTS idx_audit_log_entity
       ON audit_log("entityType", "entityId", "createdAt");
+
+    CREATE TABLE IF NOT EXISTS publish_jobs (
+      "postId" TEXT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      stage TEXT NOT NULL DEFAULT 'queued',
+      "resolvedMedia" TEXT,
+      "childContainerIds" TEXT,
+      "parentContainerId" TEXT,
+      "leaseToken" TEXT,
+      "leaseUntil" TEXT,
+      "attemptCount" INTEGER NOT NULL DEFAULT 0,
+      "nextAttemptAt" TEXT,
+      "lastErrorCode" TEXT,
+      "lastError" TEXT,
+      "lastErrorAt" TEXT,
+      "createdAt" TEXT NOT NULL,
+      "updatedAt" TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_publish_jobs_due
+      ON publish_jobs(stage, "nextAttemptAt");
+
+    CREATE TABLE IF NOT EXISTS publish_attempts (
+      id TEXT PRIMARY KEY,
+      "postId" TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      stage TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      "errorCode" TEXT,
+      "errorMessage" TEXT,
+      "createdAt" TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_publish_attempts_post
+      ON publish_attempts("postId", "createdAt");
   `);
 };
 
@@ -231,19 +267,33 @@ const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 
   if (pending) {
     if (usePostgres) {
       const rows = await pgQuery(`
-        SELECT * FROM posts
-        WHERE ("deletedAt" IS NULL OR "deletedAt" = '')
-          AND status NOT IN ('published', 'tested')
-        ORDER BY "scheduledAt" ASC, "updatedAt" DESC
+        SELECT posts.*,
+               publish_jobs.stage AS "publishStage",
+               publish_jobs."attemptCount" AS "publishAttemptCount",
+               publish_jobs."nextAttemptAt" AS "publishNextAttemptAt",
+               publish_jobs."lastErrorCode" AS "publishLastErrorCode",
+               publish_jobs."lastError" AS "publishLastError"
+        FROM posts
+        LEFT JOIN publish_jobs ON publish_jobs."postId" = posts.id
+        WHERE (posts."deletedAt" IS NULL OR posts."deletedAt" = '')
+          AND posts.status NOT IN ('published', 'tested')
+        ORDER BY posts."scheduledAt" ASC, posts."updatedAt" DESC
         LIMIT $1 OFFSET $2
       `, [normalizedLimit, normalizedOffset]);
       return rows.map(postFromRow);
     }
     return getSqlite().prepare(`
-      SELECT * FROM posts
-      WHERE (deletedAt IS NULL OR deletedAt = '')
-        AND status NOT IN ('published', 'tested')
-      ORDER BY scheduledAt ASC, updatedAt DESC
+      SELECT posts.*,
+             publish_jobs.stage AS publishStage,
+             publish_jobs.attemptCount AS publishAttemptCount,
+             publish_jobs.nextAttemptAt AS publishNextAttemptAt,
+             publish_jobs.lastErrorCode AS publishLastErrorCode,
+             publish_jobs.lastError AS publishLastError
+      FROM posts
+      LEFT JOIN publish_jobs ON publish_jobs.postId = posts.id
+      WHERE (posts.deletedAt IS NULL OR posts.deletedAt = '')
+        AND posts.status NOT IN ('published', 'tested')
+      ORDER BY posts.scheduledAt ASC, posts.updatedAt DESC
       LIMIT ? OFFSET ?
     `).all(normalizedLimit, normalizedOffset).map(postFromRow);
   }
@@ -354,7 +404,168 @@ const getPost = async (postId) => {
   const row = usePostgres
     ? (await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0]
     : getSqlite().prepare('SELECT * FROM posts WHERE id = ?').get(postId);
-  return postFromRow(row);
+  return postFromRow(row) || null;
+};
+
+const getPublishJob = async (postId) => {
+  const row = usePostgres
+    ? (await pgQuery('SELECT * FROM publish_jobs WHERE "postId" = $1', [postId]))[0]
+    : getSqlite().prepare('SELECT * FROM publish_jobs WHERE postId = ?').get(postId);
+  return publishJobFromRow(row);
+};
+
+const savePublishJob = async (postId, updates = {}) => {
+  if (!postId) throw new Error('postId is required for publish jobs.');
+  const existing = await getPublishJob(postId);
+  const timestamp = now();
+  const data = {
+    postId,
+    platform: updates.platform || existing?.platform || 'unknown',
+    stage: updates.stage || existing?.stage || 'queued',
+    resolvedMedia: updates.resolvedMedia !== undefined ? updates.resolvedMedia : (existing?.resolvedMedia || []),
+    childContainerIds: updates.childContainerIds !== undefined
+      ? updates.childContainerIds
+      : (existing?.childContainerIds || []),
+    parentContainerId: updates.parentContainerId !== undefined
+      ? (updates.parentContainerId || '')
+      : (existing?.parentContainerId || ''),
+    leaseToken: updates.leaseToken !== undefined ? (updates.leaseToken || '') : (existing?.leaseToken || ''),
+    leaseUntil: updates.leaseUntil !== undefined ? (updates.leaseUntil || '') : (existing?.leaseUntil || ''),
+    attemptCount: updates.attemptCount !== undefined
+      ? Number(updates.attemptCount || 0)
+      : Number(existing?.attemptCount || 0),
+    nextAttemptAt: updates.nextAttemptAt !== undefined
+      ? (updates.nextAttemptAt || '')
+      : (existing?.nextAttemptAt || ''),
+    lastErrorCode: updates.lastErrorCode !== undefined
+      ? (updates.lastErrorCode || '')
+      : (existing?.lastErrorCode || ''),
+    lastError: updates.lastError !== undefined ? (updates.lastError || '') : (existing?.lastError || ''),
+    lastErrorAt: updates.lastErrorAt !== undefined ? (updates.lastErrorAt || '') : (existing?.lastErrorAt || ''),
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp
+  };
+  const values = [
+    data.postId, data.platform, data.stage, JSON.stringify(data.resolvedMedia),
+    JSON.stringify(data.childContainerIds), data.parentContainerId || null,
+    data.leaseToken || null, data.leaseUntil || null, data.attemptCount,
+    data.nextAttemptAt || null, data.lastErrorCode || null, data.lastError || null,
+    data.lastErrorAt || null, data.createdAt, data.updatedAt
+  ];
+  if (usePostgres) {
+    await pgQuery(`
+      INSERT INTO publish_jobs (
+        "postId", platform, stage, "resolvedMedia", "childContainerIds", "parentContainerId",
+        "leaseToken", "leaseUntil", "attemptCount", "nextAttemptAt", "lastErrorCode",
+        "lastError", "lastErrorAt", "createdAt", "updatedAt"
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      ON CONFLICT("postId") DO UPDATE SET
+        platform = EXCLUDED.platform,
+        stage = EXCLUDED.stage,
+        "resolvedMedia" = EXCLUDED."resolvedMedia",
+        "childContainerIds" = EXCLUDED."childContainerIds",
+        "parentContainerId" = EXCLUDED."parentContainerId",
+        "leaseToken" = EXCLUDED."leaseToken",
+        "leaseUntil" = EXCLUDED."leaseUntil",
+        "attemptCount" = EXCLUDED."attemptCount",
+        "nextAttemptAt" = EXCLUDED."nextAttemptAt",
+        "lastErrorCode" = EXCLUDED."lastErrorCode",
+        "lastError" = EXCLUDED."lastError",
+        "lastErrorAt" = EXCLUDED."lastErrorAt",
+        "updatedAt" = EXCLUDED."updatedAt"
+    `, values);
+  } else {
+    getSqlite().prepare(`
+      INSERT INTO publish_jobs (
+        postId, platform, stage, resolvedMedia, childContainerIds, parentContainerId,
+        leaseToken, leaseUntil, attemptCount, nextAttemptAt, lastErrorCode,
+        lastError, lastErrorAt, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(postId) DO UPDATE SET
+        platform = excluded.platform,
+        stage = excluded.stage,
+        resolvedMedia = excluded.resolvedMedia,
+        childContainerIds = excluded.childContainerIds,
+        parentContainerId = excluded.parentContainerId,
+        leaseToken = excluded.leaseToken,
+        leaseUntil = excluded.leaseUntil,
+        attemptCount = excluded.attemptCount,
+        nextAttemptAt = excluded.nextAttemptAt,
+        lastErrorCode = excluded.lastErrorCode,
+        lastError = excluded.lastError,
+        lastErrorAt = excluded.lastErrorAt,
+        updatedAt = excluded.updatedAt
+    `).run(...values);
+  }
+  return getPublishJob(postId);
+};
+
+const recordPublishAttempt = async (postId, attempt = {}) => {
+  const timestamp = now();
+  const values = [
+    id(), postId, attempt.stage || 'unknown', attempt.outcome || 'unknown',
+    attempt.errorCode || null, attempt.errorMessage || null, timestamp
+  ];
+  if (usePostgres) {
+    await pgQuery(`
+      INSERT INTO publish_attempts (id, "postId", stage, outcome, "errorCode", "errorMessage", "createdAt")
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `, values);
+  } else {
+    getSqlite().prepare(`
+      INSERT INTO publish_attempts (id, postId, stage, outcome, errorCode, errorMessage, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(...values);
+  }
+};
+
+const listPublishAttempts = async (postId, limit = 100) => {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const rows = usePostgres
+    ? await pgQuery('SELECT * FROM publish_attempts WHERE "postId" = $1 ORDER BY "createdAt" ASC LIMIT $2', [postId, normalizedLimit])
+    : getSqlite().prepare('SELECT * FROM publish_attempts WHERE postId = ? ORDER BY createdAt ASC LIMIT ?').all(postId, normalizedLimit);
+  return rows.map(publishAttemptFromRow);
+};
+
+const requeuePostForRetry = async (postId) => {
+  const timestamp = now();
+  let row;
+  if (usePostgres) {
+    row = (await pgQuery(`
+      UPDATE posts
+      SET status = 'scheduled', "publishError" = '', "updatedAt" = $1
+      WHERE id = $2
+        AND status = 'failed'
+        AND "approvalStatus" = 'approved'
+        AND "publishMode" = 'live'
+        AND ("deletedAt" IS NULL OR "deletedAt" = '')
+      RETURNING *
+    `, [timestamp, postId]))[0];
+    if (row) await pgQuery(`
+      UPDATE publish_jobs
+      SET "nextAttemptAt" = NULL, "lastErrorCode" = NULL, "lastError" = NULL,
+          "lastErrorAt" = NULL, "updatedAt" = $1
+      WHERE "postId" = $2
+    `, [timestamp, postId]);
+  } else {
+    row = getSqlite().prepare(`
+      UPDATE posts
+      SET status = 'scheduled', publishError = '', updatedAt = ?
+      WHERE id = ?
+        AND status = 'failed'
+        AND approvalStatus = 'approved'
+        AND publishMode = 'live'
+        AND (deletedAt IS NULL OR deletedAt = '')
+      RETURNING *
+    `).get(timestamp, postId);
+    if (row) getSqlite().prepare(`
+      UPDATE publish_jobs
+      SET nextAttemptAt = NULL, lastErrorCode = NULL, lastError = NULL,
+          lastErrorAt = NULL, updatedAt = ?
+      WHERE postId = ?
+    `).run(timestamp, postId);
+  }
+  return postFromRow(row) || null;
 };
 
 const claimDueScheduledPosts = async (limit = 10) => {
@@ -369,6 +580,11 @@ const claimDueScheduledPosts = async (limit = 10) => {
           AND "scheduledAt" IS NOT NULL
           AND "scheduledAt" != ''
           AND "scheduledAt" <= $1
+          AND NOT EXISTS (
+            SELECT 1 FROM publish_jobs
+            WHERE publish_jobs."postId" = posts.id
+              AND (publish_jobs.stage = 'completed' OR publish_jobs."nextAttemptAt" > $1)
+          )
         ORDER BY "scheduledAt" ASC
         LIMIT $2
         FOR UPDATE SKIP LOCKED
@@ -395,11 +611,16 @@ const claimDueScheduledPosts = async (limit = 10) => {
         AND scheduledAt IS NOT NULL
         AND scheduledAt != ''
         AND scheduledAt <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM publish_jobs
+          WHERE publish_jobs.postId = posts.id
+            AND (publish_jobs.stage = 'completed' OR publish_jobs.nextAttemptAt > ?)
+        )
       ORDER BY scheduledAt ASC
       LIMIT ?
     )
     RETURNING *
-  `).all(timestamp, timestamp, limit).map(postFromRow);
+  `).all(timestamp, timestamp, timestamp, limit).map(postFromRow);
 };
 
 const failStalePublishingPosts = async (staleBefore) => {
@@ -412,12 +633,22 @@ const failStalePublishingPosts = async (staleBefore) => {
             WHEN "publishMode" = 'safe_test' THEN 'scheduled'
             WHEN COALESCE("externalPostId", '') != '' THEN 'published'
             WHEN COALESCE("igContainerId", '') != '' THEN 'scheduled'
+            WHEN EXISTS (
+              SELECT 1 FROM publish_jobs
+              WHERE publish_jobs."postId" = posts.id
+                AND publish_jobs.stage NOT IN ('completed', 'failed')
+            ) THEN 'scheduled'
             ELSE 'failed'
           END,
           "publishError" = CASE
             WHEN "publishMode" = 'safe_test'
               OR COALESCE("externalPostId", '') != ''
-              OR COALESCE("igContainerId", '') != '' THEN ''
+              OR COALESCE("igContainerId", '') != ''
+              OR EXISTS (
+                SELECT 1 FROM publish_jobs
+                WHERE publish_jobs."postId" = posts.id
+                  AND publish_jobs.stage NOT IN ('completed', 'failed')
+              ) THEN ''
             ELSE $1
           END,
           "updatedAt" = $2
@@ -435,12 +666,22 @@ const failStalePublishingPosts = async (staleBefore) => {
           WHEN publishMode = 'safe_test' THEN 'scheduled'
           WHEN COALESCE(externalPostId, '') != '' THEN 'published'
           WHEN COALESCE(igContainerId, '') != '' THEN 'scheduled'
+          WHEN EXISTS (
+            SELECT 1 FROM publish_jobs
+            WHERE publish_jobs.postId = posts.id
+              AND publish_jobs.stage NOT IN ('completed', 'failed')
+          ) THEN 'scheduled'
           ELSE 'failed'
         END,
         publishError = CASE
           WHEN publishMode = 'safe_test'
             OR COALESCE(externalPostId, '') != ''
-            OR COALESCE(igContainerId, '') != '' THEN ''
+            OR COALESCE(igContainerId, '') != ''
+            OR EXISTS (
+              SELECT 1 FROM publish_jobs
+              WHERE publish_jobs.postId = posts.id
+                AND publish_jobs.stage NOT IN ('completed', 'failed')
+            ) THEN ''
           ELSE ?
         END,
         updatedAt = ?
@@ -1379,6 +1620,11 @@ module.exports = {
   listSheetSyncPosts,
   listDueScheduledPosts,
   getPost,
+  getPublishJob,
+  savePublishJob,
+  recordPublishAttempt,
+  listPublishAttempts,
+  requeuePostForRetry,
   claimDueScheduledPosts,
   failStalePublishingPosts,
   claimSafeTestPost,

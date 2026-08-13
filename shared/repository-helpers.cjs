@@ -123,9 +123,42 @@ const postFromRow = (row) => row && ({
   igContainerId: row.igContainerId || '',
   source: row.source,
   status: row.status,
+  publishStage: row.publishStage || '',
+  publishAttemptCount: Number(row.publishAttemptCount || 0),
+  publishNextAttemptAt: row.publishNextAttemptAt || '',
+  publishLastErrorCode: row.publishLastErrorCode || '',
+  publishLastError: row.publishLastError || '',
   deletedAt: row.deletedAt || '',
   createdAt: row.createdAt,
   updatedAt: row.updatedAt
+});
+
+const publishJobFromRow = (row) => row && ({
+  postId: row.postId,
+  platform: row.platform || '',
+  stage: row.stage || 'queued',
+  resolvedMedia: parseJson(row.resolvedMedia, []),
+  childContainerIds: parseJson(row.childContainerIds, []),
+  parentContainerId: row.parentContainerId || '',
+  leaseToken: row.leaseToken || '',
+  leaseUntil: row.leaseUntil || '',
+  attemptCount: Number(row.attemptCount || 0),
+  nextAttemptAt: row.nextAttemptAt || '',
+  lastErrorCode: row.lastErrorCode || '',
+  lastError: row.lastError || '',
+  lastErrorAt: row.lastErrorAt || '',
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt
+});
+
+const publishAttemptFromRow = (row) => row && ({
+  id: row.id,
+  postId: row.postId,
+  stage: row.stage,
+  outcome: row.outcome,
+  errorCode: row.errorCode || '',
+  errorMessage: row.errorMessage || '',
+  createdAt: row.createdAt
 });
 
 const appItemFromRow = (row) => row && parseJson(row.data, null);
@@ -143,5 +176,7 @@ module.exports = {
   normalizePostMutation,
   fanpageFromRow,
   postFromRow,
+  publishJobFromRow,
+  publishAttemptFromRow,
   appItemFromRow
 };

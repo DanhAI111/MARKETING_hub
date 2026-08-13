@@ -23,6 +23,18 @@ const {
 } = require('../shared/meta-helpers.cjs');
 const { getPostRetentionCutoff, isWithinPostRetention } = require('../shared/repository-helpers.cjs');
 
+let durablePublisherPromise;
+const getDurablePublisher = () => {
+  if (!durablePublisherPromise) {
+    durablePublisherPromise = import('../worker/meta.js').then(({ MetaService }) => new MetaService(
+      process.env,
+      repo,
+      process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'
+    ));
+  }
+  return durablePublisherPromise;
+};
+
 const configuredScopes = () => {
   const raw = process.env.META_SCOPES || DEFAULT_SCOPES.join(',');
   return raw.split(',').map((scope) => scope.trim()).filter(Boolean);
@@ -802,7 +814,7 @@ module.exports = {
   exchangeCode,
   connectPages,
   syncAll,
-  publishScheduledPost,
+  publishScheduledPost: async (post) => (await getDurablePublisher()).publishScheduledPost(post),
   testScheduledPost,
   assertConfigured
 };

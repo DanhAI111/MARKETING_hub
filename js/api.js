@@ -198,7 +198,11 @@ const RemoteStore = (() => {
 
   const publishDue = async ({ syncSheets = false } = {}) => {
     if (!available && !(await check())) return null;
-    const result = await request(`/api/publish-due${syncSheets ? '?syncSheets=1' : ''}`, { method: 'POST', body: '{}' });
+    const result = await request(`/api/publish-due${syncSheets ? '?syncSheets=1' : ''}`, {
+      method: 'POST',
+      body: '{}',
+      timeout: 30_000
+    });
     await loadPosts(window.Utils?.getReportingMonth?.() || '');
     await loadPending().catch(() => {});
     return result;
@@ -225,6 +229,17 @@ const RemoteStore = (() => {
       await loadPosts(window.Utils?.getReportingMonth?.() || '');
       await loadPending().catch(() => {});
     }
+    return result;
+  };
+
+  const retryPost = async (id, { refresh = true } = {}) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    const result = await request(`/api/posts/${encodeURIComponent(id)}/retry`, {
+      method: 'POST',
+      body: '{}',
+      timeout: 15_000
+    });
+    if (refresh) await loadPending().catch(() => {});
     return result;
   };
 
@@ -313,6 +328,7 @@ const RemoteStore = (() => {
     publishDue,
     createPost,
     runPostTest,
+    retryPost,
     loadPosts,
     loadPending,
     syncSheetSchedules,

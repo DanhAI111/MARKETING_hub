@@ -137,11 +137,20 @@ const processClaimedPost = async (repo, meta, post) => {
 };
 
 const processScheduledPosts = async (repo, meta) => {
-  const result = { startedAt: new Date().toISOString(), published: 0, tested: 0, failed: 0, released: 0, posts: [] };
+  const result = {
+    startedAt: new Date().toISOString(),
+    processed: 0,
+    published: 0,
+    tested: 0,
+    failed: 0,
+    released: 0,
+    posts: []
+  };
   result.released = await repo.failStalePublishingPosts(
     new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
   );
   const duePosts = await repo.claimDueScheduledPosts(PUBLISH_BATCH_LIMIT);
+  result.processed = duePosts.length;
   const processedPosts = await processWithConcurrency(duePosts,
     post => processClaimedPost(repo, meta, post),
     PUBLISH_CONCURRENCY
@@ -158,7 +167,9 @@ const processScheduledPosts = async (repo, meta) => {
     });
   }
   result.finishedAt = new Date().toISOString();
-  await repo.saveState('lastPublishRun', result);
+  await repo.saveState('lastPublishHeartbeat', result);
+  if (result.processed || result.released) await repo.saveState('lastPublishRun', result);
+  if (result.failed) await repo.saveState('lastPublishFailure', result);
   return result;
 };
 
@@ -193,8 +204,13 @@ const handleRequest = async (request, env, context) => {
       platform: 'cloudflare-workers',
       authRequired: auth.required(),
       metaConfigured: !!(env.META_APP_ID && env.META_APP_SECRET),
+      buildSha: env.BUILD_SHA || 'unknown',
       lastSync: await repo.getState('lastMetaSync'),
-      publisher: { lastRun: await repo.getState('lastPublishRun') }
+      publisher: {
+        lastRun: await repo.getState('lastPublishRun'),
+        lastHeartbeat: await repo.getState('lastPublishHeartbeat'),
+        lastFailure: await repo.getState('lastPublishFailure')
+      }
     });
   }
 
@@ -280,9 +296,6 @@ const handleRequest = async (request, env, context) => {
   if (method === 'POST' && pathname === '/api/posts') {
     const post = await repo.upsertPost(normalizePostMutation(await parseJsonBody(request)));
     audit('create', 'post', post.id, post);
-    if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
-      context.waitUntil(processScheduledPosts(repo, meta));
-    }
     return json(post, 201);
   }
 
@@ -295,9 +308,6 @@ const handleRequest = async (request, env, context) => {
     const { expectedUpdatedAt, ...updates } = body;
     const post = await repo.upsertPost({ ...normalizePostMutation(updates, latest), id: postId });
     audit('update', 'post', post.id, post);
-    if (post.publishMode !== 'safe_test' && post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= new Date().toISOString()) {
-      context.waitUntil(processScheduledPosts(repo, meta));
-    }
     return json(post);
   }
   if (match && method === 'DELETE') {
@@ -305,6 +315,20 @@ const handleRequest = async (request, env, context) => {
     await repo.deletePost(postId);
     audit('delete', 'post', postId);
     return noContent();
+  }
+
+  match = pathname.match(/^\/api\/posts\/([^/]+)\/retry$/);
+  if (match && method === 'POST') {
+    const postId = decodeURIComponent(match[1]);
+    const post = await repo.requeuePostForRetry(postId);
+    if (!post) {
+      const latest = await repo.getPost(postId);
+      if (!latest) return json({ error: 'Không tìm thấy bài đăng.' }, 404);
+      if (latest.publishMode !== 'live') return json({ error: 'Bài đăng thử dùng thao tác chạy thử riêng.' }, 400);
+      return json({ error: 'Bài không ở trạng thái lỗi hoặc đã được đưa vào hàng đợi.', latest }, 409);
+    }
+    audit('retry', 'post', post.id, { status: 'queued' });
+    return json({ id: post.id, status: 'queued', post }, 202);
   }
 
   match = pathname.match(/^\/api\/posts\/([^/]+)\/run-test$/);
@@ -405,14 +429,14 @@ const handleRequest = async (request, env, context) => {
     // wall-clock/subrequest budget → Cloudflare edge 503. Run it in the
     // background so publishing (the fast path) always returns cleanly; newly
     // synced rows publish on the next tick / cron run.
-    if (url.searchParams.get('syncSheets') === '1') {
+    const publisher = await processScheduledPosts(repo, meta);
+    if (url.searchParams.get('syncSheets') === '1' && publisher.processed === 0) {
       context.waitUntil(
         syncLinkedScheduleSheets(repo).catch((err) =>
           console.error('Background sheet sync failed:', err?.message || err)
         )
       );
     }
-    const publisher = await processScheduledPosts(repo, meta);
     return json(publisher);
   }
   if (method === 'POST' && pathname === '/api/sheet-schedules/sync') {
@@ -498,16 +522,20 @@ export default {
     const repo = new Repository(env);
     const origin = env.PUBLIC_BASE_URL || 'https://marketing-hub.workers.dev';
     const meta = new MetaService(env, repo, origin);
-    const tasks = [
-      processScheduledPosts(repo, meta),
+    // Publishing gets the entire invocation budget. Drive and Meta sync work only
+    // runs when no post was claimed, so maintenance cannot kill a live publish.
+    const publisher = await processScheduledPosts(repo, meta);
+    if (publisher.processed === 0) {
+      const tasks = [
       syncLinkedScheduleSheets(repo),
       repo.cleanupOAuthStates(),
       repo.cleanupRateLimits(),
       sendDailyTaskSummaryIfDue(env, repo, controller.scheduledTime)
-    ];
-    if (new Date(controller.scheduledTime).getUTCMinutes() % 15 === 0 && env.META_APP_ID && env.META_APP_SECRET) {
-      tasks.push(meta.syncAll());
+      ];
+      if (new Date(controller.scheduledTime).getUTCMinutes() % 15 === 0 && env.META_APP_ID && env.META_APP_SECRET) {
+        tasks.push(meta.syncAll());
+      }
+      context.waitUntil(Promise.allSettled(tasks));
     }
-    context.waitUntil(Promise.allSettled(tasks));
   }
 };

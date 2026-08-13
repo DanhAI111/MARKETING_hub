@@ -15,6 +15,14 @@ const ScheduledPage = (() => {
   const getStatusMeta = (status) => STATUS_META[status] || STATUS_META.scheduled;
 
   const formatScheduleTime = (value) => Utils.formatDateTime(value, { withYear: true });
+  const PUBLISH_STAGE_LABELS = {
+    queued: 'Đã vào hàng đợi',
+    media_resolved: 'Đang chuẩn bị media',
+    container_created: 'Đang chờ Meta xử lý',
+    ready: 'Sẵn sàng xuất bản',
+    publish_unknown: 'Cần đối soát để tránh đăng trùng',
+    completed: 'Đã xuất bản'
+  };
 
   // The publishing queue is month-agnostic: it lists every not-yet-published
   // post so future-dated schedules are never hidden by the reporting month.
@@ -198,10 +206,12 @@ const ScheduledPage = (() => {
     `;
   };
 
-  const renderScheduledPost = (post) => {
+    const renderScheduledPost = (post) => {
     const status = getStatusMeta(post.status);
     const approval = Utils.getApprovalStatus(post.approvalStatus || 'approved');
-    const mediaCount = Array.isArray(post.mediaItems) ? post.mediaItems.length : (post.mediaUrl ? 1 : 0);
+      const mediaCount = Array.isArray(post.mediaItems) ? post.mediaItems.length : (post.mediaUrl ? 1 : 0);
+      const publishStage = PUBLISH_STAGE_LABELS[post.publishStage] || post.publishStage || '';
+      const publishError = post.publishLastError || post.publishError || '';
     return `
       <article class="scheduled-post-row ${post.status === 'failed' ? 'is-failed' : ''}">
         <div class="scheduled-post-time">
@@ -210,7 +220,8 @@ const ScheduledPage = (() => {
         <div class="scheduled-post-main">
           <div class="scheduled-post-title">${Utils.escapeHtml(post.title || post.content || 'Bài đăng')}</div>
           <div class="scheduled-post-content">${Utils.escapeHtml(post.content || post.title || '')}</div>
-          ${post.publishError ? `<div class="scheduled-post-error">${Utils.escapeHtml(post.publishError)}</div>` : ''}
+          ${publishStage ? `<div class="scheduled-post-progress">${Utils.escapeHtml(publishStage)}${post.publishAttemptCount ? ` · lần ${Number(post.publishAttemptCount)}` : ''}</div>` : ''}
+          ${publishError ? `<div class="scheduled-post-error">${Utils.escapeHtml(publishError)}</div>` : ''}
         </div>
         <div class="scheduled-post-meta">
           ${mediaCount ? `<span class="post-media-count">${Utils.icons.image}${mediaCount}</span>` : ''}
@@ -306,10 +317,13 @@ const ScheduledPage = (() => {
         const post = Store.posts.getById(postId);
         if (window.RemoteStore?.available) {
           try {
-            await RemoteStore.updatePost(postId, { status: 'scheduled', publishError: '' });
-            if (post?.publishMode === 'safe_test') await RemoteStore.runPostTest(postId);
-            else await RemoteStore.publishDue();
-            Toast.success('Đã thử đăng lại');
+            const result = post?.publishMode === 'safe_test'
+              ? await RemoteStore.runPostTest(postId)
+              : await RemoteStore.retryPost(postId);
+            if (result.status === 'queued') Toast.info('Đã đưa đúng bài vào hàng đợi đăng lại');
+            else if (result.status === 'tested') Toast.success('Đăng thử đã hoàn tất');
+            else if (result.status === 'failed') Toast.error(result.error || 'Đăng lại thất bại');
+            else Toast.info('Bài đang được xử lý');
           } catch (err) {
             Toast.error(err.message || 'Không thể thử đăng lại');
           }

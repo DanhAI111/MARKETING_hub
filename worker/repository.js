@@ -10,6 +10,8 @@ import {
   parseJson,
   fanpageFromRow,
   postFromRow,
+  publishJobFromRow,
+  publishAttemptFromRow,
   appItemFromRow
 } from '../shared/repository-helpers.cjs';
 
@@ -53,10 +55,17 @@ export class Repository {
     // future-dated schedules are never hidden by the reporting-month filter.
     if (pending) {
       const { results } = await this.db.prepare(
-        `SELECT * FROM posts
-          WHERE (deletedAt IS NULL OR deletedAt = '')
-            AND status NOT IN ('published', 'tested')
-          ORDER BY scheduledAt ASC, updatedAt DESC
+        `SELECT posts.*,
+                publish_jobs.stage AS publishStage,
+                publish_jobs.attemptCount AS publishAttemptCount,
+                publish_jobs.nextAttemptAt AS publishNextAttemptAt,
+                publish_jobs.lastErrorCode AS publishLastErrorCode,
+                publish_jobs.lastError AS publishLastError
+          FROM posts
+          LEFT JOIN publish_jobs ON publish_jobs.postId = posts.id
+          WHERE (posts.deletedAt IS NULL OR posts.deletedAt = '')
+            AND posts.status NOT IN ('published', 'tested')
+          ORDER BY posts.scheduledAt ASC, posts.updatedAt DESC
           LIMIT ? OFFSET ?`
       ).bind(normalizedLimit, normalizedOffset).all();
       return results.map(postFromRow);
@@ -128,11 +137,16 @@ export class Repository {
           AND scheduledAt IS NOT NULL
           AND scheduledAt != ''
           AND scheduledAt <= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM publish_jobs
+            WHERE publish_jobs.postId = posts.id
+              AND (publish_jobs.stage = 'completed' OR publish_jobs.nextAttemptAt > ?)
+          )
         ORDER BY scheduledAt ASC
         LIMIT ?
       )
       RETURNING *
-    `).bind(timestamp, timestamp, limit).all();
+    `).bind(timestamp, timestamp, timestamp, limit).all();
     return results.map(postFromRow);
   }
 
@@ -143,12 +157,22 @@ export class Repository {
             WHEN publishMode = 'safe_test' THEN 'scheduled'
             WHEN COALESCE(externalPostId, '') != '' THEN 'published'
             WHEN COALESCE(igContainerId, '') != '' THEN 'scheduled'
+            WHEN EXISTS (
+              SELECT 1 FROM publish_jobs
+              WHERE publish_jobs.postId = posts.id
+                AND publish_jobs.stage NOT IN ('completed', 'failed')
+            ) THEN 'scheduled'
             ELSE 'failed'
           END,
           publishError = CASE
             WHEN publishMode = 'safe_test'
               OR COALESCE(externalPostId, '') != ''
-              OR COALESCE(igContainerId, '') != '' THEN ''
+              OR COALESCE(igContainerId, '') != ''
+              OR EXISTS (
+                SELECT 1 FROM publish_jobs
+                WHERE publish_jobs.postId = posts.id
+                  AND publish_jobs.stage NOT IN ('completed', 'failed')
+              ) THEN ''
             ELSE 'Lần đăng trước bị gián đoạn. Hãy thử lại để tiếp tục đăng bài.'
           END,
           updatedAt = ?
@@ -178,6 +202,119 @@ export class Repository {
 
   async getPost(postId) {
     return postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first());
+  }
+
+  async getPublishJob(postId) {
+    return publishJobFromRow(
+      await this.db.prepare('SELECT * FROM publish_jobs WHERE postId = ?').bind(postId).first()
+    );
+  }
+
+  async savePublishJob(postId, updates = {}) {
+    if (!postId) throw new Error('postId is required for publish jobs.');
+    const existing = await this.getPublishJob(postId);
+    const timestamp = now();
+    const data = {
+      postId,
+      platform: updates.platform || existing?.platform || 'unknown',
+      stage: updates.stage || existing?.stage || 'queued',
+      resolvedMedia: updates.resolvedMedia !== undefined ? updates.resolvedMedia : (existing?.resolvedMedia || []),
+      childContainerIds: updates.childContainerIds !== undefined
+        ? updates.childContainerIds
+        : (existing?.childContainerIds || []),
+      parentContainerId: updates.parentContainerId !== undefined
+        ? (updates.parentContainerId || '')
+        : (existing?.parentContainerId || ''),
+      leaseToken: updates.leaseToken !== undefined ? (updates.leaseToken || '') : (existing?.leaseToken || ''),
+      leaseUntil: updates.leaseUntil !== undefined ? (updates.leaseUntil || '') : (existing?.leaseUntil || ''),
+      attemptCount: updates.attemptCount !== undefined
+        ? Number(updates.attemptCount || 0)
+        : Number(existing?.attemptCount || 0),
+      nextAttemptAt: updates.nextAttemptAt !== undefined
+        ? (updates.nextAttemptAt || '')
+        : (existing?.nextAttemptAt || ''),
+      lastErrorCode: updates.lastErrorCode !== undefined
+        ? (updates.lastErrorCode || '')
+        : (existing?.lastErrorCode || ''),
+      lastError: updates.lastError !== undefined ? (updates.lastError || '') : (existing?.lastError || ''),
+      lastErrorAt: updates.lastErrorAt !== undefined ? (updates.lastErrorAt || '') : (existing?.lastErrorAt || ''),
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    };
+    await this.db.prepare(`
+      INSERT INTO publish_jobs (
+        postId, platform, stage, resolvedMedia, childContainerIds, parentContainerId,
+        leaseToken, leaseUntil, attemptCount, nextAttemptAt, lastErrorCode,
+        lastError, lastErrorAt, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(postId) DO UPDATE SET
+        platform = excluded.platform,
+        stage = excluded.stage,
+        resolvedMedia = excluded.resolvedMedia,
+        childContainerIds = excluded.childContainerIds,
+        parentContainerId = excluded.parentContainerId,
+        leaseToken = excluded.leaseToken,
+        leaseUntil = excluded.leaseUntil,
+        attemptCount = excluded.attemptCount,
+        nextAttemptAt = excluded.nextAttemptAt,
+        lastErrorCode = excluded.lastErrorCode,
+        lastError = excluded.lastError,
+        lastErrorAt = excluded.lastErrorAt,
+        updatedAt = excluded.updatedAt
+    `).bind(
+      data.postId, data.platform, data.stage, JSON.stringify(data.resolvedMedia),
+      JSON.stringify(data.childContainerIds), data.parentContainerId || null,
+      data.leaseToken || null, data.leaseUntil || null, data.attemptCount,
+      data.nextAttemptAt || null, data.lastErrorCode || null, data.lastError || null,
+      data.lastErrorAt || null, data.createdAt, data.updatedAt
+    ).run();
+    return this.getPublishJob(postId);
+  }
+
+  async recordPublishAttempt(postId, attempt = {}) {
+    const timestamp = now();
+    await this.db.prepare(`
+      INSERT INTO publish_attempts (id, postId, stage, outcome, errorCode, errorMessage, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(), postId, attempt.stage || 'unknown', attempt.outcome || 'unknown',
+      attempt.errorCode || null, attempt.errorMessage || null, timestamp
+    ).run();
+  }
+
+  async listPublishAttempts(postId, limit = 100) {
+    const { results } = await this.db.prepare(`
+      SELECT * FROM publish_attempts
+      WHERE postId = ?
+      ORDER BY createdAt ASC
+      LIMIT ?
+    `).bind(postId, Math.min(Math.max(Number(limit) || 100, 1), 500)).all();
+    return results.map(publishAttemptFromRow);
+  }
+
+  async requeuePostForRetry(postId) {
+    const timestamp = now();
+    const row = await this.db.prepare(`
+      UPDATE posts
+      SET status = 'scheduled', publishError = '', updatedAt = ?
+      WHERE id = ?
+        AND status = 'failed'
+        AND approvalStatus = 'approved'
+        AND publishMode = 'live'
+        AND (deletedAt IS NULL OR deletedAt = '')
+      RETURNING *
+    `).bind(timestamp, postId).first();
+    if (!row) return null;
+    await this.db.prepare(`
+      UPDATE publish_jobs
+      SET nextAttemptAt = NULL,
+          lastErrorCode = NULL,
+          lastError = NULL,
+          lastErrorAt = NULL,
+          updatedAt = ?
+      WHERE postId = ?
+    `).bind(timestamp, postId).run();
+    return postFromRow(row);
   }
 
   async getFanpage(fanpageId) {

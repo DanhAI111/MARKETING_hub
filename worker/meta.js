@@ -32,6 +32,11 @@ const dataUrlToBlob = (dataUrl) => {
   return new Blob([bytes], { type: mime });
 };
 
+const MAX_AUTO_PUBLISH_ATTEMPTS = 8;
+const nextRetryAt = (attemptCount = 0) => new Date(
+  Date.now() + Math.min(15 * 60_000, 30_000 * (2 ** Math.min(Number(attemptCount) || 0, 5)))
+).toISOString();
+
 export class MetaService {
   constructor(env, repo, origin) {
     this.env = env;
@@ -200,6 +205,9 @@ export class MetaService {
     if (!token || !fanpage.metaPageId) {
       throw new Error('Fanpage Facebook chưa có Page access token. Vui lòng liên kết Meta lại.');
     }
+    if (published && this.supportsDurablePublishing(post)) {
+      return this.publishFacebookPostDurable(fanpage, post, token);
+    }
     const message = getPostMessage(post);
     const mediaItems = await resolveMediaItems(post);
     if (!mediaItems.length) {
@@ -298,10 +306,380 @@ export class MetaService {
     });
   }
 
+  supportsDurablePublishing(post) {
+    return !!(
+      post?.id
+      && this.repo?.getPublishJob
+      && this.repo?.savePublishJob
+      && this.repo?.recordPublishAttempt
+    );
+  }
+
+  async checkpointPublishJob(postId, job, updates, attempt) {
+    const saved = await this.repo.savePublishJob(postId, {
+      ...updates,
+      attemptCount: Number(job?.attemptCount || 0) + 1,
+      lastErrorCode: '',
+      lastError: '',
+      lastErrorAt: ''
+    });
+    await this.repo.recordPublishAttempt(postId, attempt);
+    return saved;
+  }
+
+  async deferDurableJob(postId, job, updates, attempt) {
+    const saved = await this.checkpointPublishJob(postId, job, {
+      ...updates,
+      nextAttemptAt: updates.nextAttemptAt || nextRetryAt(job?.attemptCount || 0)
+    }, attempt);
+    return {
+      deferred: true,
+      igContainerId: saved.parentContainerId || '',
+      publishStage: saved.stage,
+      publishProgress: {
+        completedChildren: saved.childContainerIds.length,
+        totalMedia: saved.resolvedMedia.length
+      }
+    };
+  }
+
+  async handleDurablePublishError(post, job, error) {
+    const errorCode = error.code
+      || error.meta?.error?.error_subcode
+      || error.meta?.error?.code
+      || 'PUBLISH_FAILED';
+    const attemptCount = Number(job?.attemptCount || 0) + 1;
+    const retryable = !!error.retryable && attemptCount < MAX_AUTO_PUBLISH_ATTEMPTS;
+    const saved = await this.repo.savePublishJob(post.id, {
+      attemptCount,
+      nextAttemptAt: retryable ? nextRetryAt(attemptCount) : '',
+      lastErrorCode: String(errorCode),
+      lastError: error.message || 'Không thể đăng bài',
+      lastErrorAt: new Date().toISOString()
+    });
+    await this.repo.recordPublishAttempt(post.id, {
+      stage: saved.stage,
+      outcome: retryable ? 'deferred' : 'failed',
+      errorCode: String(errorCode),
+      errorMessage: error.message || ''
+    });
+    if (retryable) {
+      return {
+        deferred: true,
+        igContainerId: saved.parentContainerId || '',
+        publishStage: saved.stage,
+        retryAt: saved.nextAttemptAt
+      };
+    }
+    throw error;
+  }
+
+  async publishFacebookPostDurable(fanpage, post, token) {
+    let job = await this.repo.getPublishJob(post.id);
+    if (job?.platform && job.platform !== 'facebook') {
+      throw new Error(`Bài đang có tác vụ ${job.platform}; không thể dùng lại làm tác vụ Facebook.`);
+    }
+    if (!job) {
+      job = await this.repo.savePublishJob(post.id, {
+        platform: 'facebook', stage: 'queued', resolvedMedia: [],
+        childContainerIds: [], parentContainerId: ''
+      });
+    }
+    try {
+      if (job.stage === 'completed') {
+        const externalPostId = post.externalPostId || job.parentContainerId || '';
+        return {
+          externalPostId,
+          permalink: post.permalink || (externalPostId ? `https://www.facebook.com/${externalPostId}` : ''),
+          mediaUrl: post.mediaUrl || job.resolvedMedia[0]?.url || '',
+          recovered: true
+        };
+      }
+      if (job.stage === 'publish_unknown') {
+        const error = new Error('Facebook chưa xác nhận kết quả đăng trước đó. Đã dừng tự động để tránh đăng trùng; hãy đối soát trên Page trước khi thao tác lại.');
+        error.code = 'FACEBOOK_PUBLISH_UNKNOWN';
+        throw error;
+      }
+      if (job.stage === 'queued') {
+        const resolvedMedia = await resolveMediaItems(post);
+        job = await this.checkpointPublishJob(post.id, job, {
+          stage: 'media_resolved', resolvedMedia, childContainerIds: [],
+          parentContainerId: '', nextAttemptAt: ''
+        }, { stage: 'resolve_media', outcome: 'checkpointed' });
+        return { deferred: true, publishStage: job.stage };
+      }
+
+      const mediaItems = job.resolvedMedia;
+      if (mediaItems.length > 1 && mediaItems.some((media) => media.type === 'video')) {
+        throw new Error('Mỗi bài Facebook chỉ hỗ trợ một video; không thể trộn video với media khác.');
+      }
+      if (mediaItems.length && mediaItems.every((media) => media.type !== 'video')
+        && job.childContainerIds.length < mediaItems.length) {
+        const media = mediaItems[job.childContainerIds.length];
+        const photo = await this.addFacebookPhoto({
+          pageId: fanpage.metaPageId, token, media, caption: '', published: false
+        });
+        if (!photo.id) throw new Error('Không thể tải ảnh lên Facebook.');
+        job = await this.checkpointPublishJob(post.id, job, {
+          stage: 'media_resolved',
+          childContainerIds: [...job.childContainerIds, photo.id],
+          nextAttemptAt: nextRetryAt(0)
+        }, { stage: 'upload_photo', outcome: 'checkpointed' });
+        return {
+          deferred: true,
+          publishStage: job.stage,
+          publishProgress: { completedChildren: job.childContainerIds.length, totalMedia: mediaItems.length }
+        };
+      }
+
+      let published;
+      try {
+        published = mediaItems.length === 1 && mediaItems[0].type === 'video'
+          ? await this.addFacebookVideo({
+              pageId: fanpage.metaPageId, token, media: mediaItems[0],
+              description: getPostMessage(post), published: true
+            })
+          : await this.graphPost(`${fanpage.metaPageId}/feed`, {
+              access_token: token,
+              message: getPostMessage(post),
+              ...(job.childContainerIds.length ? {
+                attached_media: JSON.stringify(job.childContainerIds.map((mediaFbid) => ({ media_fbid: mediaFbid })))
+              } : {})
+            });
+      } catch (error) {
+        if (error.code !== 'META_GRAPH_TIMEOUT') throw error;
+        job = await this.checkpointPublishJob(post.id, job, {
+          stage: 'publish_unknown', nextAttemptAt: nextRetryAt(0)
+        }, { stage: 'publish', outcome: 'unknown', errorCode: error.code, errorMessage: error.message });
+        return { deferred: true, publishStage: job.stage };
+      }
+      if (!published?.id) throw new Error('Meta không trả về Facebook post ID.');
+      job = await this.checkpointPublishJob(post.id, job, {
+        stage: 'completed', parentContainerId: published.id, nextAttemptAt: ''
+      }, { stage: 'publish', outcome: 'published' });
+      const isVideo = mediaItems[0]?.type === 'video';
+      return {
+        externalPostId: published.id,
+        permalink: isVideo
+          ? `https://www.facebook.com/${fanpage.metaPageId}/videos/${published.id}`
+          : `https://www.facebook.com/${published.id}`,
+        mediaUrl: mediaItems[0]?.url || '',
+        publishStage: job.stage
+      };
+    } catch (error) {
+      const latest = await this.repo.getPublishJob(post.id) || job;
+      return this.handleDurablePublishError(post, latest, error);
+    }
+  }
+
+  async publishInstagramPostDurable(fanpage, post, token) {
+    let job = await this.repo.getPublishJob(post.id);
+    if (job?.platform && job.platform !== 'instagram') {
+      throw new Error(`Bài đang có tác vụ Facebook; không thể dùng lại làm tác vụ Instagram.`);
+    }
+    if (!job) {
+      job = await this.repo.savePublishJob(post.id, {
+        platform: 'instagram',
+        stage: 'queued',
+        resolvedMedia: [],
+        childContainerIds: [],
+        parentContainerId: post.igContainerId || ''
+      });
+    }
+    try {
+      if (job.stage === 'completed') {
+        return {
+          externalPostId: post.externalPostId || '',
+          permalink: post.permalink || '',
+          mediaUrl: post.mediaUrl || job.resolvedMedia[0]?.url || '',
+          igContainerId: '',
+          recovered: true,
+          warning: ''
+        };
+      }
+
+      if (!job.resolvedMedia.length) {
+        const resolvedMedia = await resolveMediaItems(post);
+        const publicMedia = resolvedMedia.filter((item) => /^https?:\/\//i.test(item.url || ''));
+        if (!publicMedia.length) {
+          throw new Error('Instagram Graph API yêu cầu ít nhất một ảnh hoặc video có URL công khai.');
+        }
+        job = await this.checkpointPublishJob(post.id, job, {
+          stage: 'media_resolved',
+          resolvedMedia: publicMedia,
+          childContainerIds: [],
+          parentContainerId: '',
+          nextAttemptAt: ''
+        }, { stage: 'resolve_media', outcome: 'checkpointed' });
+        return {
+          deferred: true,
+          igContainerId: '',
+          publishStage: job.stage,
+          publishProgress: { completedChildren: 0, totalMedia: publicMedia.length }
+        };
+      }
+
+      const mediaItems = job.resolvedMedia;
+      const media = mediaItems[0];
+      const images = mediaItems.filter((item) => item.type !== 'video');
+
+      if (job.parentContainerId && ['container_created', 'publish_unknown'].includes(job.stage)) {
+        const lifecycle = await this.checkInstagramContainerStatus(job.parentContainerId, token);
+        if (lifecycle.statusCode === 'PUBLISHED') {
+          job = await this.checkpointPublishJob(post.id, job, {
+            stage: 'completed',
+            nextAttemptAt: ''
+          }, { stage: 'verify_publish', outcome: 'recovered' });
+          return {
+            externalPostId: post.externalPostId || '',
+            permalink: post.permalink || '',
+            mediaUrl: post.mediaUrl || media.url,
+            igContainerId: '',
+            recovered: true,
+            warning: ''
+          };
+        }
+        if (lifecycle.statusCode === 'EXPIRED') {
+          job = await this.checkpointPublishJob(post.id, job, {
+            stage: 'media_resolved',
+            childContainerIds: [],
+            parentContainerId: '',
+            nextAttemptAt: ''
+          }, { stage: 'verify_container', outcome: 'expired' });
+          if (this.repo.setPostPublishState) {
+            await this.repo.setPostPublishState(post.id, { igContainerId: '' });
+          }
+          return { deferred: true, igContainerId: '', publishStage: job.stage };
+        }
+        if (lifecycle.statusCode !== 'FINISHED') {
+          return this.deferDurableJob(post.id, job, {
+            stage: job.stage
+          }, { stage: 'verify_container', outcome: 'processing' });
+        }
+        job = await this.checkpointPublishJob(post.id, job, {
+          stage: 'ready',
+          nextAttemptAt: ''
+        }, { stage: 'verify_container', outcome: 'ready' });
+        return {
+          deferred: true,
+          igContainerId: job.parentContainerId,
+          publishStage: job.stage
+        };
+      }
+
+      if (!job.parentContainerId) {
+        if (images.length > 1 && job.childContainerIds.length < images.length) {
+          const image = images[job.childContainerIds.length];
+          const child = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+            access_token: token,
+            image_url: image.url,
+            is_carousel_item: 'true'
+          });
+          if (!child.id) throw new Error('Meta không trả về container ID cho ảnh trong carousel.');
+          return this.deferDurableJob(post.id, job, {
+            stage: 'media_resolved',
+            childContainerIds: [...job.childContainerIds, child.id]
+          }, { stage: 'create_child', outcome: 'checkpointed' });
+        }
+
+        let parent;
+        if (images.length > 1) {
+          parent = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+            access_token: token,
+            media_type: 'CAROUSEL',
+            children: job.childContainerIds.join(','),
+            caption: getPostMessage(post)
+          });
+        } else if (media.type === 'video') {
+          parent = await this.createInstagramVideoContainer(
+            fanpage.instagramBusinessId,
+            token,
+            media.url,
+            getPostMessage(post)
+          );
+        } else {
+          parent = await this.graphPost(`${fanpage.instagramBusinessId}/media`, {
+            access_token: token,
+            image_url: media.url,
+            caption: getPostMessage(post)
+          });
+        }
+        if (!parent?.id) throw new Error('Meta không trả về Instagram container ID.');
+        job = await this.checkpointPublishJob(post.id, job, {
+          stage: 'container_created',
+          parentContainerId: parent.id,
+          nextAttemptAt: ''
+        }, { stage: 'create_parent', outcome: 'checkpointed' });
+        if (this.repo.setPostPublishState) {
+          await this.repo.setPostPublishState(post.id, { igContainerId: parent.id });
+        }
+        return {
+          deferred: true,
+          igContainerId: parent.id,
+          publishStage: job.stage
+        };
+      }
+
+      if (job.stage !== 'ready') {
+        return this.deferDurableJob(post.id, job, {
+          stage: 'container_created'
+        }, { stage: 'resume', outcome: 'deferred' });
+      }
+
+      let published;
+      try {
+        published = await this.graphPost(`${fanpage.instagramBusinessId}/media_publish`, {
+          access_token: token,
+          creation_id: job.parentContainerId
+        });
+      } catch (error) {
+        const code = error.meta?.error?.code;
+        const subcode = error.meta?.error?.error_subcode;
+        if (error.code === 'META_GRAPH_TIMEOUT') {
+          return this.deferDurableJob(post.id, job, {
+            stage: 'publish_unknown'
+          }, {
+            stage: 'media_publish', outcome: 'unknown',
+            errorCode: error.code, errorMessage: error.message
+          });
+        }
+        if (code === 9007 || subcode === 2207027) {
+          return this.deferDurableJob(post.id, job, {
+            stage: 'container_created'
+          }, {
+            stage: 'media_publish', outcome: 'not_ready',
+            errorCode: String(subcode || code), errorMessage: error.message
+          });
+        }
+        throw error;
+      }
+      job = await this.checkpointPublishJob(post.id, job, {
+        stage: 'completed',
+        nextAttemptAt: ''
+      }, { stage: 'media_publish', outcome: 'published' });
+      return {
+        externalPostId: published.id || '',
+        permalink: '',
+        mediaUrl: media.url,
+        igContainerId: '',
+        publishStage: job.stage,
+        warning: media.type === 'video' && mediaItems.length > 1
+          ? `Instagram: bài video chỉ đăng video đầu (${mediaItems.length} media)`
+          : ''
+      };
+    } catch (error) {
+      const latest = await this.repo.getPublishJob(post.id) || job;
+      return this.handleDurablePublishError(post, latest, error);
+    }
+  }
+
   async publishInstagramPost(fanpage, post) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.instagramBusinessId) {
       throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
+    }
+    if (this.supportsDurablePublishing(post)) {
+      return this.publishInstagramPostDurable(fanpage, post, token);
     }
     const mediaItems = await resolveMediaItems(post);
     const media = mediaItems[0];
@@ -527,6 +905,7 @@ export class MetaService {
       const fbResult = post.externalPostId
         ? { externalPostId: post.externalPostId, permalink: post.permalink || '', mediaUrl: post.mediaUrl || '' }
         : await this.publishFacebookPost(fanpage, post);
+      if (fbResult.deferred) return { ...fbResult, source: 'facebook' };
 
       let crossPostError = '';
       if (fanpage.crossPostInstagram) {

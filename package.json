@@ -12,6 +12,7 @@
     "dev:node": "node server/index.js",
     "start": "node server/index.js",
     "test": "node --test",
+    "test:coverage": "node --experimental-test-coverage --test --test-coverage-lines=80 --test-coverage-exclude=worker/repository.js --test-coverage-exclude=worker/auth.js --test-coverage-exclude=server/repository.js --test-coverage-exclude=server/meta.js --test-coverage-exclude=server/auth.js",
     "deploy": "npm run build:assets && wrangler deploy",
     "deploy:check": "npm run build:assets && wrangler deploy --dry-run",
     "d1:create": "wrangler d1 create marketing-hub",
