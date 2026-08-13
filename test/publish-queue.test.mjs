@@ -39,6 +39,11 @@ test('repository includes a CI workflow that runs tests and deployment validatio
   assert.match(workflow, /npm run deploy:check/);
 });
 
+test('the production deploy command always routes through the build-SHA wrapper', () => {
+  const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(packageJson.scripts.deploy, 'npm run build:assets && node scripts/deploy-worker.cjs');
+});
+
 test('worker and server publishing queues use the shared bounded-concurrency helper', () => {
   assert.match(workerSource, /processWithConcurrency\(duePosts/);
   assert.match(serverSource, /processWithConcurrency\(duePosts/);
