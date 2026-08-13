@@ -692,7 +692,9 @@ test('durable Instagram carousel checkpoints exactly one child per tick and resu
     ],
     childContainerIds: ['child-1'],
     parentContainerId: '',
-    attemptCount: 1
+    // Successful checkpoints are progress, not failed retries. A long carousel
+    // can legitimately have a high attemptCount before creating its next child.
+    attemptCount: 7
   };
   globalThis.fetch = async (url, options = {}) => {
     const call = { url: String(url), body: options.body };
@@ -725,6 +727,11 @@ test('durable Instagram carousel checkpoints exactly one child per tick and resu
     assert.equal(saved.length, 1, 'checkpoint is written immediately after the one external step');
     assert.equal(calls.length, 1, 'one cron tick performs one Meta mutation');
     assert.equal(calls[0].body.get('image_url'), 'https://cdn.example.test/2.jpg');
+    const checkpointDelayMs = Date.parse(job.nextAttemptAt) - Date.now();
+    assert.ok(
+      checkpointDelayMs > 0 && checkpointDelayMs <= 31_000,
+      `successful checkpoint should resume on the next cron tick, got ${checkpointDelayMs}ms`
+    );
     assert.equal(calls.some((call) => call.body?.get('media_type') === 'CAROUSEL'), false);
     assert.equal(calls.some((call) => call.url.endsWith('/media_publish')), false);
   } finally {
@@ -854,6 +861,11 @@ test('routine carousel checkpoints do not consume the retry budget for a transie
     assert.equal(result.deferred, true);
     assert.equal(job.lastErrorCode, 'META_GRAPH_TIMEOUT');
     assert.ok(job.nextAttemptAt, 'transient failure receives a backoff despite many successful checkpoints');
+    const firstErrorDelayMs = Date.parse(job.nextAttemptAt) - Date.now();
+    assert.ok(
+      firstErrorDelayMs > 0 && firstErrorDelayMs <= 31_000,
+      `first real error should use the initial backoff, got ${firstErrorDelayMs}ms`
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
