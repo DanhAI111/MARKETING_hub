@@ -755,6 +755,31 @@ test('durable Instagram publisher never repeats media_publish after an ambiguous
   }
 });
 
+test('durable Instagram cross-post never mistakes a completed Facebook job for an Instagram publish', async () => {
+  const repo = {
+    decryptPageToken: async () => 'ig-token',
+    getPublishJob: async () => ({
+      postId: 'cross-platform-job',
+      platform: 'facebook',
+      stage: 'completed',
+      resolvedMedia: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }],
+      childContainerIds: [],
+      parentContainerId: 'facebook-post-1',
+      attemptCount: 2
+    }),
+    savePublishJob: async () => { throw new Error('must not overwrite the Facebook job'); },
+    recordPublishAttempt: async () => {}
+  };
+  const meta = new MetaService({}, repo, 'https://example.test');
+  await assert.rejects(
+    meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { id: 'cross-platform-job', content: 'Cross-post', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }] }
+    ),
+    /tác vụ Facebook.*Instagram/i
+  );
+});
+
 test('single Instagram image still publishes as a plain image container', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
