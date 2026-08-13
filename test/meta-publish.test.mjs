@@ -73,6 +73,27 @@ test('folder listing reads current Drive AF_initDataCallback media records', asy
   }
 });
 
+test('folder listing uses Drive media labels when shared files have no extension', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response([
+    '<div class="flip-entry" id="entry-1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc">',
+    '<div class="flip-entry-thumb"><img src="thumb-1" alt="PNG Image"/></div>',
+    '<div class="flip-entry-title">1</div></div>',
+    '<div class="flip-entry" id="entry-1Is52H5IRYu8U3KHvQvzGroHFb71Dd8l2">',
+    '<div class="flip-entry-thumb"><img src="thumb-2" alt="PNG Image"/></div>',
+    '<div class="flip-entry-title">2</div></div>'
+  ].join(''), { status: 200 });
+  try {
+    const items = await listGoogleDriveFolderMedia('folder-extensionless');
+    assert.equal(items.length, 2);
+    assert.deepEqual(items.map((item) => item.name), ['1', '2']);
+    assert.ok(items.every((item) => item.type === 'image'));
+    assert.match(items[0].url, /thumbnail\?id=1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // Drive folders can hold videos too. A video must resolve to the direct-download
 // URL (a thumbnail of a video is a still image → Meta rejects/mangles it).
 test('folder listing returns a direct-download video when the folder has only videos', async () => {
