@@ -349,7 +349,13 @@ export class MetaService {
       || error.meta?.error?.code
       || 'PUBLISH_FAILED';
     const attemptCount = Number(job?.attemptCount || 0) + 1;
-    const retryable = !!error.retryable && attemptCount < MAX_AUTO_PUBLISH_ATTEMPTS;
+    const previousAttempts = this.repo.listPublishAttempts
+      ? await this.repo.listPublishAttempts(post.id, 500)
+      : [];
+    const errorAttemptCount = previousAttempts.filter((attempt) => (
+      attempt.errorCode && ['deferred', 'failed'].includes(attempt.outcome)
+    )).length + 1;
+    const retryable = !!error.retryable && errorAttemptCount < MAX_AUTO_PUBLISH_ATTEMPTS;
     const saved = await this.repo.savePublishJob(post.id, {
       attemptCount,
       nextAttemptAt: retryable ? nextRetryAt(attemptCount) : '',
@@ -673,12 +679,12 @@ export class MetaService {
     }
   }
 
-  async publishInstagramPost(fanpage, post) {
+  async publishInstagramPost(fanpage, post, { durable = true } = {}) {
     const token = await this.repo.decryptPageToken(fanpage);
     if (!token || !fanpage.instagramBusinessId) {
       throw new Error('Tài khoản Instagram chưa có Instagram Business ID/Page token. Vui lòng liên kết Meta lại.');
     }
-    if (this.supportsDurablePublishing(post)) {
+    if (durable && this.supportsDurablePublishing(post)) {
       return this.publishInstagramPostDurable(fanpage, post, token);
     }
     const mediaItems = await resolveMediaItems(post);
@@ -918,7 +924,10 @@ export class MetaService {
             await this.repo.setPostPublishState(post.id, { ...fbResult, status: 'published', source: 'facebook' });
           }
           try {
-            const igResult = await this.publishInstagramPost(igPage, post);
+            // One post owns one durable job. The completed Facebook checkpoint
+            // remains the idempotency source of truth; the existing cross-post
+            // flow must not reinterpret or overwrite it as an Instagram job.
+            const igResult = await this.publishInstagramPost(igPage, post, { durable: false });
             // FB is already live, so we can't defer/reclaim for IG video async encoding
             // here — surface it as a manual-retry note instead of stranding the post.
             if (igResult.deferred) crossPostError = 'Instagram: video đang xử lý (Reels), hãy đăng lại IG sau khi encode xong.';
