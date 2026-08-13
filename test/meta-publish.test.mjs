@@ -31,6 +31,48 @@ const folderHtml = (entries) => entries
   .map(([id, name]) => `<div class="flip-entry" id="entry-${id}"><div class="flip-entry-title">${name}</div></div>`)
   .join('\n');
 
+const modernFolderHtml = (entries) => {
+  const records = entries.map(({ id, mimeType, name }) => {
+    const record = Array(62).fill(null);
+    record[0] = [null, id];
+    record[4] = mimeType;
+    // Current Drive folder pages expose the display name at this position in
+    // AF_initDataCallback instead of rendering the old flip-entry markup.
+    record[35] = [[[name]]];
+    return record;
+  });
+  return `<script>AF_initDataCallback({key: 'ds:4', hash: '5', data:${JSON.stringify([
+    null,
+    [[[[records]]]]
+  ])}, sideChannel: {}});</script>`;
+};
+
+test('folder listing reads current Drive AF_initDataCallback media records', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(modernFolderHtml([
+    { id: '1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc', mimeType: 'image/png', name: '1' },
+    { id: '1Is52H5IRYu8U3KHvQvzGroHFb71Dd8l2', mimeType: 'image/png', name: '2' },
+    { id: 'not-media-record', mimeType: 'application/pdf', name: 'brief.pdf' }
+  ]), { status: 200 });
+  try {
+    const items = await listGoogleDriveFolderMedia('folder-modern');
+    assert.deepEqual(items, [
+      {
+        type: 'image',
+        url: 'https://drive.google.com/thumbnail?id=1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc&sz=w1600',
+        name: '1'
+      },
+      {
+        type: 'image',
+        url: 'https://drive.google.com/thumbnail?id=1Is52H5IRYu8U3KHvQvzGroHFb71Dd8l2&sz=w1600',
+        name: '2'
+      }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // Drive folders can hold videos too. A video must resolve to the direct-download
 // URL (a thumbnail of a video is a still image → Meta rejects/mangles it).
 test('folder listing returns a direct-download video when the folder has only videos', async () => {
