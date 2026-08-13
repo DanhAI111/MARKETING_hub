@@ -33,6 +33,10 @@ const dataUrlToBlob = (dataUrl) => {
 };
 
 const MAX_AUTO_PUBLISH_ATTEMPTS = 8;
+// A 100-post Graph payload caused a production Worker request to be killed at
+// 195ms CPU. Keep every invocation small; syncAll also receives untrusted query
+// parameters from /api/sync, so the cap is enforced here as the final boundary.
+const MAX_META_SYNC_POSTS = 25;
 const nextRetryAt = (attemptCount = 0) => new Date(
   Date.now() + Math.min(15 * 60_000, 30_000 * (2 ** Math.min(Number(attemptCount) || 0, 5)))
 ).toISOString();
@@ -1170,7 +1174,11 @@ export class MetaService {
 
   // maxFanpages default 1 = batch one fanpage per invocation (Cloudflare CPU/subrequest
   // limits). The server mirror defaults to null (all at once); this difference is intentional.
-  async syncAll({ cursor = null, maxFanpages = 1, postLimit = 100 } = {}) {
+  async syncAll({ cursor = null, maxFanpages = 1, postLimit = MAX_META_SYNC_POSTS } = {}) {
+    const boundedPostLimit = Math.max(
+      1,
+      Math.min(MAX_META_SYNC_POSTS, Number(postLimit) || MAX_META_SYNC_POSTS)
+    );
     const fanpages = (await this.repo.getConnectedFanpages())
       .sort((a, b) => `${a.name || ''}:${a.id}`.localeCompare(`${b.name || ''}:${b.id}`));
     const savedCursor = await this.repo.getState('lastMetaSyncCursor');
@@ -1184,6 +1192,7 @@ export class MetaService {
       startedAt: new Date().toISOString(),
       cursor: startIndex,
       fanpageCount: fanpages.length,
+      postLimit: boundedPostLimit,
       fanpages: [],
       totalPosts: 0
     };
@@ -1196,8 +1205,8 @@ export class MetaService {
           pageAccessTokenEncrypted: fanpage.pageAccessTokenEncrypted
         };
         const count = syncFanpage.platform === 'instagram'
-          ? await this.syncInstagramMedia(syncFanpage, { limit: postLimit })
-          : await this.syncFacebookPosts(syncFanpage, { limit: postLimit });
+          ? await this.syncInstagramMedia(syncFanpage, { limit: boundedPostLimit })
+          : await this.syncFacebookPosts(syncFanpage, { limit: boundedPostLimit });
         await this.repo.setFanpageSyncStatus(refreshed.id, 'synced');
         result.fanpages.push({
           id: refreshed.id,

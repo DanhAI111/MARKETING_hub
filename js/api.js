@@ -134,7 +134,7 @@ const RemoteStore = (() => {
     let cursor = 0;
     let attempts = 0;
     do {
-      lastSync = await request(`/api/sync?cursor=${cursor}&maxFanpages=1&postLimit=100`, { method: 'POST', body: '{}', timeout: 60000 });
+      lastSync = await request(`/api/sync?cursor=${cursor}&maxFanpages=1&postLimit=25`, { method: 'POST', body: '{}', timeout: 60000 });
       cursor = lastSync.nextCursor || 0;
       attempts++;
     } while (lastSync.hasMore && attempts < 20);

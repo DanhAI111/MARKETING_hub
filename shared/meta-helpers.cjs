@@ -83,6 +83,70 @@ const decodeHtml = (value = '') => value
   .replace(/&lt;/g, '<')
   .replace(/&gt;/g, '>');
 
+const parseJsonArrayAt = (source, startIndex) => {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = startIndex; index < source.length; index++) {
+    const character = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '[') depth++;
+    else if (character === ']' && --depth === 0) {
+      try {
+        return JSON.parse(source.slice(startIndex, index + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
+const extensionForDriveMime = (mimeType) => {
+  const subtype = String(mimeType || '').split('/')[1]?.split(/[;+]/)[0] || '';
+  if (subtype === 'jpeg') return 'jpg';
+  if (subtype === 'quicktime') return 'mov';
+  return subtype.replace(/[^a-z0-9]/gi, '') || 'bin';
+};
+
+const listModernGoogleDriveFolderMedia = (html) => {
+  const records = [];
+  const callbacks = /AF_initDataCallback\(\{[^{}]{0,240}\bdata\s*:\s*\[/g;
+  for (const match of html.matchAll(callbacks)) {
+    const arrayStart = match.index + match[0].lastIndexOf('[');
+    const data = parseJsonArrayAt(html, arrayStart);
+    if (!data) continue;
+    const visit = (value) => {
+      if (!Array.isArray(value)) return;
+      const fileId = Array.isArray(value[0]) ? value[0][1] : '';
+      const mimeType = typeof value[4] === 'string' ? value[4] : '';
+      if (/^[A-Za-z0-9_-]{10,}$/.test(fileId) && /^(image|video)\//i.test(mimeType)) {
+        const displayName = value?.[35]?.[0]?.[0]?.[0];
+        records.push({
+          id: fileId,
+          type: mimeType.startsWith('video/') ? 'video' : 'image',
+          name: typeof displayName === 'string' && displayName.trim()
+            ? displayName.trim()
+            : `${fileId}.${extensionForDriveMime(mimeType)}`
+        });
+        return;
+      }
+      value.forEach(visit);
+    };
+    visit(data);
+  }
+  return [...new Map(records.map((record) => [record.id, record])).values()];
+};
+
 const listGoogleDriveFolderMedia = async (folderId) => {
   const url = `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}#grid`;
   const response = await fetchWithTimeout(url, { redirect: 'follow' });
@@ -92,18 +156,37 @@ const listGoogleDriveFolderMedia = async (folderId) => {
   const html = await response.text();
   const images = [];
   const videos = [];
-  const pattern = /<div class="flip-entry"[^>]*id="entry-([^"]+)"[\s\S]*?<div class="flip-entry-title">([^<]+)<\/div>/g;
+  const seenIds = new Set();
+  const pattern = /<div class="flip-entry"[^>]*id="entry-([^"]+)"[^>]*>([\s\S]*?)<div class="flip-entry-title">([^<]+)<\/div>/g;
   for (const match of html.matchAll(pattern)) {
-    const name = decodeHtml(match[2]).trim();
-    if (/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name)) {
-      images.push({ type: 'image', url: googleDriveThumbnailUrl(match[1]), name });
-    } else if (isVideoName(name)) {
+    const [, fileId, entryMarkup, rawName] = match;
+    const name = decodeHtml(rawName).trim();
+    const imageLabel = /alt="[^"]*(?:image|png|jpe?g|gif|webp|tiff?|heic|heif)[^"]*"/i.test(entryMarkup);
+    const videoLabel = /alt="[^"]*video[^"]*"/i.test(entryMarkup);
+    if (/\.(png|jpe?g|gif|webp|tiff?|heic|heif)$/i.test(name) || imageLabel) {
+      seenIds.add(fileId);
+      images.push({ type: 'image', url: googleDriveThumbnailUrl(fileId), name });
+    } else if (isVideoName(name) || videoLabel) {
+      seenIds.add(fileId);
       // Video needs the real file, not a thumbnail — use the direct-download URL
       // (same form normalizeMediaUrl produces for single Drive files).
       videos.push({
         type: 'video',
-        url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(match[1])}&export=download&confirm=t`,
+        url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`,
         name
+      });
+    }
+  }
+  for (const item of listModernGoogleDriveFolderMedia(html)) {
+    if (seenIds.has(item.id)) continue;
+    seenIds.add(item.id);
+    if (item.type === 'image') {
+      images.push({ type: 'image', url: googleDriveThumbnailUrl(item.id), name: item.name });
+    } else {
+      videos.push({
+        type: 'video',
+        url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(item.id)}&export=download&confirm=t`,
+        name: item.name
       });
     }
   }
