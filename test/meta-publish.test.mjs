@@ -755,6 +755,44 @@ test('durable Instagram publisher never repeats media_publish after an ambiguous
   }
 });
 
+test('routine carousel checkpoints do not consume the retry budget for a transient Meta error', async () => {
+  const originalFetch = globalThis.fetch;
+  let job = {
+    postId: 'long-carousel-retry',
+    platform: 'instagram',
+    stage: 'media_resolved',
+    resolvedMedia: Array.from({ length: 10 }, (_, index) => ({
+      type: 'image', url: `https://cdn.example.test/${index + 1}.jpg`
+    })),
+    childContainerIds: Array.from({ length: 8 }, (_, index) => `child-${index + 1}`),
+    parentContainerId: '',
+    attemptCount: 9
+  };
+  globalThis.fetch = async (_url, options = {}) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  });
+  try {
+    const repo = {
+      decryptPageToken: async () => 'ig-token',
+      getPublishJob: async () => job,
+      savePublishJob: async (_postId, updates) => (job = { ...job, ...updates }),
+      recordPublishAttempt: async () => {},
+      listPublishAttempts: async () => []
+    };
+    const meta = new MetaService({ META_GRAPH_TIMEOUT_MS: '10' }, repo, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { id: job.postId, content: 'Long album', mediaItems: job.resolvedMedia }
+    );
+
+    assert.equal(result.deferred, true);
+    assert.equal(job.lastErrorCode, 'META_GRAPH_TIMEOUT');
+    assert.ok(job.nextAttemptAt, 'transient failure receives a backoff despite many successful checkpoints');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('durable Instagram cross-post never mistakes a completed Facebook job for an Instagram publish', async () => {
   const repo = {
     decryptPageToken: async () => 'ig-token',
