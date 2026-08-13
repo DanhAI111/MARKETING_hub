@@ -612,6 +612,99 @@ test('publishes multiple Instagram images as a carousel', async () => {
   }
 });
 
+test('durable Instagram carousel checkpoints exactly one child per tick and resumes from saved children', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let job = {
+    postId: 'durable-carousel',
+    platform: 'instagram',
+    stage: 'media_resolved',
+    resolvedMedia: [
+      { type: 'image', url: 'https://cdn.example.test/1.jpg' },
+      { type: 'image', url: 'https://cdn.example.test/2.jpg' },
+      { type: 'image', url: 'https://cdn.example.test/3.jpg' }
+    ],
+    childContainerIds: ['child-1'],
+    parentContainerId: '',
+    attemptCount: 1
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const call = { url: String(url), body: options.body };
+    calls.push(call);
+    if (call.url.endsWith('/ig-1/media') && call.body?.get('is_carousel_item') === 'true') {
+      return jsonResponse({ id: 'child-2' });
+    }
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${call.url}` } }, 500);
+  };
+  try {
+    const saved = [];
+    const repo = {
+      decryptPageToken: async () => 'ig-token',
+      getPublishJob: async () => job,
+      savePublishJob: async (_postId, updates) => {
+        job = { ...job, ...updates };
+        saved.push(structuredClone(job));
+        return job;
+      },
+      recordPublishAttempt: async () => {}
+    };
+    const meta = new MetaService({}, repo, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { id: 'durable-carousel', content: 'Album', mediaItems: job.resolvedMedia }
+    );
+
+    assert.equal(result.deferred, true);
+    assert.deepEqual(job.childContainerIds, ['child-1', 'child-2']);
+    assert.equal(saved.length, 1, 'checkpoint is written immediately after the one external step');
+    assert.equal(calls.length, 1, 'one cron tick performs one Meta mutation');
+    assert.equal(calls[0].body.get('image_url'), 'https://cdn.example.test/2.jpg');
+    assert.equal(calls.some((call) => call.body?.get('media_type') === 'CAROUSEL'), false);
+    assert.equal(calls.some((call) => call.url.endsWith('/media_publish')), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('durable Instagram publisher never repeats media_publish after an ambiguous timeout', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let job = {
+    postId: 'durable-unknown',
+    platform: 'instagram',
+    stage: 'publish_unknown',
+    resolvedMedia: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }],
+    childContainerIds: [],
+    parentContainerId: 'parent-1',
+    attemptCount: 2
+  };
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value.includes('/parent-1?')) return jsonResponse({ status_code: 'PUBLISHED' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${value}` } }, 500);
+  };
+  try {
+    const repo = {
+      decryptPageToken: async () => 'ig-token',
+      getPublishJob: async () => job,
+      savePublishJob: async (_postId, updates) => (job = { ...job, ...updates }),
+      recordPublishAttempt: async () => {}
+    };
+    const meta = new MetaService({}, repo, 'https://example.test');
+    const result = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      { id: 'durable-unknown', content: 'One image', mediaItems: job.resolvedMedia }
+    );
+
+    assert.equal(result.recovered, true);
+    assert.equal(job.stage, 'completed');
+    assert.equal(calls.filter((url) => url.endsWith('/media_publish')).length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('single Instagram image still publishes as a plain image container', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

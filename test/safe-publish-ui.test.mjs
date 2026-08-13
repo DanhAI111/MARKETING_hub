@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const contentSource = fs.readFileSync(new URL('../js/pages/content.js', import.meta.url), 'utf8');
 const apiSource = fs.readFileSync(new URL('../js/api.js', import.meta.url), 'utf8');
 const storeSource = fs.readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
+const scheduledSource = fs.readFileSync(new URL('../js/pages/scheduled.js', import.meta.url), 'utf8');
 
 test('manual schedule form exposes a clearly labelled non-public test mode', () => {
   assert.match(contentSource, /Đăng thử — không công khai/);
@@ -23,4 +24,13 @@ test('tested posts are terminal and excluded from publishing KPIs and pending qu
   assert.match(storeSource, /TERMINAL_POST_STATUSES/);
   assert.match(storeSource, /new Set\(\['published', 'tested'\]\)/);
   assert.match(storeSource, /p\.status === 'published'/);
+});
+
+test('live retry uses the selected post endpoint and reports the returned state', () => {
+  assert.match(apiSource, /const retryPost = async/);
+  assert.match(apiSource, /\/api\/posts\/\$\{encodeURIComponent\(id\)\}\/retry/);
+  const retryHandler = scheduledSource.match(/retry-scheduled-post-btn[\s\S]*?\n\s*}\);/)?.[0] || '';
+  assert.match(retryHandler, /RemoteStore\.retryPost\(postId\)/);
+  assert.doesNotMatch(retryHandler, /RemoteStore\.publishDue\(/);
+  assert.match(retryHandler, /result\.status/);
 });

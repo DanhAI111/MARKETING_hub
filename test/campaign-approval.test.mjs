@@ -55,6 +55,34 @@ const createRepositorySchema = (db) => db.exec(`
     updatedAt TEXT NOT NULL,
     PRIMARY KEY (collection, id)
   );
+
+  CREATE TABLE publish_jobs (
+    postId TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    resolvedMedia TEXT,
+    childContainerIds TEXT,
+    parentContainerId TEXT,
+    leaseToken TEXT,
+    leaseUntil TEXT,
+    attemptCount INTEGER NOT NULL DEFAULT 0,
+    nextAttemptAt TEXT,
+    lastErrorCode TEXT,
+    lastError TEXT,
+    lastErrorAt TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE publish_attempts (
+    id TEXT PRIMARY KEY,
+    postId TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    errorCode TEXT,
+    errorMessage TEXT,
+    createdAt TEXT NOT NULL
+  );
 `);
 
 const withSqliteRepository = async (run) => {
@@ -141,6 +169,44 @@ test('server upsertPost persists and updates an Instagram container id', async (
     });
     assert.equal(updated.igContainerId, 'ig-container-replacement');
     assert.equal((await repo.getPost('container-round-trip')).igContainerId, 'ig-container-replacement');
+  });
+});
+
+test('publish jobs persist resumable media checkpoints and append attempt history', async () => {
+  await withSqliteRepository(async (repo) => {
+    await repo.savePublishJob('durable-post', {
+      platform: 'instagram',
+      stage: 'media_resolved',
+      resolvedMedia: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }],
+      childContainerIds: ['child-1'],
+      parentContainerId: '',
+      attemptCount: 1
+    });
+    await repo.recordPublishAttempt('durable-post', {
+      stage: 'create_child',
+      outcome: 'checkpointed'
+    });
+
+    const job = await repo.getPublishJob('durable-post');
+    const attempts = await repo.listPublishAttempts('durable-post');
+    assert.equal(job.stage, 'media_resolved');
+    assert.deepEqual(job.childContainerIds, ['child-1']);
+    assert.equal(job.resolvedMedia[0].url, 'https://cdn.example.test/a.jpg');
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0].outcome, 'checkpointed');
+  });
+});
+
+test('post-specific retry atomically requeues only the selected failed post', async () => {
+  await withSqliteRepository(async (repo) => {
+    await repo.upsertPost({ ...scheduledPost('retry-me', 'approved'), status: 'failed' });
+    await repo.upsertPost({ ...scheduledPost('leave-failed', 'approved'), status: 'failed' });
+
+    const retried = await repo.requeuePostForRetry('retry-me');
+    assert.equal(retried.id, 'retry-me');
+    assert.equal(retried.status, 'scheduled');
+    assert.equal((await repo.getPost('leave-failed')).status, 'failed');
+    assert.equal(await repo.requeuePostForRetry('retry-me'), null, 'a second click cannot queue the same post twice');
   });
 });
 

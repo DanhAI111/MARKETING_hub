@@ -7,15 +7,15 @@ const require = createRequire(import.meta.url);
 const workerSource = fs.readFileSync(new URL('../worker/index.js', import.meta.url), 'utf8');
 const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
 
-test('scheduled worker starts publishing without waiting for Google Sheets sync', () => {
-  assert.match(
-    workerSource,
-    /const tasks = \[\s*processScheduledPosts\(repo, meta\),\s*syncLinkedScheduleSheets\(repo\)/
-  );
-  assert.doesNotMatch(
-    workerSource,
-    /await syncLinkedScheduleSheets\(repo\);\s*return processScheduledPosts\(repo, meta\)/
-  );
+test('scheduled worker isolates publishing from maintenance workloads', () => {
+  assert.match(workerSource, /const publisher = await processScheduledPosts\(repo, meta\)/);
+  assert.match(workerSource, /if \(publisher\.processed === 0\)/);
+  assert.doesNotMatch(workerSource, /const tasks = \[\s*processScheduledPosts\(repo, meta\)/);
+});
+
+test('worker exposes a post-specific retry endpoint and never auto-publishes from generic post updates', () => {
+  assert.match(workerSource, /\/api\/posts\/\(\[\^\/\]\+\)\/retry/);
+  assert.doesNotMatch(workerSource, /method === 'PUT'[\s\S]{0,900}context\.waitUntil\(processScheduledPosts/);
 });
 
 test('worker and server publishing queues use the shared bounded-concurrency helper', () => {
