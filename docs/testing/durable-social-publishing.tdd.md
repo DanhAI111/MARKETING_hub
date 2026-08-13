@@ -19,6 +19,7 @@ The source plan was approved in the conversation; no standalone plan file was su
 | Cross-platform job safety | Commit `4e66745`; targeted run: 0/1 pass (`Missing expected rejection`) | Targeted run: 1/1 pass | A completed Facebook job cannot be mistaken for a completed Instagram publish. |
 | Preserve Facebook → Instagram cross-post orchestration | Commit `850dcf9`; targeted assertion saw the Facebook job reused as Instagram | Targeted run: 2/2 pass | The Facebook checkpoint stays authoritative while the established Instagram cross-post path still runs. |
 | Separate progress from transient-error retry budget | Commit `d45ad1a`; targeted run failed after nine successful checkpoints | Targeted run: 1/1 pass | A long carousel does not exhaust its error retry budget merely by checkpointing successful media steps. |
+| Auditable deployment build identity | Commit `310eebc`; deploy wrapper module was missing and package script bypassed it | `test/deploy-worker.test.mjs` and deploy dry-run pass | Every production deploy injects a validated Git SHA while preserving configured Worker bindings. |
 
 GREEN implementation checkpoint: commit `d5fe4b8` (`fix: make scheduled social publishing resumable`).
 
@@ -34,7 +35,7 @@ GREEN implementation checkpoint: commit `d5fe4b8` (`fix: make scheduled social p
 | 6 | Stale jobs resume only when durable progress exists; completed posts are not replayed | `stale publishing posts requeue recoverable containers...` | Repository integration (SQLite) | PASS |
 | 7 | Worker cron gives publishing the invocation budget before maintenance | `scheduled worker isolates publishing from maintenance workloads` | Static integration | PASS |
 | 8 | UI calls the selected retry endpoint and shows structured progress/error data | `safe-publish-ui.test.mjs` | UI contract | PASS |
-| 9 | The full historical regression suite remains green | `npm test` | Unit + integration | PASS — 182/182 |
+| 9 | The full historical regression suite remains green | `npm test` | Unit + integration | PASS — 185/185 |
 | 10 | D1 can apply the complete migration chain including `0013` | `npm run d1:migrate:local` | Local database integration | PASS — 12/12 migrations |
 | 11 | The Worker bundle and static assets are deployable | `npm run deploy:check` | Build/deploy validation | PASS — dry run only |
 | 12 | Production dependencies have no known registry advisories | `npm audit --omit=dev` | Security | PASS — 0 vulnerabilities |
@@ -42,6 +43,6 @@ GREEN implementation checkpoint: commit `d5fe4b8` (`fix: make scheduled social p
 
 ## Coverage and known gates
 
-`npm run test:coverage -- --test-reporter=spec` passed the enforced 80% line gate with **90.23% line coverage**, 78.36% branch coverage, and 93.66% function coverage. Runtime entrypoints and database/auth adapters are excluded from the line threshold because they are validated through integration, migration, security, and packaging gates; the state-machine and shared business logic remain included.
+`npm run test:coverage -- --test-reporter=spec` passed the enforced 80% line gate with **90.10% line coverage**, 78.50% branch coverage, and 93.25% function coverage. Runtime entrypoints and database/auth adapters are excluded from the line threshold because they are validated through integration, migration, security, and packaging gates; the state-machine and shared business logic remain included.
 
 No public Meta post was created during verification. Remote D1 migration, Worker deployment, GitHub push, and retrying the two existing failed production posts remain explicit external-action gates. Before any public retry, first deploy the migration/code, verify `/api/health` build identity and heartbeat, then use a non-public safe test and manually reconcile any `publish_unknown` record.
