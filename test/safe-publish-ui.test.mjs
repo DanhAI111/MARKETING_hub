@@ -29,8 +29,16 @@ test('tested posts are terminal and excluded from publishing KPIs and pending qu
 test('live retry uses the selected post endpoint and reports the returned state', () => {
   assert.match(apiSource, /const retryPost = async/);
   assert.match(apiSource, /\/api\/posts\/\$\{encodeURIComponent\(id\)\}\/retry/);
-  const retryHandler = scheduledSource.match(/retry-scheduled-post-btn[\s\S]*?\n\s*}\);/)?.[0] || '';
+  const retryStart = scheduledSource.indexOf("container.querySelectorAll('.retry-scheduled-post-btn')");
+  const retryEnd = scheduledSource.indexOf('const updateApproval', retryStart);
+  const retryHandler = scheduledSource.slice(retryStart, retryEnd);
   assert.match(retryHandler, /RemoteStore\.retryPost\(postId\)/);
   assert.doesNotMatch(retryHandler, /RemoteStore\.publishDue\(/);
   assert.match(retryHandler, /result\.status/);
+});
+
+test('scheduled post cards expose durable publish progress and the latest structured error', () => {
+  assert.match(scheduledSource, /publishStage/);
+  assert.match(scheduledSource, /publishAttemptCount/);
+  assert.match(scheduledSource, /publishLastError/);
 });

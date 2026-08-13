@@ -666,6 +666,56 @@ test('durable Instagram carousel checkpoints exactly one child per tick and resu
   }
 });
 
+test('durable Facebook carousel checkpoints exactly one photo per tick and resumes safely', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let job = {
+    postId: 'durable-facebook-carousel',
+    platform: 'facebook',
+    stage: 'media_resolved',
+    resolvedMedia: [
+      { type: 'image', url: 'https://cdn.example.test/1.jpg' },
+      { type: 'image', url: 'https://cdn.example.test/2.jpg' },
+      { type: 'image', url: 'https://cdn.example.test/3.jpg' }
+    ],
+    childContainerIds: ['photo-1'],
+    parentContainerId: '',
+    attemptCount: 1
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), body: options.body });
+    if (String(url).endsWith('/page-1/photos')) return jsonResponse({ id: 'photo-2' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${url}` } }, 500);
+  };
+  try {
+    const saved = [];
+    const repo = {
+      decryptPageToken: async () => 'page-token',
+      getPublishJob: async () => job,
+      savePublishJob: async (_postId, updates) => {
+        job = { ...job, ...updates };
+        saved.push(structuredClone(job));
+        return job;
+      },
+      recordPublishAttempt: async () => {}
+    };
+    const meta = new MetaService({}, repo, 'https://example.test');
+    const result = await meta.publishFacebookPost(
+      { platform: 'facebook', metaPageId: 'page-1' },
+      { id: job.postId, content: 'Album', mediaItems: job.resolvedMedia }
+    );
+
+    assert.equal(result.deferred, true);
+    assert.deepEqual(job.childContainerIds, ['photo-1', 'photo-2']);
+    assert.equal(saved.length, 1, 'photo id is checkpointed immediately');
+    assert.equal(calls.length, 1, 'one cron tick performs one Meta mutation');
+    assert.equal(calls[0].body.get('url'), 'https://cdn.example.test/2.jpg');
+    assert.equal(calls.some((call) => call.url.endsWith('/feed')), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('durable Instagram publisher never repeats media_publish after an ambiguous timeout', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

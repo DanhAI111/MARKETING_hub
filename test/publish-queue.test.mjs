@@ -14,8 +14,29 @@ test('scheduled worker isolates publishing from maintenance workloads', () => {
 });
 
 test('worker exposes a post-specific retry endpoint and never auto-publishes from generic post updates', () => {
-  assert.match(workerSource, /\/api\/posts\/\(\[\^\/\]\+\)\/retry/);
+  assert.match(workerSource, /pathname\.match\(\/\^\\\/api\\\/posts\\\/\(\[\^\/\]\+\)\\\/retry\$\//);
   assert.doesNotMatch(workerSource, /method === 'PUT'[\s\S]{0,900}context\.waitUntil\(processScheduledPosts/);
+});
+
+test('Node server exposes the same post-specific retry contract without generic auto-publish side effects', () => {
+  assert.match(serverSource, /app\.post\('\/api\/posts\/:id\/retry'/);
+  assert.doesNotMatch(serverSource, /publishSoon/);
+});
+
+test('health reports build identity and durable publisher heartbeat/failure state', () => {
+  for (const source of [workerSource, serverSource]) {
+    assert.match(source, /buildSha/);
+    assert.match(source, /lastPublishHeartbeat/);
+    assert.match(source, /lastPublishFailure/);
+  }
+});
+
+test('repository includes a CI workflow that runs tests and deployment validation', () => {
+  const workflowUrl = new URL('../.github/workflows/ci.yml', import.meta.url);
+  assert.equal(fs.existsSync(workflowUrl), true);
+  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+  assert.match(workflow, /npm test/);
+  assert.match(workflow, /npm run deploy:check/);
 });
 
 test('worker and server publishing queues use the shared bounded-concurrency helper', () => {
