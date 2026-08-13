@@ -59,12 +59,12 @@ test('folder listing reads current Drive AF_initDataCallback media records', asy
     assert.deepEqual(items, [
       {
         type: 'image',
-        url: 'https://drive.google.com/thumbnail?id=1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc&sz=w1600',
+        url: 'https://drive.usercontent.google.com/download?id=1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc&export=download&confirm=t',
         name: '1'
       },
       {
         type: 'image',
-        url: 'https://drive.google.com/thumbnail?id=1Is52H5IRYu8U3KHvQvzGroHFb71Dd8l2&sz=w1600',
+        url: 'https://drive.usercontent.google.com/download?id=1Is52H5IRYu8U3KHvQvzGroHFb71Dd8l2&export=download&confirm=t',
         name: '2'
       }
     ]);
@@ -88,7 +88,10 @@ test('folder listing uses Drive media labels when shared files have no extension
     assert.equal(items.length, 2);
     assert.deepEqual(items.map((item) => item.name), ['1', '2']);
     assert.ok(items.every((item) => item.type === 'image'));
-    assert.match(items[0].url, /thumbnail\?id=1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc/);
+    assert.equal(
+      items[0].url,
+      'https://drive.usercontent.google.com/download?id=1gpUVVUWb0PmIZ6h2jNK5nLOMpZokJBNc&export=download&confirm=t'
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -109,14 +112,14 @@ test('folder listing returns a direct-download video when the folder has only vi
   }
 });
 
-test('folder listing prefers images and keeps thumbnail URLs for them', async () => {
+test('folder listing prefers images and gives Meta a direct image URL', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(folderHtml([['img1', 'a.png'], ['vid1', 'clip.mp4']]), { status: 200 });
   try {
     const items = await listGoogleDriveFolderMedia('folder-1');
     assert.equal(items.length, 1);
     assert.equal(items[0].type, 'image');
-    assert.match(items[0].url, /thumbnail\?id=img1/);
+    assert.equal(items[0].url, 'https://drive.usercontent.google.com/download?id=img1&export=download&confirm=t');
   } finally {
     globalThis.fetch = originalFetch;
   }
