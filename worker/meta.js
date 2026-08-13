@@ -334,7 +334,10 @@ export class MetaService {
   async deferDurableJob(postId, job, updates, attempt) {
     const saved = await this.checkpointPublishJob(postId, job, {
       ...updates,
-      nextAttemptAt: updates.nextAttemptAt || nextRetryAt(job?.attemptCount || 0)
+      // A durable checkpoint means the previous Meta step succeeded. Keep the
+      // short polling delay independent from the number of completed steps so
+      // long carousels do not accidentally hit the 15-minute error backoff.
+      nextAttemptAt: updates.nextAttemptAt || nextRetryAt(0)
     }, attempt);
     return {
       deferred: true,
@@ -362,7 +365,9 @@ export class MetaService {
     const retryable = !!error.retryable && errorAttemptCount < MAX_AUTO_PUBLISH_ATTEMPTS;
     const saved = await this.repo.savePublishJob(post.id, {
       attemptCount,
-      nextAttemptAt: retryable ? nextRetryAt(attemptCount) : '',
+      // Only actual failed/deferred error attempts drive exponential backoff;
+      // successful media checkpoints must not make the first error wait 15 min.
+      nextAttemptAt: retryable ? nextRetryAt(Math.max(0, errorAttemptCount - 1)) : '',
       lastErrorCode: String(errorCode),
       lastError: error.message || 'Không thể đăng bài',
       lastErrorAt: new Date().toISOString()
