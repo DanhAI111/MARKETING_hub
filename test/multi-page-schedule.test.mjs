@@ -60,7 +60,7 @@ test('validateSelection requires at least one page and applies Instagram media c
   });
   assert.ok(
     emptyInstagram.some(error => error.includes('Instagram One') && error.includes('ít nhất một ảnh hoặc video')),
-    'Facebook may publish text-only, but every selected Instagram destination must require media'
+    'every selected Facebook and Instagram destination must require media'
   );
 
   const errors = ScheduleBatch.validateSelection({
@@ -85,7 +85,7 @@ test('validateSelection requires at least one page and applies Instagram media c
   assert.deepEqual(videoOk, []);
 });
 
-test('validateSelection blocks duplicate Instagram delivery caused by selecting a paired cross-post destination', () => {
+test('validateSelection allows paired Facebook and Instagram destinations as independent schedules', () => {
   const errors = ScheduleBatch.validateSelection({
     fanpages: [{ ...facebook, crossPostInstagram: true }, instagram],
     mediaItems: [{ type: 'image', url: 'https://example.com/post.jpg' }],
@@ -93,16 +93,16 @@ test('validateSelection blocks duplicate Instagram delivery caused by selecting 
     remoteAvailable: true
   });
 
-  assert.ok(errors.some(error => error.includes('Facebook One') && error.includes('Instagram One') && error.includes('hai lần')));
+  assert.deepEqual(errors, []);
 });
 
 test('validateSelection keeps safe testing limited to supported connected backend flow', () => {
   const tiktok = { id: 'tt-1', name: 'TikTok One', platform: 'tiktok', connected: true };
   const noBackend = ScheduleBatch.validateSelection({
-    fanpages: [facebook], mediaItems: [], publishMode: 'safe_test', remoteAvailable: false
+    fanpages: [facebook], mediaItems: [{ type: 'image', url: 'data:image/png;base64,abc' }], publishMode: 'safe_test', remoteAvailable: false
   });
   const unsupported = ScheduleBatch.validateSelection({
-    fanpages: [facebook, tiktok], mediaItems: [], publishMode: 'safe_test', remoteAvailable: true
+    fanpages: [facebook, tiktok], mediaItems: [{ type: 'image', url: 'data:image/png;base64,abc' }], publishMode: 'safe_test', remoteAvailable: true
   });
 
   assert.ok(noBackend.some(error => error.includes('backend')));

@@ -12,9 +12,8 @@ test('scheduled worker isolates publishing from maintenance workloads', () => {
   assert.match(workerSource, /if \(publisher\.processed === 0\)/);
   assert.match(workerSource, /maintenanceSlot/);
   assert.match(workerSource, /maintenanceSlot === 0/);
-  assert.match(workerSource, /maintenanceSlot === 2/);
   assert.match(workerSource, /maintenanceSlot === 4/);
-  assert.doesNotMatch(workerSource, /const tasks = \[\s*syncLinkedScheduleSheets/);
+  assert.doesNotMatch(workerSource, /syncLinkedScheduleSheets|sheet-schedules|google-sheets\/csv/);
   assert.doesNotMatch(workerSource, /const tasks = \[\s*processScheduledPosts\(repo, meta\)/);
 });
 
