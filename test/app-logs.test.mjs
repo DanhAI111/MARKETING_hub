@@ -65,6 +65,17 @@ test('menu, page and both API runtimes expose application logs without Sheet sch
   assert.doesNotMatch(settings, /fpCrossPostInstagram|Đăng đồng thời sang Instagram/);
 });
 
+test('retired Sheet scheduling leaves no runtime, repository, or queue UI hooks', () => {
+  const workerRepository = fs.readFileSync(new URL('../worker/repository.js', import.meta.url), 'utf8');
+  const serverRepository = fs.readFileSync(new URL('../server/repository.js', import.meta.url), 'utf8');
+  const scheduledPage = fs.readFileSync(new URL('../js/pages/scheduled.js', import.meta.url), 'utf8');
+
+  for (const source of [workerRepository, serverRepository]) {
+    assert.doesNotMatch(source, /listSheetSyncPosts/);
+  }
+  assert.doesNotMatch(scheduledPage, /sheetSync|syncSheets|Đồng bộ Sheet/);
+});
+
 test('Worker records scheduled publisher failures in the application log', () => {
   const worker = fs.readFileSync(new URL('../worker/index.js', import.meta.url), 'utf8');
 
