@@ -12,14 +12,19 @@
 - Checkpoint: `b192da0 test: define manual publishing and app log behavior`.
 - Focused tests failed because Facebook still accepted text-only schedules, the legacy cross-post path still ran, Sheet scheduling was still wired into both runtimes/UI, and the application-log module/routes/page did not exist.
 - A follow-up RED test reproduced the missing `scheduled_publish_failed` application-log event in the Worker cron handler.
+- Completion-audit checkpoint: `2934b4f test: prove Sheet scheduling is fully retired`.
+- Command: `node --test test/app-logs.test.mjs`.
+- Result: 5 passed, 1 failed because callable `listSheetSyncPosts` repository methods and `sheetSync` queue UI handling still remained after the main Sheet feature was removed.
 
 ## GREEN evidence
 
 - Implementation checkpoint: `fd79a83 fix: enforce manual platform publishing and add app logs`.
+- Completion-audit fix checkpoint: `5914051 fix: remove remaining Sheet scheduling hooks`.
+- Focused GREEN commands: `node --test test/app-logs.test.mjs` (6 passed) and `node --test test/post-retention.test.mjs` (4 passed).
 - Full command: `npm test -- --test-reporter=spec`.
-- Result: 180 passed, 0 failed.
+- Result: 181 passed, 0 failed.
 - Coverage command: `npm run test:coverage`.
-- Result: 180 passed, 0 failed; line 89.34%, branch 79.52%, functions 91.21%.
+- Result: 181 passed, 0 failed; line 89.34%, branch 79.54%, functions 91.21%.
 - D1 command: `npm run d1:migrate:local`.
 - Result: the full migration chain, including `0014_app_logs.sql`, applied successfully.
 - Packaging command: `npm run deploy:check`.
@@ -35,7 +40,7 @@
 | 1 | Facebook and Instagram reject schedules with no media at UI and API boundaries. | `test/post-media-validation.test.mjs`, `test/multi-page-schedule.test.mjs`, `test/publish-queue.test.mjs` | PASS |
 | 2 | Facebook accepts supported inline/public media while Instagram requires HTTP(S) media. | `test/post-media-validation.test.mjs` | PASS |
 | 3 | A legacy cross-post flag cannot cause an unselected Instagram publish or safe test. | `test/meta-publish.test.mjs` | PASS |
-| 4 | Sheet scheduling code/routes/UI are absent. | `test/app-logs.test.mjs` | PASS |
+| 4 | Sheet scheduling routes, runtime imports, callable repository hooks, and queue UI handling are absent. | `test/app-logs.test.mjs`, `test/publish-queue.test.mjs` | PASS |
 | 5 | Cleanup deletes only Sheet-owned rows and disables legacy cross-post flags while preserving manual posts. | `test/retired-sheet-cleanup.test.mjs` | PASS |
 | 6 | Application logs redact nested secrets, Bearer credentials, and token query parameters. | `test/app-logs.test.mjs` | PASS |
 | 7 | Logs support seven-day retention, bounded filters, cursor pagination, and repository cleanup. | `test/app-logs.test.mjs`, `test/app-log-repository.test.mjs` | PASS |
