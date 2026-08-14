@@ -14,13 +14,17 @@ const validationError = (message) => {
 };
 
 const assertPostMediaForPlatform = (fanpage, post = {}) => {
-  if (String(fanpage?.platform || '').toLowerCase() !== 'instagram') return;
+  const platform = String(fanpage?.platform || '').toLowerCase();
+  if (!['facebook', 'instagram'].includes(platform)) return;
   const urls = publicMediaUrls(post);
-  const name = fanpage?.name || 'Instagram';
+  const name = fanpage?.name || (platform === 'facebook' ? 'Facebook' : 'Instagram');
   if (!urls.length) {
-    throw validationError(`${name}: Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.`);
+    const requirement = platform === 'facebook'
+      ? 'Facebook yêu cầu ít nhất một ảnh hoặc video.'
+      : 'Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai.';
+    throw validationError(`${name}: ${requirement}`);
   }
-  if (urls.some(url => !/^https?:\/\//i.test(url))) {
+  if (platform === 'instagram' && urls.some(url => !/^https?:\/\//i.test(url))) {
     throw validationError(`${name}: Instagram chỉ nhận media có URL công khai.`);
   }
 };

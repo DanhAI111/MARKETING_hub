@@ -14,6 +14,7 @@ const {
   publishAttemptFromRow,
   appItemFromRow
 } = require('../shared/repository-helpers.cjs');
+const { normalizeLogFilters, prepareLogEntry } = require('../shared/app-logs.cjs');
 
 const APP_COLLECTIONS = Object.freeze([...SHARED_APP_COLLECTIONS, 'marketingPlans']);
 
@@ -190,6 +191,25 @@ const initPostgres = async () => {
 
     CREATE INDEX IF NOT EXISTS idx_audit_log_entity
       ON audit_log("entityType", "entityId", "createdAt");
+
+    CREATE TABLE IF NOT EXISTS app_logs (
+      id TEXT PRIMARY KEY,
+      level TEXT NOT NULL,
+      component TEXT NOT NULL,
+      event TEXT NOT NULL,
+      message TEXT NOT NULL,
+      "correlationId" TEXT,
+      "postId" TEXT,
+      "fanpageId" TEXT,
+      platform TEXT,
+      details TEXT,
+      "createdAt" TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_logs_created ON app_logs("createdAt" DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_level ON app_logs(level, "createdAt" DESC);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_component ON app_logs(component, "createdAt" DESC);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_post ON app_logs("postId", "createdAt" DESC);
 
     CREATE TABLE IF NOT EXISTS publish_jobs (
       "postId" TEXT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
@@ -885,6 +905,80 @@ const writeAuditLog = async ({ actorEmail = '', action, entityType, entityId, ch
   `).run(auditId, actorEmail || null, action, entityType, entityId, JSON.stringify(changes || {}), timestamp);
 };
 
+const writeAppLog = async (entry = {}) => {
+  const data = prepareLogEntry(entry);
+  const createdAt = entry.createdAt || now();
+  const logId = entry.id || id();
+  const values = [
+    logId, data.level, data.component, data.event, data.message,
+    data.correlationId || null, data.postId || null, data.fanpageId || null,
+    data.platform || null, data.details, createdAt
+  ];
+  if (usePostgres) {
+    await pgQuery(`
+      INSERT INTO app_logs (
+        id, level, component, event, message, "correlationId",
+        "postId", "fanpageId", platform, details, "createdAt"
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `, values);
+  } else {
+    getSqlite().prepare(`
+      INSERT INTO app_logs (
+        id, level, component, event, message, correlationId,
+        postId, fanpageId, platform, details, createdAt
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `).run(...values);
+  }
+  return { id: logId, ...data, details: parseJson(data.details, {}), createdAt };
+};
+
+const listAppLogs = async (input = {}) => {
+  const filters = normalizeLogFilters(input);
+  const clauses = [];
+  const params = [];
+  const column = (name) => usePostgres && ['createdAt', 'correlationId', 'postId', 'fanpageId'].includes(name)
+    ? `"${name}"`
+    : name;
+  const add = (sql, ...values) => { clauses.push(sql); params.push(...values); };
+  const placeholder = () => usePostgres ? `$${params.length + 1}` : '?';
+  let marker = placeholder(); add(`${column('createdAt')} >= ${marker}`, filters.from);
+  marker = placeholder(); add(`${column('createdAt')} <= ${marker}`, filters.to);
+  for (const [name, value] of [['level', filters.level], ['component', filters.component], ['platform', filters.platform], ['postId', filters.postId]]) {
+    if (!value) continue;
+    marker = placeholder(); add(`${column(name)} = ${marker}`, value);
+  }
+  if (filters.q) {
+    const query = `%${filters.q}%`;
+    const marks = [placeholder(), usePostgres ? `$${params.length + 2}` : '?', usePostgres ? `$${params.length + 3}` : '?', usePostgres ? `$${params.length + 4}` : '?'];
+    add(`(message LIKE ${marks[0]} OR event LIKE ${marks[1]} OR ${column('correlationId')} LIKE ${marks[2]} OR ${column('postId')} LIKE ${marks[3]})`, query, query, query, query);
+  }
+  if (filters.cursor) {
+    const separator = filters.cursor.lastIndexOf('|');
+    const cursorAt = separator > 0 ? filters.cursor.slice(0, separator) : filters.cursor;
+    const cursorId = separator > 0 ? filters.cursor.slice(separator + 1) : '';
+    const start = params.length + 1;
+    const marks = usePostgres ? [`$${start}`, `$${start + 1}`, `$${start + 2}`] : ['?', '?', '?'];
+    add(`(${column('createdAt')} < ${marks[0]} OR (${column('createdAt')} = ${marks[1]} AND id < ${marks[2]}))`, cursorAt, cursorAt, cursorId);
+  }
+  const limitMarker = usePostgres ? `$${params.length + 1}` : '?';
+  params.push(filters.limit + 1);
+  const rows = usePostgres
+    ? await pgQuery(`SELECT * FROM app_logs WHERE ${clauses.join(' AND ')} ORDER BY "createdAt" DESC, id DESC LIMIT ${limitMarker}`, params)
+    : getSqlite().prepare(`SELECT * FROM app_logs WHERE ${clauses.join(' AND ')} ORDER BY createdAt DESC, id DESC LIMIT ${limitMarker}`).all(...params);
+  const hasMore = rows.length > filters.limit;
+  const selected = rows.slice(0, filters.limit).map(row => ({ ...row, details: parseJson(row.details, {}) }));
+  const last = selected[selected.length - 1];
+  return { items: selected, nextCursor: hasMore && last ? `${last.createdAt}|${last.id}` : '', filters };
+};
+
+const cleanupAppLogs = async (cutoff) => {
+  if (usePostgres) {
+    const rows = await pgQuery('DELETE FROM app_logs WHERE "createdAt" < $1 RETURNING id', [cutoff]);
+    return rows.length;
+  }
+  return Number(getSqlite().prepare('DELETE FROM app_logs WHERE createdAt < ?').run(cutoff).changes || 0);
+};
+
 const saveSingleton = async (key, value) => {
   assertAppSingleton(key);
   const timestamp = now();
@@ -1043,7 +1137,7 @@ const upsertFanpage = async (fanpage = {}) => {
     instagramBusinessId: fanpage.instagramBusinessId || existing?.instagramBusinessId || null,
     pageAccessTokenEncrypted: encryptedToken || existing?.pageAccessTokenEncrypted || null,
     connected: fanpage.connected === undefined ? !!existing?.connected : !!fanpage.connected,
-    crossPostInstagram: fanpage.crossPostInstagram === undefined ? !!existing?.crossPostInstagram : !!fanpage.crossPostInstagram,
+    crossPostInstagram: false,
     lastSyncedAt: fanpage.lastSyncedAt || existing?.lastSyncedAt || null,
     syncStatus: fanpage.syncStatus || existing?.syncStatus || null,
     syncError: fanpage.syncError || '',
@@ -1647,6 +1741,9 @@ module.exports = {
   upsertAppItem,
   deleteAppItem,
   writeAuditLog,
+  writeAppLog,
+  listAppLogs,
+  cleanupAppLogs,
   getSingleton,
   saveSingleton,
   getState,

@@ -196,9 +196,9 @@ const RemoteStore = (() => {
     return lastSync;
   };
 
-  const publishDue = async ({ syncSheets = false } = {}) => {
+  const publishDue = async () => {
     if (!available && !(await check())) return null;
-    const result = await request(`/api/publish-due${syncSheets ? '?syncSheets=1' : ''}`, {
+    const result = await request('/api/publish-due', {
       method: 'POST',
       body: '{}',
       timeout: 30_000
@@ -263,17 +263,6 @@ const RemoteStore = (() => {
     return posts;
   };
 
-  const syncSheetSchedules = async ({ sourceUrl, defaultFanpageId = '' }) => {
-    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
-    const result = await request('/api/sheet-schedules/sync', {
-      method: 'POST',
-      body: JSON.stringify({ sourceUrl, defaultFanpageId })
-    });
-    const data = await request('/api/bootstrap');
-    Store.mergeRemoteData(data);
-    return result;
-  };
-
   const updatePost = async (id, updates) => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
     return request(`/api/posts/${encodeURIComponent(id)}`, {
@@ -291,13 +280,28 @@ const RemoteStore = (() => {
     return true;
   };
 
-  const fetchGoogleSheetCsv = async (url) => {
+  const loadAppLogs = async (filters = {}) => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
-    return request('/api/google-sheets/csv', {
-      method: 'POST',
-      body: JSON.stringify({ url })
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    });
+    return request(`/api/app-logs?${params.toString()}`, { timeout: 10_000 });
+  };
+
+  const loadPublishAttempts = async (postId, limit = 100) => {
+    if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
+    return request(`/api/posts/${encodeURIComponent(postId)}/publish-attempts?limit=${Math.min(Math.max(Number(limit) || 100, 1), 500)}`);
+  };
+
+  const sendClientLog = async (payload = {}) => {
+    if (!isServerMode()) return null;
+    return request('/api/app-logs/client', {
+      method: 'POST', body: JSON.stringify(payload), timeout: 5_000
     });
   };
+
+  const getHealth = async () => request('/api/health', { timeout: 10_000 });
 
   const computeMarketingPlan = async (inputs, weights) => {
     if (!available && !(await check())) throw new Error('Backend chưa sẵn sàng');
@@ -331,10 +335,12 @@ const RemoteStore = (() => {
     retryPost,
     loadPosts,
     loadPending,
-    syncSheetSchedules,
     updatePost,
     deletePost,
-    fetchGoogleSheetCsv,
+    loadAppLogs,
+    loadPublishAttempts,
+    sendClientLog,
+    getHealth,
     computeMarketingPlan,
     suggestMarketingAllocation,
     get available() { return available; },

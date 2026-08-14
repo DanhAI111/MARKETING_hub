@@ -168,7 +168,7 @@ test('publishes a Facebook video without creating a second feed share', async ()
   }
 });
 
-test('safe test creates an unpublished Facebook post and validates its Instagram container', async () => {
+test('safe test creates only an unpublished Facebook post for the selected Facebook destination', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
@@ -213,14 +213,13 @@ test('safe test creates an unpublished Facebook post and validates its Instagram
 
     const feedCall = calls.find((call) => call.url.endsWith('/page-1/feed'));
     assert.equal(feedCall.options.body.get('published'), 'false');
-    assert.ok(calls.some((call) => call.url.endsWith('/ig-1/media')));
-    assert.ok(calls.some((call) => call.url.includes('/ig-container-1?')));
+    assert.equal(calls.some((call) => call.url.endsWith('/ig-1/media')), false);
+    assert.equal(calls.some((call) => call.url.includes('/ig-container-1?')), false);
     assert.equal(calls.some((call) => call.url.endsWith('/ig-1/media_publish')), false);
     assert.equal(result.source, 'facebook-test');
     assert.equal(result.testResult.facebook.objectId, 'fb-dark-1');
     assert.equal(result.testResult.facebook.visibility, 'unpublished');
-    assert.equal(result.testResult.instagram.containerId, 'ig-container-1');
-    assert.equal(result.testResult.instagram.statusCode, 'FINISHED');
+    assert.equal(result.testResult.instagram, undefined);
     assert.equal(saved[0].updates.testResult.facebook.objectId, 'fb-dark-1');
   } finally {
     globalThis.fetch = originalFetch;
@@ -260,8 +259,7 @@ test('safe Facebook video test never sets published=true', async () => {
   }
 });
 
-// Cross-post: a Facebook page with crossPostInstagram publishes to both FB and its
-// Instagram sibling (same metaPageId).
+// A legacy cross-post flag must no longer change the explicitly selected destination.
 const makeCrossPostFetch = (calls) => async (url, options = {}) => {
   const u = String(url);
   calls.push(u);
@@ -275,7 +273,7 @@ const makeCrossPostFetch = (calls) => async (url, options = {}) => {
 const jsonResponse = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-test('cross-posts a Facebook post to its Instagram sibling', async () => {
+test('legacy cross-post flag still publishes only the selected Facebook destination', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = makeCrossPostFetch(calls);
@@ -294,15 +292,14 @@ test('cross-posts a Facebook post to its Instagram sibling', async () => {
     });
     assert.equal(result.externalPostId, 'fb-1');
     assert.equal(result.source, 'facebook');
-    assert.ok(calls.some((u) => u.endsWith('/ig-1/media_publish')), 'IG published');
-    // FB result persisted before the IG attempt.
-    assert.equal(saved[0].updates.externalPostId, 'fb-1');
+    assert.equal(calls.some((u) => u.endsWith('/ig-1/media_publish')), false);
+    assert.equal(saved.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('cross-post retry does not re-publish Facebook', async () => {
+test('completed Facebook post does not publish to Instagram when revisited', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = makeCrossPostFetch(calls);
@@ -314,14 +311,14 @@ test('cross-post retry does not re-publish Facebook', async () => {
       setPostPublishState: async () => {}
     };
     const meta = new MetaService({}, repo, 'https://example.test');
-    // Retry: FB already published (externalPostId set), only IG should run.
+    // An already published Facebook result is returned without any new provider mutation.
     const result = await meta.publishScheduledPost({
       id: 'post-1', fanpageId: 'fp-fb', content: 'Hello', externalPostId: 'fb-1', permalink: 'https://www.facebook.com/fb-1',
       mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }]
     });
     assert.equal(result.externalPostId, 'fb-1');
     assert.equal(calls.filter((u) => u.endsWith('/page-1/feed')).length, 0, 'FB feed not called again');
-    assert.ok(calls.some((u) => u.endsWith('/ig-1/media_publish')), 'IG published on retry');
+    assert.equal(calls.some((u) => u.endsWith('/ig-1/media_publish')), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -896,7 +893,7 @@ test('durable Instagram cross-post never mistakes a completed Facebook job for a
   );
 });
 
-test('Facebook cross-post keeps publishing Instagram when the Facebook durable job is already completed', async () => {
+test('completed durable Facebook job never triggers an Instagram mutation', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = makeCrossPostFetch(calls);
@@ -934,9 +931,9 @@ test('Facebook cross-post keeps publishing Instagram when the Facebook durable j
       mediaItems: facebookJob.resolvedMedia
     });
 
-    assert.equal(result.crossPostError, '');
+    assert.equal(result.source, 'facebook');
     assert.equal(calls.filter((url) => url.endsWith('/page-1/feed')).length, 0);
-    assert.equal(calls.filter((url) => url.endsWith('/ig-1/media_publish')).length, 1);
+    assert.equal(calls.filter((url) => url.endsWith('/ig-1/media_publish')).length, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

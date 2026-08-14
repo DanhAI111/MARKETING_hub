@@ -10,8 +10,6 @@ const { assertSecurityConfig } = require('./security');
 const { rateLimit } = require('./rate-limit');
 const { suggestAllocation } = require('./ai-allocation');
 const { sendTaskNotification, sendDailyTaskSummaryIfDue } = require('./task-notifications');
-const googleSheetsModule = import('../shared/google-sheets.mjs');
-const sheetSyncModule = import('../shared/sheet-sync.mjs');
 const revenuePlannerModule = import('../shared/revenue-planner.mjs');
 const { normalizePostMutation } = require('../shared/repository-helpers.cjs');
 const { processWithConcurrency } = require('../shared/publish-queue.cjs');
@@ -70,7 +68,12 @@ const writeAudit = (req, action, entityType, entityId, changes = {}) => repo.wri
   entityType,
   entityId,
   changes
-}).catch((err) => console.error('Audit log failed:', err.message));
+}).then(() => repo.writeAppLog({
+  level: 'info', component: 'audit', event: `${entityType}_${action}`,
+  message: `${action} ${entityType}`,
+  correlationId: req.headers['x-request-id'] || req.headers['cf-ray'] || '',
+  details: { action, entityType, entityId, actorEmail: req.user?.email || '' }
+})).catch((err) => console.error('Audit log failed:', err.message));
 
 const notifyTaskChange = (req, payload) => {
   sendTaskNotification(repo, { ...payload, actorEmail: req.user?.email || '' })
@@ -113,25 +116,42 @@ const processClaimedPost = async (post) => {
         igContainerId: output.igContainerId || post.igContainerId || '',
         publishError: ''
       });
+      await repo.writeAppLog({
+        level: 'info', component: 'publisher', event: 'post_deferred',
+        message: 'Bài đăng đang chờ nền tảng xử lý media.', postId: post.id,
+        fanpageId: post.fanpageId, platform: output.source || '',
+        details: { publishStage: output.publishStage || '', safeTest }
+      }).catch(() => {});
       return { id: post.id, status: 'deferred', post: saved };
     }
     const timestamp = new Date().toISOString();
-    const partialError = safeTest ? (output.crossPostError || '') : '';
-    const status = partialError ? 'failed' : (safeTest ? 'tested' : 'published');
+    const status = safeTest ? 'tested' : 'published';
     const saved = await repo.setPostPublishState(post.id, {
       ...output,
       status,
       source: output.source || post.source || (safeTest ? 'safe-test' : 'meta'),
       date: timestamp.slice(0, 10),
       ...(safeTest ? { testedAt: timestamp } : { publishedAt: timestamp }),
-      publishError: output.crossPostError || ''
+      publishError: ''
     });
-    return { id: post.id, status, post: saved, ...(partialError ? { error: partialError } : {}) };
+    await repo.writeAppLog({
+      level: 'info', component: 'publisher', event: safeTest ? 'post_tested' : 'post_published',
+      message: safeTest ? 'Đăng thử hoàn tất.' : 'Đăng bài tự động thành công.',
+      postId: post.id, fanpageId: post.fanpageId, platform: output.source || '',
+      details: { externalPostId: output.externalPostId || '', publishStage: output.publishStage || '' }
+    }).catch(() => {});
+    return { id: post.id, status, post: saved };
   } catch (err) {
     const saved = await repo.setPostPublishState(post.id, {
       status: 'failed',
       publishError: err.message || (safeTest ? 'Không thể chạy đăng thử' : 'Không thể đăng bài tự động')
     });
+    await repo.writeAppLog({
+      level: 'error', component: 'publisher', event: safeTest ? 'post_test_failed' : 'post_publish_failed',
+      message: err.message || (safeTest ? 'Không thể chạy đăng thử' : 'Không thể đăng bài tự động'),
+      postId: post.id, fanpageId: post.fanpageId,
+      details: { code: err.code || '', status: err.status || 0, source: post.source || '' }
+    }).catch(() => {});
     return { id: post.id, status: 'failed', error: err.message, post: saved };
   }
 };
@@ -144,6 +164,13 @@ const processScheduledPosts = async () => {
     result.released = await repo.failStalePublishingPosts(
       new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
     );
+    if (result.released) {
+      await repo.writeAppLog({
+        level: 'warn', component: 'publisher', event: 'stale_posts_released',
+        message: `Đã khôi phục ${result.released} bài bị kẹt ở trạng thái publishing.`,
+        details: { released: result.released }
+      }).catch(() => {});
+    }
     const duePosts = await repo.claimDueScheduledPosts();
     result.processed = duePosts.length;
     const processedPosts = await processWithConcurrency(duePosts,
@@ -171,30 +198,6 @@ const processScheduledPosts = async () => {
   }
 };
 
-const fetchGoogleSheetCsvText = async (...args) => {
-  const { fetchGoogleSheetCsvText: fetchCsv } = await googleSheetsModule;
-  return fetchCsv(...args);
-};
-
-const syncLinkedScheduleSheets = async (options = {}) => {
-  const { syncScheduleSheets } = await sheetSyncModule;
-  return syncScheduleSheets({
-    repo,
-    sourceUrl: options.sourceUrl || '',
-    defaultFanpageId: options.defaultFanpageId || '',
-    timezoneOffset: options.timezoneOffset || '+07:00',
-    fetchCsv: async (sourceUrl) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      try {
-        return await fetchGoogleSheetCsvText(sourceUrl, { signal: controller.signal });
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-  });
-};
-
 app.get('/api/health', asyncHandler(async (req, res) => {
   res.json({
     ok: true,
@@ -209,6 +212,22 @@ app.get('/api/health', asyncHandler(async (req, res) => {
       inFlight: publishInFlight
     }
   });
+}));
+
+app.get('/api/app-logs', asyncHandler(async (req, res) => {
+  res.json(await repo.listAppLogs(req.query || {}));
+}));
+
+app.post('/api/app-logs/client', rateLimit('client-app-log', { limit: 30, windowSeconds: 60 }), asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const saved = await repo.writeAppLog({
+    level: body.level === 'warn' ? 'warn' : 'error',
+    component: 'client', event: body.event || 'javascript_error',
+    message: body.message || 'Lỗi JavaScript phía trình duyệt',
+    correlationId: req.headers['x-request-id'] || req.headers['cf-ray'] || '',
+    details: { source: body.source || '', line: body.line || 0, column: body.column || 0, stack: body.stack || '', page: body.page || '' }
+  });
+  res.status(201).json({ id: saved.id });
 }));
 
 app.get('/api/bootstrap', asyncHandler(async (req, res) => {
@@ -290,6 +309,10 @@ app.post('/api/posts/:id/retry', asyncHandler(async (req, res) => {
   }
   writeAudit(req, 'retry', 'post', post.id, { status: 'queued' });
   return res.status(202).json({ id: post.id, status: 'queued', post });
+}));
+
+app.get('/api/posts/:id/publish-attempts', asyncHandler(async (req, res) => {
+  res.json(await repo.listPublishAttempts(req.params.id, clampInt(req.query.limit, { fallback: 100, min: 1, max: 500 })));
 }));
 
 app.post('/api/posts/:id/run-test', asyncHandler(async (req, res) => {
@@ -399,36 +422,7 @@ app.post('/api/sync', rateLimit('sync', { limit: 60, windowSeconds: 60 }), async
 }));
 
 app.post('/api/publish-due', rateLimit('publish-due', { limit: 30, windowSeconds: 60 }), asyncHandler(async (req, res) => {
-  const publisher = await processScheduledPosts();
-  if (req.query.syncSheets === '1' && publisher.processed === 0) {
-    syncLinkedScheduleSheets().catch((err) => console.error('Background sheet sync failed:', err.message));
-  }
-  res.json(publisher);
-}));
-
-app.post('/api/sheet-schedules/sync', rateLimit('sheet-schedules-sync', { limit: 30, windowSeconds: 60 }), asyncHandler(async (req, res) => {
-  if (!req.body?.sourceUrl) {
-    const err = new Error('Thiếu link Google Sheets');
-    err.status = 400;
-    throw err;
-  }
-  res.json(await syncLinkedScheduleSheets(req.body));
-}));
-
-app.post('/api/google-sheets/csv', rateLimit('google-sheets-csv', { limit: 60, windowSeconds: 60 }), asyncHandler(async (req, res) => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
-  try {
-    const text = await fetchGoogleSheetCsvText(req.body?.url || '', { signal: controller.signal });
-    if (text.length > 2 * 1024 * 1024) {
-      const err = new Error('File Google Sheets quá lớn. Vui lòng giới hạn dưới 2MB CSV.');
-      err.status = 413;
-      throw err;
-    }
-    res.json({ text });
-  } finally {
-    clearTimeout(timeout);
-  }
+  res.json(await processScheduledPosts());
 }));
 
 app.get('/api/sync/status', asyncHandler(async (req, res) => {
@@ -466,6 +460,12 @@ app.get('/auth/meta/callback', asyncHandler(async (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error(err);
+  repo.writeAppLog({
+    level: 'error', component: 'api', event: 'request_failed',
+    message: err.message || 'Internal server error',
+    correlationId: req.headers['x-request-id'] || req.headers['cf-ray'] || '',
+    details: { method: req.method, path: req.path, status: err.status || 500 }
+  }).catch(() => {});
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
     ...(err.status === 409 ? { latest: err.latest || null } : {})
@@ -473,12 +473,19 @@ app.use((err, req, res, next) => {
 });
 
 const startSchedulers = () => {
+  const reportSchedulerFailure = (event, err) => {
+    console.error(`${event}:`, err.message);
+    repo.writeAppLog({
+      level: 'error', component: 'cron', event,
+      message: err.message || event, details: {}
+    }).catch(() => {});
+  };
   setInterval(() => {
-    runSync().catch((err) => console.error('Scheduled sync failed:', err.message));
+    runSync().catch((err) => reportSchedulerFailure('scheduled_sync_failed', err));
   }, 15 * 60 * 1000).unref();
 
   setInterval(() => {
-    processScheduledPosts().catch((err) => console.error('Scheduled publish failed:', err.message));
+    processScheduledPosts().catch((err) => reportSchedulerFailure('scheduled_publish_failed', err));
   }, 60 * 1000).unref();
 
   setInterval(() => {
@@ -488,6 +495,11 @@ const startSchedulers = () => {
   setInterval(() => {
     repo.cleanupOAuthStates().catch((err) => console.error('OAuth state cleanup failed:', err.message));
   }, 15 * 60 * 1000).unref();
+
+  setInterval(() => {
+    repo.cleanupAppLogs(new Date(Date.now() - (7 * 24 * 60 * 60 * 1000)).toISOString())
+      .catch((err) => console.error('App log cleanup failed:', err.message));
+  }, 60 * 60 * 1000).unref();
 
   setTimeout(() => {
     processScheduledPosts().catch((err) => console.error('Startup publish failed:', err.message));

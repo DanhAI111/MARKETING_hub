@@ -19,9 +19,14 @@
     if (!fanpages.length) return ['Vui lòng chọn ít nhất một fanpage hoặc tài khoản'];
 
     const errors = [];
+    const facebookPages = fanpages.filter(page => page.platform === 'facebook');
+    const facebookNames = facebookPages.map(page => page.name).join(', ');
     const instagramPages = fanpages.filter(page => page.platform === 'instagram');
     const instagramNames = instagramPages.map(page => page.name).join(', ');
 
+    if (facebookPages.length && mediaItems.length === 0) {
+      errors.push(`${facebookNames}: Facebook yêu cầu ít nhất một ảnh hoặc video`);
+    }
     if (instagramPages.length && mediaItems.length === 0) {
       errors.push(`${instagramNames}: Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai`);
     } else if (instagramPages.length && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
@@ -37,20 +42,6 @@
         errors.push(`Đăng thử an toàn chưa hỗ trợ: ${unsupported.map(page => page.name).join(', ')}`);
       }
     }
-
-    const selectedInstagramByMetaPage = new Map(
-      instagramPages.filter(page => page.metaPageId).map(page => [page.metaPageId, page])
-    );
-    fanpages
-      .filter(page => page.platform === 'facebook' && page.crossPostInstagram && page.metaPageId)
-      .forEach(page => {
-        const pairedInstagram = selectedInstagramByMetaPage.get(page.metaPageId);
-        if (pairedInstagram) {
-          errors.push(
-            `${page.name} đang bật đăng chéo sang ${pairedInstagram.name}; hãy bỏ chọn một trong hai để Instagram không nhận bài hai lần`
-          );
-        }
-      });
 
     return errors;
   };

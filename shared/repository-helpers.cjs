@@ -85,7 +85,7 @@ const fanpageFromRow = (row, { includeToken = false } = {}) => {
     metaPageId: row.metaPageId || '',
     instagramBusinessId: row.instagramBusinessId || '',
     connected: !!row.connected,
-    crossPostInstagram: !!row.crossPostInstagram,
+    crossPostInstagram: false,
     lastSyncedAt: row.lastSyncedAt || '',
     syncStatus: row.syncStatus || '',
     syncError: row.syncError || '',

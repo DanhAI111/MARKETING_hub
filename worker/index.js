@@ -5,8 +5,6 @@ import { assertSecurityConfig } from './security.js';
 import { sendDailyTaskSummaryIfDue, sendTaskNotification } from './task-notifications.js';
 import { computePlan, validateInputs } from '../shared/revenue-planner.mjs';
 import { suggestAllocation } from '../shared/ai-allocation.mjs';
-import { syncScheduleSheets } from '../shared/sheet-sync.mjs';
-import { fetchGoogleSheetCsvText } from '../shared/google-sheets.mjs';
 import { normalizePostMutation } from '../shared/repository-helpers.cjs';
 import { processWithConcurrency } from '../shared/publish-queue.cjs';
 import { assertPostMediaForPlatform } from '../shared/post-media-validation.cjs';
@@ -83,22 +81,6 @@ const isPublicAssetPath = (pathname) => (
   || pathname === '/favicon.ico'
 );
 
-const syncLinkedScheduleSheets = async (repo, options = {}) => syncScheduleSheets({
-  repo,
-  sourceUrl: options.sourceUrl || '',
-  defaultFanpageId: options.defaultFanpageId || '',
-  timezoneOffset: options.timezoneOffset || '+07:00',
-  fetchCsv: async (sourceUrl) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    try {
-      return await fetchGoogleSheetCsvText(sourceUrl, { signal: controller.signal });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-});
-
 const processClaimedPost = async (repo, meta, post) => {
   const safeTest = post.publishMode === 'safe_test';
   try {
@@ -114,25 +96,42 @@ const processClaimedPost = async (repo, meta, post) => {
         igContainerId: output.igContainerId || post.igContainerId || '',
         publishError: ''
       });
+      await repo.writeAppLog({
+        level: 'info', component: 'publisher', event: 'post_deferred',
+        message: 'Bài đăng đang chờ nền tảng xử lý media.',
+        postId: post.id, fanpageId: post.fanpageId,
+        platform: output.source || '', details: { publishStage: output.publishStage || '', safeTest }
+      }).catch(() => {});
       return { id: post.id, status: 'deferred', post: saved };
     }
     const timestamp = new Date().toISOString();
-    const partialError = safeTest ? (output.crossPostError || '') : '';
-    const status = partialError ? 'failed' : (safeTest ? 'tested' : 'published');
+    const status = safeTest ? 'tested' : 'published';
     const saved = await repo.setPostPublishState(post.id, {
       ...output,
       status,
       source: output.source || post.source || (safeTest ? 'safe-test' : 'meta'),
       date: timestamp.slice(0, 10),
       ...(safeTest ? { testedAt: timestamp } : { publishedAt: timestamp }),
-      publishError: output.crossPostError || ''
+      publishError: ''
     });
-    return { id: post.id, status, post: saved, ...(partialError ? { error: partialError } : {}) };
+    await repo.writeAppLog({
+      level: 'info', component: 'publisher', event: safeTest ? 'post_tested' : 'post_published',
+      message: safeTest ? 'Đăng thử hoàn tất.' : 'Đăng bài tự động thành công.',
+      postId: post.id, fanpageId: post.fanpageId, platform: output.source || '',
+      details: { externalPostId: output.externalPostId || '', publishStage: output.publishStage || '' }
+    }).catch(() => {});
+    return { id: post.id, status, post: saved };
   } catch (error) {
     const saved = await repo.setPostPublishState(post.id, {
       status: 'failed',
       publishError: error.message || (safeTest ? 'Không thể chạy đăng thử' : 'Không thể đăng bài tự động')
     });
+    await repo.writeAppLog({
+      level: 'error', component: 'publisher', event: safeTest ? 'post_test_failed' : 'post_publish_failed',
+      message: error.message || (safeTest ? 'Không thể chạy đăng thử' : 'Không thể đăng bài tự động'),
+      postId: post.id, fanpageId: post.fanpageId,
+      details: { code: error.code || '', status: error.status || 0, source: post.source || '' }
+    }).catch(() => {});
     return { id: post.id, status: 'failed', error: error.message, post: saved };
   }
 };
@@ -150,6 +149,13 @@ const processScheduledPosts = async (repo, meta) => {
   result.released = await repo.failStalePublishingPosts(
     new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
   );
+  if (result.released) {
+    await repo.writeAppLog({
+      level: 'warn', component: 'publisher', event: 'stale_posts_released',
+      message: `Đã khôi phục ${result.released} bài bị kẹt ở trạng thái publishing.`,
+      details: { released: result.released }
+    }).catch(() => {});
+  }
   const duePosts = await repo.claimDueScheduledPosts(PUBLISH_BATCH_LIMIT);
   result.processed = duePosts.length;
   const processedPosts = await processWithConcurrency(duePosts,
@@ -182,14 +188,16 @@ const handleRequest = async (request, env, context) => {
   const repo = new Repository(env);
   const auth = new AuthService(env, repo, request);
   const meta = new MetaService(env, repo, url.origin);
+  const correlationId = request.headers.get('cf-ray') || crypto.randomUUID();
   const audit = (action, entityType, entityId, changes = {}) => {
-    context.waitUntil(repo.writeAuditLog({
-      actorEmail: user?.email || '',
-      action,
-      entityType,
-      entityId,
-      changes
-    }).catch((error) => console.error('Audit log failed:', error)));
+    context.waitUntil(Promise.allSettled([
+      repo.writeAuditLog({ actorEmail: user?.email || '', action, entityType, entityId, changes }),
+      repo.writeAppLog({
+        level: 'info', component: 'audit', event: `${entityType}_${action}`,
+        message: `${action} ${entityType}`,
+        correlationId, details: { action, entityType, entityId, actorEmail: user?.email || '' }
+      })
+    ]));
   };
   const notifyTaskChange = (payload) => {
     context.waitUntil(sendTaskNotification(env, repo, {
@@ -254,6 +262,22 @@ const handleRequest = async (request, env, context) => {
     return Response.redirect(`${url.origin}/login?next=${encodeURIComponent(`${pathname}${url.search}${url.hash}`)}`, 302);
   }
   if (user) auth.verifyCsrf();
+
+  if (method === 'GET' && pathname === '/api/app-logs') {
+    return json(await repo.listAppLogs(url.searchParams));
+  }
+  if (method === 'POST' && pathname === '/api/app-logs/client') {
+    const limited = await requireRateLimit(repo, request, 'client-app-log', { limit: 30, windowSeconds: 60 });
+    if (limited) return limited;
+    const body = await parseJsonBody(request);
+    const saved = await repo.writeAppLog({
+      level: body.level === 'warn' ? 'warn' : 'error',
+      component: 'client', event: body.event || 'javascript_error',
+      message: body.message || 'Lỗi JavaScript phía trình duyệt', correlationId,
+      details: { source: body.source || '', line: body.line || 0, column: body.column || 0, stack: body.stack || '', page: body.page || '' }
+    });
+    return json({ id: saved.id }, 201);
+  }
 
   if (method === 'GET' && pathname === '/api/meta/diagnostics') {
     return json(await meta.diagnostics());
@@ -337,6 +361,11 @@ const handleRequest = async (request, env, context) => {
     }
     audit('retry', 'post', post.id, { status: 'queued' });
     return json({ id: post.id, status: 'queued', post }, 202);
+  }
+
+  match = pathname.match(/^\/api\/posts\/([^/]+)\/publish-attempts$/);
+  if (match && method === 'GET') {
+    return json(await repo.listPublishAttempts(decodeURIComponent(match[1]), Number(url.searchParams.get('limit') || 100)));
   }
 
   match = pathname.match(/^\/api\/posts\/([^/]+)\/run-test$/);
@@ -433,48 +462,10 @@ const handleRequest = async (request, env, context) => {
   if (method === 'POST' && pathname === '/api/publish-due') {
     const limited = await requireRateLimit(repo, request, 'publish-due', { limit: 30, windowSeconds: 60 });
     if (limited) return limited;
-    // Sheet sync fetches N Google Sheets (15s each) + can exhaust the Worker's
-    // wall-clock/subrequest budget → Cloudflare edge 503. Run it in the
-    // background so publishing (the fast path) always returns cleanly; newly
-    // synced rows publish on the next tick / cron run.
-    const publisher = await processScheduledPosts(repo, meta);
-    if (url.searchParams.get('syncSheets') === '1' && publisher.processed === 0) {
-      context.waitUntil(
-        syncLinkedScheduleSheets(repo).catch((err) =>
-          console.error('Background sheet sync failed:', err?.message || err)
-        )
-      );
-    }
-    return json(publisher);
-  }
-  if (method === 'POST' && pathname === '/api/sheet-schedules/sync') {
-    const limited = await requireRateLimit(repo, request, 'sheet-schedules-sync', { limit: 30, windowSeconds: 60 });
-    if (limited) return limited;
-    const body = await parseJsonBody(request);
-    if (!body.sourceUrl) return json({ error: 'Thiếu link Google Sheets' }, 400);
-    return json(await syncLinkedScheduleSheets(repo, body));
+    return json(await processScheduledPosts(repo, meta));
   }
   if (method === 'GET' && pathname === '/api/sync/status') {
     return json({ inFlight: false, lastSync: await repo.getState('lastMetaSync') });
-  }
-
-  if (method === 'POST' && pathname === '/api/google-sheets/csv') {
-    const limited = await requireRateLimit(repo, request, 'google-sheets-csv', { limit: 60, windowSeconds: 60 });
-    if (limited) return limited;
-    const body = await parseJsonBody(request);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    try {
-      const text = await fetchGoogleSheetCsvText(body.url || '', { signal: controller.signal });
-      if (text.length > 2 * 1024 * 1024) {
-        const error = new Error('File Google Sheets quá lớn. Vui lòng giới hạn dưới 2MB CSV.');
-        error.status = 413;
-        throw error;
-      }
-      return json({ text });
-    } finally {
-      clearTimeout(timeout);
-    }
   }
 
   if (method === 'GET' && pathname === '/auth/meta/start') {
@@ -519,6 +510,15 @@ export default {
       return await handleRequest(request, env, context);
     } catch (error) {
       console.error(error);
+      const requestUrl = new URL(request.url);
+      if (requestUrl.pathname.startsWith('/api/')) {
+        const correlationId = request.headers.get('cf-ray') || crypto.randomUUID();
+        context.waitUntil(new Repository(env).writeAppLog({
+          level: 'error', component: 'api', event: 'request_failed',
+          message: error.message || 'Internal server error', correlationId,
+          details: { method: request.method, path: requestUrl.pathname, status: error.status || 500 }
+        }).catch(() => {}));
+      }
       if (new URL(request.url).pathname.startsWith('/api/')) {
         return json({ error: error.message || 'Internal server error' }, error.status || 500);
       }
@@ -532,15 +532,26 @@ export default {
     const meta = new MetaService(env, repo, origin);
     // Publishing gets the entire invocation budget. Drive and Meta sync work only
     // runs when no post was claimed, so maintenance cannot kill a live publish.
-    const publisher = await processScheduledPosts(repo, meta);
+    const publisher = await processScheduledPosts(repo, meta).catch(async (error) => {
+      console.error('Scheduled publisher failed:', error?.message || error);
+      await repo.writeAppLog({
+        level: 'error', component: 'cron', event: 'scheduled_publish_failed',
+        message: error?.message || 'Scheduled publisher failed',
+        details: { scheduledTime: controller.scheduledTime }
+      }).catch(() => {});
+      throw error;
+    });
     if (publisher.processed === 0) {
-      const minute = new Date(controller.scheduledTime).getUTCMinutes();
+      const scheduledTimeMs = controller.scheduledTime < 1e12
+        ? controller.scheduledTime * 1000
+        : controller.scheduledTime;
+      const minute = new Date(scheduledTimeMs).getUTCMinutes();
       const maintenanceSlot = minute % 5;
       let maintenanceTask = null;
       if (maintenanceSlot === 0 && minute % 15 === 0 && env.META_APP_ID && env.META_APP_SECRET) {
         maintenanceTask = meta.syncAll();
-      } else if (maintenanceSlot === 2) {
-        maintenanceTask = syncLinkedScheduleSheets(repo);
+      } else if (maintenanceSlot === 2 && minute === 2) {
+        maintenanceTask = repo.cleanupAppLogs(new Date(Date.now() - (7 * 24 * 60 * 60 * 1000)).toISOString());
       } else if (maintenanceSlot === 4) {
         maintenanceTask = Promise.allSettled([
           repo.cleanupOAuthStates(),
@@ -549,9 +560,14 @@ export default {
         ]);
       }
       if (maintenanceTask) {
-        context.waitUntil(Promise.resolve(maintenanceTask).catch((error) =>
-          console.error('Scheduled maintenance failed:', error?.message || error)
-        ));
+        context.waitUntil(Promise.resolve(maintenanceTask).catch(async (error) => {
+          console.error('Scheduled maintenance failed:', error?.message || error);
+          await repo.writeAppLog({
+            level: 'error', component: 'cron', event: 'maintenance_failed',
+            message: error?.message || 'Scheduled maintenance failed',
+            details: { minute, maintenanceSlot }
+          }).catch(() => {});
+        }));
       }
     }
   }

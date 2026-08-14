@@ -437,25 +437,7 @@ const testScheduledPost = async (post) => {
       await repo.setPostPublishState(post.id, { ...fbResult, source: 'facebook-test', testResult });
     }
 
-    let crossPostError = '';
-    if (fanpage.crossPostInstagram) {
-      const igPage = await repo.getInstagramSiblingFanpage(fanpage.metaPageId);
-      if (!igPage) {
-        crossPostError = 'Instagram: chưa có tài khoản IG liên kết để kiểm tra';
-        testResult.instagram = { status: 'skipped', error: crossPostError };
-      } else {
-        try {
-          const igResult = await testInstagramPost(igPage, post);
-          testResult.instagram = { status: 'completed', mode: 'container_only', ...igResult };
-        } catch (error) {
-          crossPostError = `Instagram: ${error.message}`;
-          testResult.instagram = { status: 'failed', error: crossPostError };
-        }
-      }
-    } else {
-      testResult.instagram = { status: 'skipped', error: 'Instagram cross-post đang tắt.' };
-    }
-    return { ...fbResult, source: 'facebook-test', testResult, crossPostError };
+    return { ...fbResult, source: 'facebook-test', testResult };
   }
 
   if (fanpage.platform === 'instagram') {
@@ -480,9 +462,6 @@ const publishScheduledPost = async (post) => {
   if (!fanpage.connected) throw new Error('Fanpage chưa liên kết Meta.');
 
   if (fanpage.platform === 'facebook') {
-    // Publish to Facebook. Skip if this is a retry where FB already succeeded
-    // (post.externalPostId set) but the cross-post to Instagram failed — this
-    // keeps retries idempotent so FB isn't posted twice.
     let fbResult;
     if (post.externalPostId) {
       fbResult = {
@@ -494,30 +473,7 @@ const publishScheduledPost = async (post) => {
       fbResult = await publishFacebookPost(fanpage, post);
     }
 
-    let crossPostError = '';
-    if (fanpage.crossPostInstagram) {
-      const igPage = await repo.getInstagramSiblingFanpage(fanpage.metaPageId);
-      if (igPage) {
-        // FB is already live — persist it as 'published' before the IG attempt so a
-        // crash mid-IG can't strand the row in 'publishing'/'failed' (which would
-        // never reclaim and would make the user re-create → double-post to FB).
-        if (!post.externalPostId) {
-          await repo.setPostPublishState(post.id, { ...fbResult, status: 'published', source: 'facebook' });
-        }
-        try {
-          const igResult = await publishInstagramPost(igPage, post);
-          if (igResult.warning) crossPostError = igResult.warning;
-        } catch (igErr) {
-          // FB already succeeded; do NOT throw (a throw becomes 'failed' → double-post).
-          // ponytail: IG retry is manual only. Add auto IG re-publish when a
-          // dedicated cross-post retry queue exists.
-          crossPostError = `Instagram: ${igErr.message}`;
-        }
-      } else {
-        crossPostError = 'Instagram: chưa có tài khoản IG liên kết để cross-post';
-      }
-    }
-    return { ...fbResult, source: 'facebook', crossPostError };
+    return { ...fbResult, source: 'facebook' };
   }
   if (fanpage.platform === 'instagram') {
     return { ...await publishInstagramPost(fanpage, post), source: 'instagram' };
@@ -806,6 +762,14 @@ const syncAll = async ({ cursor = null, maxFanpages = null, postLimit = 100 } = 
   result.expiredPosts = await repo.cleanupOldPublishedPosts?.(getPostRetentionCutoff()) || 0;
   await repo.saveState('lastMetaSyncCursor', result.nextCursor);
   await repo.saveState('lastMetaSync', result);
+  const syncFailures = result.fanpages.filter(item => item.status === 'error');
+  if (syncFailures.length && repo.writeAppLog) {
+    await repo.writeAppLog({
+      level: 'error', component: 'meta', event: 'sync_failed',
+      message: `${syncFailures.length} tài khoản Meta đồng bộ thất bại.`,
+      details: { fanpages: syncFailures.map(item => ({ id: item.id, platform: item.platform, error: item.error || '' })) }
+    }).catch(() => {});
+  }
   return result;
 };
 

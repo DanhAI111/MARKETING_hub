@@ -15,7 +15,21 @@ window.onerror = (msg, src, line, col, err) => {
     el.innerHTML += `<div style="background:#1e0000;border:1px solid #ef4444;border-radius:8px;padding:16px;margin:16px;color:#fca5a5;font-family:monospace;font-size:13px;white-space:pre-wrap;"><b style='color:#f87171;display:flex;align-items:center;gap:8px;'><span class="ui-inline-icon">${warningIcon}</span>JavaScript Error</b>\n\n${escapeForError(msg)}\n\nFile: ${escapeForError(src)}\nLine: ${line}:${col}\n${escapeForError(err?.stack || '')}</div>`;
   }
   console.error('App Error:', msg, src, line, col, err);
+  window.RemoteStore?.sendClientLog?.({
+    level: 'error', event: 'javascript_error', message: String(msg || 'JavaScript error'),
+    source: src || '', line: line || 0, column: col || 0, stack: err?.stack || '',
+    page: window.location.hash || ''
+  }).catch(() => {});
 };
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  window.RemoteStore?.sendClientLog?.({
+    level: 'error', event: 'unhandled_rejection',
+    message: reason?.message || String(reason || 'Unhandled promise rejection'),
+    stack: reason?.stack || '', page: window.location.hash || ''
+  }).catch(() => {});
+});
 
 const App = (() => {
   const pages = {};
@@ -74,6 +88,7 @@ const App = (() => {
     expenses: { title: 'Chi phí', subtitle: 'Thống kê chi phí marketing hàng tháng' },
     ads: { title: 'Hiệu quả Ads', subtitle: 'Thống kê hiệu quả chạy quảng cáo' },
     settings: { title: 'Cài đặt', subtitle: 'Quản lý fanpage, nhân viên, KPI & mục tiêu' },
+    logs: { title: 'Log ứng dụng', subtitle: 'Theo dõi lỗi đăng bài, cron, Meta, API và giao diện' },
   };
 
   const updateHeader = (pageId) => {

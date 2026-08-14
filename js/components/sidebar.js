@@ -13,6 +13,7 @@ const Sidebar = (() => {
     { id: 'planner', label: 'Kế hoạch doanh thu', icon: 'planner' },
     { id: 'expenses', label: 'Chi phí', icon: 'expenses' },
     { id: 'ads', label: 'Hiệu quả Ads', icon: 'ads' },
+    { id: 'logs', label: 'Log ứng dụng', icon: 'fileText' },
     { id: 'settings', label: 'Cài đặt', icon: 'settings' },
   ];
 

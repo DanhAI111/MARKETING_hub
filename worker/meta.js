@@ -873,25 +873,7 @@ export class MetaService {
         });
       }
 
-      let crossPostError = '';
-      if (fanpage.crossPostInstagram) {
-        const igPage = await this.repo.getInstagramSiblingFanpage(fanpage.metaPageId);
-        if (!igPage) {
-          crossPostError = 'Instagram: chưa có tài khoản IG liên kết để kiểm tra';
-          testResult.instagram = { status: 'skipped', error: crossPostError };
-        } else {
-          try {
-            const igResult = await this.testInstagramPost(igPage, post);
-            testResult.instagram = { status: 'completed', mode: 'container_only', ...igResult };
-          } catch (error) {
-            crossPostError = `Instagram: ${error.message}`;
-            testResult.instagram = { status: 'failed', error: crossPostError };
-          }
-        }
-      } else {
-        testResult.instagram = { status: 'skipped', error: 'Instagram cross-post đang tắt.' };
-      }
-      return { ...fbResult, source: 'facebook-test', testResult, crossPostError };
+      return { ...fbResult, source: 'facebook-test', testResult };
     }
 
     if (fanpage.platform === 'instagram') {
@@ -915,43 +897,11 @@ export class MetaService {
     if (!fanpage) throw new Error('Không tìm thấy fanpage để đăng bài.');
     if (!fanpage.connected) throw new Error('Fanpage chưa liên kết Meta.');
     if (fanpage.platform === 'facebook') {
-      // Retry-idempotent: if FB already published (post.externalPostId set) but the
-      // Instagram cross-post failed, reuse the FB result instead of posting twice.
       const fbResult = post.externalPostId
         ? { externalPostId: post.externalPostId, permalink: post.permalink || '', mediaUrl: post.mediaUrl || '' }
         : await this.publishFacebookPost(fanpage, post);
       if (fbResult.deferred) return { ...fbResult, source: 'facebook' };
-
-      let crossPostError = '';
-      if (fanpage.crossPostInstagram) {
-        const igPage = await this.repo.getInstagramSiblingFanpage(fanpage.metaPageId);
-        if (igPage) {
-          // FB is already live — persist it as 'published' before the IG attempt so a
-          // crash mid-IG can't strand the row in 'publishing'/'failed' (which would
-          // never reclaim and would make the user re-create → double-post to FB).
-          if (!post.externalPostId) {
-            await this.repo.setPostPublishState(post.id, { ...fbResult, status: 'published', source: 'facebook' });
-          }
-          try {
-            // One post owns one durable job. The completed Facebook checkpoint
-            // remains the idempotency source of truth; the existing cross-post
-            // flow must not reinterpret or overwrite it as an Instagram job.
-            const igResult = await this.publishInstagramPost(igPage, post, { durable: false });
-            // FB is already live, so we can't defer/reclaim for IG video async encoding
-            // here — surface it as a manual-retry note instead of stranding the post.
-            if (igResult.deferred) crossPostError = 'Instagram: video đang xử lý (Reels), hãy đăng lại IG sau khi encode xong.';
-            else if (igResult.warning) crossPostError = igResult.warning;
-          } catch (igErr) {
-            // FB already succeeded; do NOT throw (a throw becomes 'failed' → double-post).
-            // ponytail: IG retry is manual only. Add auto IG re-publish when a
-            // dedicated cross-post retry queue exists.
-            crossPostError = `Instagram: ${igErr.message}`;
-          }
-        } else {
-          crossPostError = 'Instagram: chưa có tài khoản IG liên kết để cross-post';
-        }
-      }
-      return { ...fbResult, source: 'facebook', crossPostError };
+      return { ...fbResult, source: 'facebook' };
     }
     if (fanpage.platform === 'instagram') return { ...await this.publishInstagramPost(fanpage, post), source: 'instagram' };
     throw new Error(`Chưa hỗ trợ đăng tự động cho nền tảng ${fanpage.platform}.`);
@@ -1240,6 +1190,14 @@ export class MetaService {
     result.expiredPosts = await this.repo.cleanupOldPublishedPosts?.(getPostRetentionCutoff()) || 0;
     await this.repo.saveState('lastMetaSyncCursor', result.nextCursor);
     await this.repo.saveState('lastMetaSync', result);
+    const syncFailures = result.fanpages.filter(item => item.status === 'error');
+    if (syncFailures.length && this.repo.writeAppLog) {
+      await this.repo.writeAppLog({
+        level: 'error', component: 'meta', event: 'sync_failed',
+        message: `${syncFailures.length} tài khoản Meta đồng bộ thất bại.`,
+        details: { fanpages: syncFailures.map(item => ({ id: item.id, platform: item.platform, error: item.error || '' })) }
+      }).catch(() => {});
+    }
     return result;
   }
 

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { sanitizeLogDetails, normalizeLogFilters } = require('../shared/app-logs.cjs');
+const { sanitizeLogDetails, normalizeLogFilters, prepareLogEntry } = require('../shared/app-logs.cjs');
 
 test('application logs recursively redact secrets and sensitive URL parameters', () => {
   const sanitized = sanitizeLogDetails({
@@ -20,6 +20,14 @@ test('application logs recursively redact secrets and sensitive URL parameters',
   assert.equal(sanitized.nested.safe, 'kept');
   assert.doesNotMatch(sanitized.url, /secret/);
   assert.match(sanitized.url, /access_token=%5BREDACTED%5D/);
+});
+
+test('application log messages redact bearer credentials and token parameters', () => {
+  const entry = prepareLogEntry({
+    message: 'Request failed: Authorization: Bearer top-secret access_token=meta-secret'
+  });
+  assert.doesNotMatch(entry.message, /top-secret|meta-secret/);
+  assert.match(entry.message, /\[REDACTED\]/);
 });
 
 test('application log filters enforce seven-day range and bounded page size', () => {
@@ -55,4 +63,11 @@ test('menu, page and both API runtimes expose application logs without Sheet sch
   }
   assert.doesNotMatch(content, /sheetScheduleChoice|openScheduleSheetImportModal|Nhập từ Google Sheets/);
   assert.doesNotMatch(settings, /fpCrossPostInstagram|Đăng đồng thời sang Instagram/);
+});
+
+test('Worker records scheduled publisher failures in the application log', () => {
+  const worker = fs.readFileSync(new URL('../worker/index.js', import.meta.url), 'utf8');
+
+  assert.match(worker, /event:\s*'scheduled_publish_failed'/);
+  assert.match(worker, /component:\s*'cron'/);
 });

@@ -14,6 +14,7 @@ import {
   publishAttemptFromRow,
   appItemFromRow
 } from '../shared/repository-helpers.cjs';
+import { normalizeLogFilters, prepareLogEntry } from '../shared/app-logs.cjs';
 
 const APP_COLLECTIONS = Object.freeze([...SHARED_APP_COLLECTIONS, 'marketingPlans']);
 
@@ -423,6 +424,67 @@ export class Repository {
     ).run();
   }
 
+  async writeAppLog(entry = {}) {
+    const data = prepareLogEntry(entry);
+    const createdAt = entry.createdAt || now();
+    const logId = entry.id || crypto.randomUUID();
+    await this.db.prepare(`
+      INSERT INTO app_logs (
+        id, level, component, event, message, correlationId,
+        postId, fanpageId, platform, details, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      logId, data.level, data.component, data.event, data.message,
+      data.correlationId || null, data.postId || null, data.fanpageId || null,
+      data.platform || null, data.details, createdAt
+    ).run();
+    return { id: logId, ...data, details: parseJson(data.details, {}), createdAt };
+  }
+
+  async listAppLogs(input = {}) {
+    const filters = normalizeLogFilters(input);
+    const clauses = ['createdAt >= ?', 'createdAt <= ?'];
+    const params = [filters.from, filters.to];
+    if (filters.level) { clauses.push('level = ?'); params.push(filters.level); }
+    if (filters.component) { clauses.push('component = ?'); params.push(filters.component); }
+    if (filters.platform) { clauses.push('platform = ?'); params.push(filters.platform); }
+    if (filters.postId) { clauses.push('postId = ?'); params.push(filters.postId); }
+    if (filters.q) {
+      clauses.push('(message LIKE ? OR event LIKE ? OR correlationId LIKE ? OR postId LIKE ?)');
+      const query = `%${filters.q}%`;
+      params.push(query, query, query, query);
+    }
+    if (filters.cursor) {
+      const separator = filters.cursor.lastIndexOf('|');
+      const cursorAt = separator > 0 ? filters.cursor.slice(0, separator) : filters.cursor;
+      const cursorId = separator > 0 ? filters.cursor.slice(separator + 1) : '';
+      clauses.push('(createdAt < ? OR (createdAt = ? AND id < ?))');
+      params.push(cursorAt, cursorAt, cursorId);
+    }
+    const { results } = await this.db.prepare(`
+      SELECT * FROM app_logs
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY createdAt DESC, id DESC
+      LIMIT ?
+    `).bind(...params, filters.limit + 1).all();
+    const hasMore = results.length > filters.limit;
+    const selected = results.slice(0, filters.limit).map(row => ({
+      ...row,
+      details: parseJson(row.details, {})
+    }));
+    const last = selected[selected.length - 1];
+    return {
+      items: selected,
+      nextCursor: hasMore && last ? `${last.createdAt}|${last.id}` : '',
+      filters
+    };
+  }
+
+  async cleanupAppLogs(cutoff) {
+    const result = await this.db.prepare('DELETE FROM app_logs WHERE createdAt < ?').bind(cutoff).run();
+    return Number(result?.meta?.changes || result?.changes || 0);
+  }
+
   async checkRateLimit(key, { limit, windowSeconds }) {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const windowStart = nowSeconds - (nowSeconds % windowSeconds);
@@ -521,7 +583,7 @@ export class Repository {
       instagramBusinessId: fanpage.instagramBusinessId || existing?.instagramBusinessId || null,
       pageAccessTokenEncrypted: encryptedToken || existing?.pageAccessTokenEncrypted || null,
       connected: fanpage.connected === undefined ? !!existing?.connected : !!fanpage.connected,
-      crossPostInstagram: fanpage.crossPostInstagram === undefined ? !!existing?.crossPostInstagram : !!fanpage.crossPostInstagram,
+      crossPostInstagram: false,
       lastSyncedAt: fanpage.lastSyncedAt || existing?.lastSyncedAt || null,
       syncStatus: fanpage.syncStatus || existing?.syncStatus || null,
       syncError: fanpage.syncError || '',

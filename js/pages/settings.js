@@ -172,13 +172,6 @@ const SettingsPage = (() => {
           <input type="url" class="form-input" id="fpImageUrl" value="${fp ? Utils.escapeHtml(fp.imageUrl || '') : ''}" placeholder="https://.../avatar.jpg">
           <div class="form-hint">Nếu đã liên kết Meta, bấm Đồng bộ ngay ở tab Lịch đăng bài để tự lấy avatar.</div>
         </div>
-        <div class="form-group" id="fpCrossPostGroup" style="display: ${(fp?.platform || 'facebook') === 'facebook' ? 'block' : 'none'};">
-          <label class="form-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="fpCrossPostInstagram" ${fp?.crossPostInstagram ? 'checked' : ''} style="width: auto;">
-            <span class="ui-label-with-icon"><span class="ui-inline-icon">${Utils.icons.image}</span>Đăng đồng thời sang Instagram</span>
-          </label>
-          <div class="form-hint">Khi bài đăng lên Facebook, tự động đăng luôn sang tài khoản Instagram cùng trang. Instagram yêu cầu ảnh có URL công khai (không hỗ trợ bài chỉ có chữ hay video).</div>
-        </div>
       `,
       saveLabel: fp ? 'Cập nhật' : 'Thêm mới',
       onSave: () => {
@@ -186,14 +179,13 @@ const SettingsPage = (() => {
         const platform = document.getElementById('fpPlatform')?.value;
         const link = document.getElementById('fpLink')?.value.trim();
         const imageUrl = document.getElementById('fpImageUrl')?.value.trim();
-        const crossPostInstagram = platform === 'facebook' && !!document.getElementById('fpCrossPostInstagram')?.checked;
         if (!name) { Toast.error('Vui lòng nhập tên Fanpage'); return; }
 
         if (fp) {
-          Store.fanpages.update(editId, { name, platform, link, imageUrl, crossPostInstagram });
+          Store.fanpages.update(editId, { name, platform, link, imageUrl, crossPostInstagram: false });
           Toast.success('Đã cập nhật fanpage');
         } else {
-          Store.fanpages.create({ name, platform, link, imageUrl, crossPostInstagram });
+          Store.fanpages.create({ name, platform, link, imageUrl, crossPostInstagram: false });
           Toast.success('Đã thêm fanpage mới');
         }
         Modal.close();
@@ -202,14 +194,6 @@ const SettingsPage = (() => {
       }
     });
 
-    // Cross-post checkbox only applies to Facebook pages.
-    setTimeout(() => {
-      const platformSel = document.getElementById('fpPlatform');
-      const group = document.getElementById('fpCrossPostGroup');
-      platformSel?.addEventListener('change', () => {
-        if (group) group.style.display = platformSel.value === 'facebook' ? 'block' : 'none';
-      });
-    }, 50);
   };
 
   // ═══════════════════════════════════════════
