@@ -60,6 +60,7 @@ const createRepositorySchema = (db) => db.exec(`
     postId TEXT PRIMARY KEY,
     platform TEXT NOT NULL,
     stage TEXT NOT NULL,
+    externalPostId TEXT,
     resolvedMedia TEXT,
     childContainerIds TEXT,
     parentContainerId TEXT,
@@ -172,6 +173,49 @@ test('server upsertPost persists and updates an Instagram container id', async (
   });
 });
 
+test('server finalization preserves the scheduled post when Instagram sync already owns the external id', async () => {
+  await withSqliteRepository(async (repo, db) => {
+    await repo.upsertPost({
+      ...scheduledPost('scheduled-instagram', 'approved'),
+      content: 'Original scheduled caption',
+      status: 'publishing'
+    });
+    await repo.upsertPost({
+      id: 'synced-instagram',
+      fanpageId: 'fp-1',
+      externalPostId: 'instagram-media-1',
+      title: 'Bài đăng Instagram',
+      content: '',
+      date: '2026-08-14',
+      publishedAt: '2026-08-14T07:16:51.000Z',
+      permalink: 'https://www.instagram.com/p/example/',
+      mediaUrl: 'https://cdn.example.test/synced.jpg',
+      engagement: { likes: 3 },
+      source: 'instagram',
+      status: 'published'
+    });
+
+    const published = await repo.setPostPublishState('scheduled-instagram', {
+      externalPostId: 'instagram-media-1',
+      publishedAt: '2026-08-14T07:16:54.000Z',
+      source: 'instagram',
+      status: 'published',
+      publishError: ''
+    });
+
+    assert.equal(published.id, 'scheduled-instagram');
+    assert.equal(published.status, 'published');
+    assert.equal(published.externalPostId, 'instagram-media-1');
+    assert.equal(published.content, 'Original scheduled caption');
+    assert.equal(published.permalink, 'https://www.instagram.com/p/example/');
+    assert.deepEqual(published.engagement, { likes: 3 });
+    const retired = db.prepare('SELECT externalPostId, deletedAt FROM posts WHERE id = ?')
+      .get('synced-instagram');
+    assert.equal(retired.externalPostId, null);
+    assert.ok(retired.deletedAt);
+  });
+});
+
 test('publish jobs persist resumable media checkpoints and append attempt history', async () => {
   await withSqliteRepository(async (repo) => {
     await repo.savePublishJob('durable-post', {
@@ -186,10 +230,15 @@ test('publish jobs persist resumable media checkpoints and append attempt histor
       stage: 'create_child',
       outcome: 'checkpointed'
     });
+    await repo.savePublishJob('durable-post', {
+      stage: 'completed',
+      externalPostId: 'instagram-media-final'
+    });
 
     const job = await repo.getPublishJob('durable-post');
     const attempts = await repo.listPublishAttempts('durable-post');
-    assert.equal(job.stage, 'media_resolved');
+    assert.equal(job.stage, 'completed');
+    assert.equal(job.externalPostId, 'instagram-media-final');
     assert.deepEqual(job.childContainerIds, ['child-1']);
     assert.equal(job.resolvedMedia[0].url, 'https://cdn.example.test/a.jpg');
     assert.equal(attempts.length, 1);

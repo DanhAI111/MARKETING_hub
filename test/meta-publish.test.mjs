@@ -825,6 +825,54 @@ test('durable Instagram publisher never repeats media_publish after an ambiguous
   }
 });
 
+test('durable Instagram publisher checkpoints the media id and reuses it after completion', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let job = {
+    postId: 'durable-completed-id',
+    platform: 'instagram',
+    stage: 'ready',
+    resolvedMedia: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }],
+    childContainerIds: [],
+    parentContainerId: 'parent-ready',
+    attemptCount: 3
+  };
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value.endsWith('/ig-1/media_publish')) return jsonResponse({ id: 'instagram-media-final' });
+    return jsonResponse({ error: { message: `Unexpected Graph call: ${value}` } }, 500);
+  };
+  try {
+    const repo = {
+      decryptPageToken: async () => 'ig-token',
+      getPublishJob: async () => job,
+      savePublishJob: async (_postId, updates) => (job = { ...job, ...updates }),
+      recordPublishAttempt: async () => {}
+    };
+    const meta = new MetaService({}, repo, 'https://example.test');
+    const post = { id: job.postId, content: 'One image', mediaItems: job.resolvedMedia };
+
+    const published = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      post
+    );
+    const recovered = await meta.publishInstagramPost(
+      { platform: 'instagram', instagramBusinessId: 'ig-1' },
+      post
+    );
+
+    assert.equal(published.externalPostId, 'instagram-media-final');
+    assert.equal(job.stage, 'completed');
+    assert.equal(job.externalPostId, 'instagram-media-final');
+    assert.equal(recovered.externalPostId, 'instagram-media-final');
+    assert.equal(recovered.recovered, true);
+    assert.equal(calls.filter((url) => url.endsWith('/ig-1/media_publish')).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('routine carousel checkpoints do not consume the retry budget for a transient Meta error', async () => {
   const originalFetch = globalThis.fetch;
   let job = {
