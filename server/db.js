@@ -130,6 +130,7 @@ db.exec(`
     postId TEXT PRIMARY KEY,
     platform TEXT NOT NULL,
     stage TEXT NOT NULL DEFAULT 'queued',
+    externalPostId TEXT,
     resolvedMedia TEXT,
     childContainerIds TEXT,
     parentContainerId TEXT,
@@ -188,6 +189,7 @@ ensureColumn('posts', 'testResult', 'TEXT');
 ensureColumn('app_items', 'deletedAt', 'TEXT');
 ensureColumn('fanpages', 'deletedAt', 'TEXT');
 ensureColumn('fanpages', 'crossPostInstagram', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('publish_jobs', 'externalPostId', 'TEXT');
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_sheet_row

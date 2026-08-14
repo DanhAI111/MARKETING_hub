@@ -215,6 +215,7 @@ const initPostgres = async () => {
       "postId" TEXT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
       platform TEXT NOT NULL,
       stage TEXT NOT NULL DEFAULT 'queued',
+      "externalPostId" TEXT,
       "resolvedMedia" TEXT,
       "childContainerIds" TEXT,
       "parentContainerId" TEXT,
@@ -231,6 +232,8 @@ const initPostgres = async () => {
 
     CREATE INDEX IF NOT EXISTS idx_publish_jobs_due
       ON publish_jobs(stage, "nextAttemptAt");
+
+    ALTER TABLE publish_jobs ADD COLUMN IF NOT EXISTS "externalPostId" TEXT;
 
     CREATE TABLE IF NOT EXISTS publish_attempts (
       id TEXT PRIMARY KEY,
@@ -426,6 +429,9 @@ const savePublishJob = async (postId, updates = {}) => {
     postId,
     platform: updates.platform || existing?.platform || 'unknown',
     stage: updates.stage || existing?.stage || 'queued',
+    externalPostId: updates.externalPostId !== undefined
+      ? (updates.externalPostId || '')
+      : (existing?.externalPostId || ''),
     resolvedMedia: updates.resolvedMedia !== undefined ? updates.resolvedMedia : (existing?.resolvedMedia || []),
     childContainerIds: updates.childContainerIds !== undefined
       ? updates.childContainerIds
@@ -450,7 +456,7 @@ const savePublishJob = async (postId, updates = {}) => {
     updatedAt: timestamp
   };
   const values = [
-    data.postId, data.platform, data.stage, JSON.stringify(data.resolvedMedia),
+    data.postId, data.platform, data.stage, data.externalPostId || null, JSON.stringify(data.resolvedMedia),
     JSON.stringify(data.childContainerIds), data.parentContainerId || null,
     data.leaseToken || null, data.leaseUntil || null, data.attemptCount,
     data.nextAttemptAt || null, data.lastErrorCode || null, data.lastError || null,
@@ -459,13 +465,14 @@ const savePublishJob = async (postId, updates = {}) => {
   if (usePostgres) {
     await pgQuery(`
       INSERT INTO publish_jobs (
-        "postId", platform, stage, "resolvedMedia", "childContainerIds", "parentContainerId",
+        "postId", platform, stage, "externalPostId", "resolvedMedia", "childContainerIds", "parentContainerId",
         "leaseToken", "leaseUntil", "attemptCount", "nextAttemptAt", "lastErrorCode",
         "lastError", "lastErrorAt", "createdAt", "updatedAt"
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       ON CONFLICT("postId") DO UPDATE SET
         platform = EXCLUDED.platform,
         stage = EXCLUDED.stage,
+        "externalPostId" = EXCLUDED."externalPostId",
         "resolvedMedia" = EXCLUDED."resolvedMedia",
         "childContainerIds" = EXCLUDED."childContainerIds",
         "parentContainerId" = EXCLUDED."parentContainerId",
@@ -481,13 +488,14 @@ const savePublishJob = async (postId, updates = {}) => {
   } else {
     getSqlite().prepare(`
       INSERT INTO publish_jobs (
-        postId, platform, stage, resolvedMedia, childContainerIds, parentContainerId,
+        postId, platform, stage, externalPostId, resolvedMedia, childContainerIds, parentContainerId,
         leaseToken, leaseUntil, attemptCount, nextAttemptAt, lastErrorCode,
         lastError, lastErrorAt, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(postId) DO UPDATE SET
         platform = excluded.platform,
         stage = excluded.stage,
+        externalPostId = excluded.externalPostId,
         resolvedMedia = excluded.resolvedMedia,
         childContainerIds = excluded.childContainerIds,
         parentContainerId = excluded.parentContainerId,
@@ -529,6 +537,49 @@ const listPublishAttempts = async (postId, limit = 100) => {
     ? await pgQuery('SELECT * FROM publish_attempts WHERE "postId" = $1 ORDER BY "createdAt" ASC LIMIT $2', [postId, normalizedLimit])
     : getSqlite().prepare('SELECT * FROM publish_attempts WHERE postId = ? ORDER BY createdAt ASC LIMIT ?').all(postId, normalizedLimit);
   return rows.map(publishAttemptFromRow);
+};
+
+const reconcileCompletedPublishJobs = async (limit = 10) => {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+  const rows = usePostgres
+    ? await pgQuery(`
+        SELECT posts.id, publish_jobs.platform, publish_jobs."externalPostId"
+        FROM publish_jobs
+        JOIN posts ON posts.id = publish_jobs."postId"
+        WHERE publish_jobs.stage = 'completed'
+          AND publish_jobs."externalPostId" IS NOT NULL
+          AND publish_jobs."externalPostId" != ''
+          AND posts.status != 'published'
+          AND (posts."deletedAt" IS NULL OR posts."deletedAt" = '')
+        ORDER BY publish_jobs."updatedAt" ASC
+        LIMIT $1
+      `, [normalizedLimit])
+    : getSqlite().prepare(`
+        SELECT posts.id, publish_jobs.platform, publish_jobs.externalPostId
+        FROM publish_jobs
+        JOIN posts ON posts.id = publish_jobs.postId
+        WHERE publish_jobs.stage = 'completed'
+          AND publish_jobs.externalPostId IS NOT NULL
+          AND publish_jobs.externalPostId != ''
+          AND posts.status != 'published'
+          AND (posts.deletedAt IS NULL OR posts.deletedAt = '')
+        ORDER BY publish_jobs.updatedAt ASC
+        LIMIT ?
+      `).all(normalizedLimit);
+  const recovered = [];
+  for (const row of rows) {
+    const existing = await getPost(row.id);
+    if (!existing) continue;
+    const post = await finalizePublishedPost(row.id, existing, {
+      status: 'published',
+      source: row.platform,
+      externalPostId: row.externalPostId,
+      igContainerId: '',
+      publishError: ''
+    });
+    if (post) recovered.push(post);
+  }
+  return recovered;
 };
 
 const requeuePostForRetry = async (postId) => {
@@ -1580,11 +1631,150 @@ const deletePost = async (postId) => {
   getSqlite().prepare('UPDATE posts SET deletedAt = ?, updatedAt = ? WHERE id = ?').run(timestamp, timestamp, postId);
 };
 
+const buildPublishFinalizationValues = (postId, existing, conflict, updates, timestamp = now()) => {
+  const source = String(updates.source || existing.source || '').trim();
+  const externalPostId = String(updates.externalPostId || existing.externalPostId || '').trim();
+  const publishedAt = updates.publishedAt || conflict?.publishedAt || existing.publishedAt || timestamp;
+  const permalink = updates.permalink || conflict?.permalink || existing.permalink || '';
+  const mediaUrl = updates.mediaUrl || conflict?.mediaUrl || existing.mediaUrl || '';
+  const engagement = updates.engagement !== undefined
+    ? updates.engagement
+    : (conflict?.engagement ?? existing.engagement ?? null);
+  const igContainerId = updates.igContainerId !== undefined
+    ? (updates.igContainerId || null)
+    : (existing.igContainerId || null);
+  return {
+    timestamp,
+    postId,
+    source,
+    externalPostId,
+    publishedAt,
+    permalink,
+    mediaUrl: /^data:/i.test(mediaUrl) ? '' : mediaUrl,
+    engagement: JSON.stringify(engagement),
+    publishError: updates.publishError || '',
+    igContainerId,
+    date: publishedAt.slice(0, 10)
+  };
+};
+
+const finalizePublishedPost = async (postId, existing, updates = {}) => {
+  const source = String(updates.source || existing.source || '').trim();
+  const externalPostId = String(updates.externalPostId || existing.externalPostId || '').trim();
+  if (!externalPostId || !['facebook', 'instagram'].includes(source)) {
+    return upsertPost({ ...existing, ...updates, id: postId });
+  }
+
+  if (usePostgres) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const client = await getPool().connect();
+      try {
+        await client.query('BEGIN');
+        const lockedExisting = postFromRow((await client.query(
+          'SELECT * FROM posts WHERE id = $1 FOR UPDATE',
+          [postId]
+        )).rows[0]);
+        if (!lockedExisting) {
+          await client.query('COMMIT');
+          return null;
+        }
+        const conflict = postFromRow((await client.query(`
+          SELECT * FROM posts
+          WHERE id != $1 AND source = $2 AND "externalPostId" = $3
+          ORDER BY CASE WHEN "deletedAt" IS NULL OR "deletedAt" = '' THEN 0 ELSE 1 END
+          LIMIT 1
+          FOR UPDATE
+        `, [postId, source, externalPostId])).rows[0]);
+        const values = buildPublishFinalizationValues(postId, lockedExisting, conflict, updates);
+        await client.query(`
+          UPDATE posts
+          SET "externalPostId" = NULL,
+              "deletedAt" = CASE
+                WHEN "deletedAt" IS NULL OR "deletedAt" = '' THEN $1
+                ELSE "deletedAt"
+              END,
+              "updatedAt" = $1
+          WHERE id != $2 AND source = $3 AND "externalPostId" = $4
+        `, [values.timestamp, values.postId, values.source, values.externalPostId]);
+        const updated = (await client.query(`
+          UPDATE posts
+          SET "externalPostId" = $4,
+              "publishedAt" = $5,
+              permalink = $6,
+              "mediaUrl" = $7,
+              engagement = $8,
+              "publishError" = $9,
+              "igContainerId" = $10,
+              source = $3,
+              status = 'published',
+              "deletedAt" = NULL,
+              date = $11,
+              "updatedAt" = $1
+          WHERE id = $2
+          RETURNING *
+        `, [
+          values.timestamp, values.postId, values.source, values.externalPostId,
+          values.publishedAt, values.permalink, values.mediaUrl, values.engagement,
+          values.publishError, values.igContainerId, values.date
+        ])).rows[0];
+        await client.query('COMMIT');
+        return postFromRow(updated) || null;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        if (error?.code !== '23505' || attempt === 1) throw error;
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  const db = getSqlite();
+  const conflict = postFromRow(db.prepare(`
+    SELECT * FROM posts
+    WHERE id != ? AND source = ? AND externalPostId = ?
+    ORDER BY CASE WHEN deletedAt IS NULL OR deletedAt = '' THEN 0 ELSE 1 END
+    LIMIT 1
+  `).get(postId, source, externalPostId));
+  const values = buildPublishFinalizationValues(postId, existing, conflict, updates);
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE posts
+      SET externalPostId = NULL,
+          deletedAt = CASE
+            WHEN deletedAt IS NULL OR deletedAt = '' THEN @timestamp
+            ELSE deletedAt
+          END,
+          updatedAt = @timestamp
+      WHERE id != @postId AND source = @source AND externalPostId = @externalPostId
+    `).run(values);
+    db.prepare(`
+      UPDATE posts
+      SET externalPostId = @externalPostId,
+          publishedAt = @publishedAt,
+          permalink = @permalink,
+          mediaUrl = @mediaUrl,
+          engagement = @engagement,
+          publishError = @publishError,
+          igContainerId = @igContainerId,
+          source = @source,
+          status = 'published',
+          deletedAt = NULL,
+          date = @date,
+          updatedAt = @timestamp
+      WHERE id = @postId
+    `).run(values);
+  })();
+  return getPost(postId);
+};
+
 const setPostPublishState = async (postId, updates = {}) => {
   const existing = usePostgres
     ? postFromRow((await pgQuery('SELECT * FROM posts WHERE id = $1', [postId]))[0])
     : postFromRow(getSqlite().prepare('SELECT * FROM posts WHERE id = ?').get(postId));
   if (!existing) return null;
+  if (updates.status === 'published' && updates.externalPostId) {
+    return finalizePublishedPost(postId, existing, updates);
+  }
   return upsertPost({ ...existing, ...updates, id: postId });
 };
 
@@ -1683,6 +1873,7 @@ module.exports = {
   savePublishJob,
   recordPublishAttempt,
   listPublishAttempts,
+  reconcileCompletedPublishJobs,
   requeuePostForRetry,
   claimDueScheduledPosts,
   failStalePublishingPosts,

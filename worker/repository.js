@@ -210,6 +210,9 @@ export class Repository {
       postId,
       platform: updates.platform || existing?.platform || 'unknown',
       stage: updates.stage || existing?.stage || 'queued',
+      externalPostId: updates.externalPostId !== undefined
+        ? (updates.externalPostId || '')
+        : (existing?.externalPostId || ''),
       resolvedMedia: updates.resolvedMedia !== undefined ? updates.resolvedMedia : (existing?.resolvedMedia || []),
       childContainerIds: updates.childContainerIds !== undefined
         ? updates.childContainerIds
@@ -235,13 +238,14 @@ export class Repository {
     };
     await this.db.prepare(`
       INSERT INTO publish_jobs (
-        postId, platform, stage, resolvedMedia, childContainerIds, parentContainerId,
+        postId, platform, stage, externalPostId, resolvedMedia, childContainerIds, parentContainerId,
         leaseToken, leaseUntil, attemptCount, nextAttemptAt, lastErrorCode,
         lastError, lastErrorAt, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(postId) DO UPDATE SET
         platform = excluded.platform,
         stage = excluded.stage,
+        externalPostId = excluded.externalPostId,
         resolvedMedia = excluded.resolvedMedia,
         childContainerIds = excluded.childContainerIds,
         parentContainerId = excluded.parentContainerId,
@@ -254,7 +258,7 @@ export class Repository {
         lastErrorAt = excluded.lastErrorAt,
         updatedAt = excluded.updatedAt
     `).bind(
-      data.postId, data.platform, data.stage, JSON.stringify(data.resolvedMedia),
+      data.postId, data.platform, data.stage, data.externalPostId || null, JSON.stringify(data.resolvedMedia),
       JSON.stringify(data.childContainerIds), data.parentContainerId || null,
       data.leaseToken || null, data.leaseUntil || null, data.attemptCount,
       data.nextAttemptAt || null, data.lastErrorCode || null, data.lastError || null,
@@ -282,6 +286,34 @@ export class Repository {
       LIMIT ?
     `).bind(postId, Math.min(Math.max(Number(limit) || 100, 1), 500)).all();
     return results.map(publishAttemptFromRow);
+  }
+
+  async reconcileCompletedPublishJobs(limit = 10) {
+    const normalizedLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+    const { results } = await this.db.prepare(`
+      SELECT posts.id, publish_jobs.platform, publish_jobs.externalPostId
+      FROM publish_jobs
+      JOIN posts ON posts.id = publish_jobs.postId
+      WHERE publish_jobs.stage = 'completed'
+        AND publish_jobs.externalPostId IS NOT NULL
+        AND publish_jobs.externalPostId != ''
+        AND posts.status != 'published'
+        AND (posts.deletedAt IS NULL OR posts.deletedAt = '')
+      ORDER BY publish_jobs.updatedAt ASC
+      LIMIT ?
+    `).bind(normalizedLimit).all();
+    const recovered = [];
+    for (const row of results) {
+      const post = await this.finalizePublishedPost(row.id, {
+        status: 'published',
+        source: row.platform,
+        externalPostId: row.externalPostId,
+        igContainerId: '',
+        publishError: ''
+      });
+      if (post) recovered.push(post);
+    }
+    return recovered;
   }
 
   async requeuePostForRetry(postId) {
@@ -837,9 +869,83 @@ export class Repository {
       .bind(timestamp, timestamp, postId).run();
   }
 
+  async finalizePublishedPost(postId, updates = {}) {
+    const existing = postFromRow(
+      await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()
+    );
+    if (!existing) return null;
+    const source = String(updates.source || existing.source || '').trim();
+    const externalPostId = String(updates.externalPostId || existing.externalPostId || '').trim();
+    if (!externalPostId || !['facebook', 'instagram'].includes(source)) {
+      return this.upsertPost({ ...existing, ...updates, id: postId });
+    }
+
+    const conflict = postFromRow(await this.db.prepare(`
+      SELECT * FROM posts
+      WHERE id != ? AND source = ? AND externalPostId = ?
+      ORDER BY CASE WHEN deletedAt IS NULL OR deletedAt = '' THEN 0 ELSE 1 END
+      LIMIT 1
+    `).bind(postId, source, externalPostId).first());
+    const timestamp = now();
+    const publishedAt = updates.publishedAt || conflict?.publishedAt || existing.publishedAt || timestamp;
+    const permalink = updates.permalink || conflict?.permalink || existing.permalink || '';
+    const mediaUrl = updates.mediaUrl || conflict?.mediaUrl || existing.mediaUrl || '';
+    const engagement = updates.engagement !== undefined
+      ? updates.engagement
+      : (conflict?.engagement ?? existing.engagement ?? null);
+    const igContainerId = updates.igContainerId !== undefined
+      ? (updates.igContainerId || null)
+      : (existing.igContainerId || null);
+
+    await this.db.batch([
+      this.db.prepare(`
+        UPDATE posts
+        SET externalPostId = NULL,
+            deletedAt = CASE
+              WHEN deletedAt IS NULL OR deletedAt = '' THEN ?
+              ELSE deletedAt
+            END,
+            updatedAt = ?
+        WHERE id != ? AND source = ? AND externalPostId = ?
+      `).bind(timestamp, timestamp, postId, source, externalPostId),
+      this.db.prepare(`
+        UPDATE posts
+        SET externalPostId = ?,
+            publishedAt = ?,
+            permalink = ?,
+            mediaUrl = ?,
+            engagement = ?,
+            publishError = ?,
+            igContainerId = ?,
+            source = ?,
+            status = 'published',
+            deletedAt = NULL,
+            date = ?,
+            updatedAt = ?
+        WHERE id = ?
+      `).bind(
+        externalPostId,
+        publishedAt,
+        permalink,
+        /^data:/i.test(mediaUrl) ? '' : mediaUrl,
+        JSON.stringify(engagement),
+        updates.publishError || '',
+        igContainerId,
+        source,
+        publishedAt.slice(0, 10),
+        timestamp,
+        postId
+      )
+    ]);
+    return this.getPost(postId);
+  }
+
   async setPostPublishState(postId, updates = {}) {
     const existing = postFromRow(await this.db.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first());
     if (!existing) return null;
+    if (updates.status === 'published' && updates.externalPostId) {
+      return this.finalizePublishedPost(postId, updates);
+    }
     return this.upsertPost({ ...existing, ...updates, id: postId });
   }
 

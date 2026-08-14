@@ -137,6 +137,7 @@ const publishJobFromRow = (row) => row && ({
   postId: row.postId,
   platform: row.platform || '',
   stage: row.stage || 'queued',
+  externalPostId: row.externalPostId || '',
   resolvedMedia: parseJson(row.resolvedMedia, []),
   childContainerIds: parseJson(row.childContainerIds, []),
   parentContainerId: row.parentContainerId || '',

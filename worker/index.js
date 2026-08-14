@@ -144,8 +144,18 @@ const processScheduledPosts = async (repo, meta) => {
     tested: 0,
     failed: 0,
     released: 0,
+    reconciled: 0,
     posts: []
   };
+  const reconciledPosts = await repo.reconcileCompletedPublishJobs();
+  result.reconciled = reconciledPosts.length;
+  if (result.reconciled) {
+    await repo.writeAppLog({
+      level: 'info', component: 'publisher', event: 'completed_jobs_reconciled',
+      message: `Đã khôi phục ${result.reconciled} bài đã đăng nhưng chưa hoàn tất lưu dữ liệu.`,
+      details: { postIds: reconciledPosts.map((post) => post.id) }
+    }).catch(() => {});
+  }
   result.released = await repo.failStalePublishingPosts(
     new Date(Date.now() - PUBLISH_LEASE_MS).toISOString()
   );
@@ -175,7 +185,7 @@ const processScheduledPosts = async (repo, meta) => {
   }
   result.finishedAt = new Date().toISOString();
   await repo.saveState('lastPublishHeartbeat', result);
-  if (result.processed || result.released) await repo.saveState('lastPublishRun', result);
+  if (result.processed || result.released || result.reconciled) await repo.saveState('lastPublishRun', result);
   if (result.failed) await repo.saveState('lastPublishFailure', result);
   return result;
 };

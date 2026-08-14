@@ -470,7 +470,8 @@ export class MetaService {
       }
       if (!published?.id) throw new Error('Meta không trả về Facebook post ID.');
       job = await this.checkpointPublishJob(post.id, job, {
-        stage: 'completed', parentContainerId: published.id, nextAttemptAt: ''
+        stage: 'completed', externalPostId: published.id,
+        parentContainerId: published.id, nextAttemptAt: ''
       }, { stage: 'publish', outcome: 'published' });
       const isVideo = mediaItems[0]?.type === 'video';
       return {
@@ -504,7 +505,7 @@ export class MetaService {
     try {
       if (job.stage === 'completed') {
         return {
-          externalPostId: post.externalPostId || '',
+          externalPostId: post.externalPostId || job.externalPostId || '',
           permalink: post.permalink || '',
           mediaUrl: post.mediaUrl || job.resolvedMedia[0]?.url || '',
           igContainerId: '',
@@ -670,6 +671,7 @@ export class MetaService {
       }
       job = await this.checkpointPublishJob(post.id, job, {
         stage: 'completed',
+        externalPostId: published.id || '',
         nextAttemptAt: ''
       }, { stage: 'media_publish', outcome: 'published' });
       return {
