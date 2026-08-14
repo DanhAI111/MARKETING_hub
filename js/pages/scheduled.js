@@ -298,12 +298,8 @@ const ScheduledPage = (() => {
       }
       try {
         Toast.info('Đang cập nhật hàng đợi đăng bài...');
-        const result = await RemoteStore.publishDue({ syncSheets: true });
-        const sheetSync = result?.sheetSync;
-        const syncText = sheetSync
-          ? ` Đồng bộ Sheet: ${sheetSync.updated} cập nhật, ${sheetSync.created} bài mới.`
-          : '';
-        Toast.success(`Đã cập nhật hàng đợi đăng bài.${syncText}`);
+        await RemoteStore.publishDue();
+        Toast.success('Đã cập nhật hàng đợi đăng bài.');
         renderPage();
         Sidebar.updateBadge();
       } catch (err) {

@@ -376,32 +376,6 @@ const listPosts = async ({ month = '', pending = false, limit = 500, offset = 0 
     `).all(cutoff, cutoffDate, normalizedLimit, normalizedOffset).map(postFromRow);
 };
 
-const listSheetSyncPosts = async () => {
-  if (usePostgres) {
-    const rows = await pgQuery(`
-      SELECT * FROM posts
-      WHERE ("sheetUrl" IS NOT NULL AND "sheetUrl" != '')
-         OR (
-           ("deletedAt" IS NULL OR "deletedAt" = '')
-           AND "scheduledAt" IS NOT NULL
-           AND "scheduledAt" != ''
-         )
-      ORDER BY date DESC, "updatedAt" DESC
-    `);
-    return rows.map(postFromRow);
-  }
-  return getSqlite().prepare(`
-    SELECT * FROM posts
-    WHERE (sheetUrl IS NOT NULL AND sheetUrl != '')
-       OR (
-         (deletedAt IS NULL OR deletedAt = '')
-         AND scheduledAt IS NOT NULL
-         AND scheduledAt != ''
-       )
-    ORDER BY date DESC, updatedAt DESC
-  `).all().map(postFromRow);
-};
-
 const listDueScheduledPosts = async () => {
   if (usePostgres) {
     const rows = await pgQuery(`
@@ -1721,7 +1695,6 @@ module.exports = {
   close,
   listFanpages,
   listPosts,
-  listSheetSyncPosts,
   listDueScheduledPosts,
   getPost,
   getPublishJob,

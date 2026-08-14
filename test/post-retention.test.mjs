@@ -151,12 +151,6 @@ test('SQLite retention soft-deletes only active published posts strictly older t
     assert.ok(!visibleIds.includes('old-sheet-published'));
     for (const id of retainedIds) assert.ok(visibleIds.includes(id), `${id} must remain visible`);
 
-    const sheetSyncIds = (await repo.listSheetSyncPosts()).map((post) => post.id);
-    assert.ok(sheetSyncIds.includes('old-sheet-published'));
-    assert.ok(sheetSyncIds.includes('old-scheduled'));
-    assert.ok(sheetSyncIds.includes('old-publishing'));
-    assert.ok(!sheetSyncIds.includes('old-published'), 'unlinked Meta history must not be parsed by every sheet sync');
-    assert.ok(!sheetSyncIds.includes('recent-published'), 'recent unlinked Meta history must not be parsed by every sheet sync');
   });
 });
 
