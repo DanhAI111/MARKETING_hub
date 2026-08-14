@@ -212,6 +212,11 @@ export const parseScheduleSheet = (text, {
   if (!fanpage) errors.push('Không tìm thấy fanpage');
   if (!content.trim()) errors.push('Thiếu nội dung');
   if (!scheduledDate) errors.push('Thời gian không hợp lệ');
+  if (fanpage?.platform === 'instagram' && mediaItems.length === 0) {
+    errors.push('Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai');
+  } else if (fanpage?.platform === 'instagram' && mediaItems.some((item) => !/^https?:\/\//i.test(item.url || ''))) {
+    errors.push('Instagram chỉ nhận media có URL công khai');
+  }
   if (fanpage?.platform === 'instagram' && mediaItems.some((item) => item.type === 'video')) {
     errors.push('Instagram chưa hỗ trợ video/Reels');
   }

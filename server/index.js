@@ -15,6 +15,7 @@ const sheetSyncModule = import('../shared/sheet-sync.mjs');
 const revenuePlannerModule = import('../shared/revenue-planner.mjs');
 const { normalizePostMutation } = require('../shared/repository-helpers.cjs');
 const { processWithConcurrency } = require('../shared/publish-queue.cjs');
+const { assertPostMediaForPlatform } = require('../shared/post-media-validation.cjs');
 
 const app = express();
 assertSecurityConfig();
@@ -255,7 +256,10 @@ app.get('/api/posts', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/posts', asyncHandler(async (req, res) => {
-  const post = await repo.upsertPost(normalizePostMutation(req.body || {}));
+  const mutation = normalizePostMutation(req.body || {});
+  const fanpage = await repo.getFanpage(mutation.fanpageId);
+  assertPostMediaForPlatform(fanpage, mutation);
+  const post = await repo.upsertPost(mutation);
   writeAudit(req, 'create', 'post', post.id, post);
   res.status(201).json(post);
 }));
@@ -267,7 +271,11 @@ app.put('/api/posts/:id', asyncHandler(async (req, res) => {
     req.body?.expectedUpdatedAt
   );
   const { expectedUpdatedAt, ...updates } = req.body || {};
-  const post = await repo.upsertPost({ ...normalizePostMutation(updates, latest), id: req.params.id });
+  const mutation = { ...normalizePostMutation(updates, latest), id: req.params.id };
+  const candidate = { ...latest, ...mutation };
+  const fanpage = await repo.getFanpage(candidate.fanpageId);
+  assertPostMediaForPlatform(fanpage, candidate);
+  const post = await repo.upsertPost(mutation);
   writeAudit(req, 'update', 'post', post.id, post);
   res.json(post);
 }));

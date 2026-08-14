@@ -360,14 +360,24 @@ const listSheetSyncPosts = async () => {
   if (usePostgres) {
     const rows = await pgQuery(`
       SELECT * FROM posts
-      WHERE "deletedAt" IS NULL OR "deletedAt" = '' OR ("sheetUrl" IS NOT NULL AND "sheetUrl" != '')
+      WHERE ("sheetUrl" IS NOT NULL AND "sheetUrl" != '')
+         OR (
+           ("deletedAt" IS NULL OR "deletedAt" = '')
+           AND "scheduledAt" IS NOT NULL
+           AND "scheduledAt" != ''
+         )
       ORDER BY date DESC, "updatedAt" DESC
     `);
     return rows.map(postFromRow);
   }
   return getSqlite().prepare(`
     SELECT * FROM posts
-    WHERE deletedAt IS NULL OR deletedAt = '' OR (sheetUrl IS NOT NULL AND sheetUrl != '')
+    WHERE (sheetUrl IS NOT NULL AND sheetUrl != '')
+       OR (
+         (deletedAt IS NULL OR deletedAt = '')
+         AND scheduledAt IS NOT NULL
+         AND scheduledAt != ''
+       )
     ORDER BY date DESC, updatedAt DESC
   `).all().map(postFromRow);
 };

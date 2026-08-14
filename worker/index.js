@@ -9,6 +9,7 @@ import { syncScheduleSheets } from '../shared/sheet-sync.mjs';
 import { fetchGoogleSheetCsvText } from '../shared/google-sheets.mjs';
 import { normalizePostMutation } from '../shared/repository-helpers.cjs';
 import { processWithConcurrency } from '../shared/publish-queue.cjs';
+import { assertPostMediaForPlatform } from '../shared/post-media-validation.cjs';
 
 // Cloudflare kills a cron invocation that exceeds its CPU/wall-clock budget with
 // no JS error, stranding every claimed post in 'publishing'. A single post is NOT
@@ -294,7 +295,10 @@ const handleRequest = async (request, env, context) => {
     return json(await repo.listPosts({ month, pending, limit, offset }));
   }
   if (method === 'POST' && pathname === '/api/posts') {
-    const post = await repo.upsertPost(normalizePostMutation(await parseJsonBody(request)));
+    const mutation = normalizePostMutation(await parseJsonBody(request));
+    const fanpage = await repo.getFanpage(mutation.fanpageId);
+    assertPostMediaForPlatform(fanpage, mutation);
+    const post = await repo.upsertPost(mutation);
     audit('create', 'post', post.id, post);
     return json(post, 201);
   }
@@ -306,7 +310,11 @@ const handleRequest = async (request, env, context) => {
     const latest = await repo.getPost(postId);
     if (!versionMatches(latest, body.expectedUpdatedAt)) return conflict(latest);
     const { expectedUpdatedAt, ...updates } = body;
-    const post = await repo.upsertPost({ ...normalizePostMutation(updates, latest), id: postId });
+    const mutation = { ...normalizePostMutation(updates, latest), id: postId };
+    const candidate = { ...latest, ...mutation };
+    const fanpage = await repo.getFanpage(candidate.fanpageId);
+    assertPostMediaForPlatform(fanpage, candidate);
+    const post = await repo.upsertPost(mutation);
     audit('update', 'post', post.id, post);
     return json(post);
   }
@@ -526,16 +534,25 @@ export default {
     // runs when no post was claimed, so maintenance cannot kill a live publish.
     const publisher = await processScheduledPosts(repo, meta);
     if (publisher.processed === 0) {
-      const tasks = [
-      syncLinkedScheduleSheets(repo),
-      repo.cleanupOAuthStates(),
-      repo.cleanupRateLimits(),
-      sendDailyTaskSummaryIfDue(env, repo, controller.scheduledTime)
-      ];
-      if (new Date(controller.scheduledTime).getUTCMinutes() % 15 === 0 && env.META_APP_ID && env.META_APP_SECRET) {
-        tasks.push(meta.syncAll());
+      const minute = new Date(controller.scheduledTime).getUTCMinutes();
+      const maintenanceSlot = minute % 5;
+      let maintenanceTask = null;
+      if (maintenanceSlot === 0 && minute % 15 === 0 && env.META_APP_ID && env.META_APP_SECRET) {
+        maintenanceTask = meta.syncAll();
+      } else if (maintenanceSlot === 2) {
+        maintenanceTask = syncLinkedScheduleSheets(repo);
+      } else if (maintenanceSlot === 4) {
+        maintenanceTask = Promise.allSettled([
+          repo.cleanupOAuthStates(),
+          repo.cleanupRateLimits(),
+          sendDailyTaskSummaryIfDue(env, repo, controller.scheduledTime)
+        ]);
       }
-      context.waitUntil(Promise.allSettled(tasks));
+      if (maintenanceTask) {
+        context.waitUntil(Promise.resolve(maintenanceTask).catch((error) =>
+          console.error('Scheduled maintenance failed:', error?.message || error)
+        ));
+      }
     }
   }
 };

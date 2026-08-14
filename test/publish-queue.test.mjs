@@ -22,6 +22,9 @@ test('both API runtimes validate platform media before persisting post mutations
   for (const source of [workerSource, serverSource]) {
     assert.match(source, /assertPostMediaForPlatform/);
     assert.match(source, /getFanpage\(mutation\.fanpageId\)/);
+    assert.match(source, /const candidate = \{ \.\.\.latest, \.\.\.mutation \}/);
+    assert.match(source, /getFanpage\(candidate\.fanpageId\)/);
+    assert.match(source, /assertPostMediaForPlatform\(fanpage, candidate\)/);
   }
 });
 

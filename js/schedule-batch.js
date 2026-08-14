@@ -22,7 +22,9 @@
     const instagramPages = fanpages.filter(page => page.platform === 'instagram');
     const instagramNames = instagramPages.map(page => page.name).join(', ');
 
-    if (instagramPages.length && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
+    if (instagramPages.length && mediaItems.length === 0) {
+      errors.push(`${instagramNames}: Instagram yêu cầu ít nhất một ảnh hoặc video có URL công khai`);
+    } else if (instagramPages.length && mediaItems.some(item => !/^https?:\/\//i.test(item.url || ''))) {
       errors.push(`${instagramNames}: Instagram chỉ nhận media có URL công khai`);
     }
 
