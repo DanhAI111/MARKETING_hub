@@ -10,7 +10,19 @@ const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.u
 test('scheduled worker isolates publishing from maintenance workloads', () => {
   assert.match(workerSource, /const publisher = await processScheduledPosts\(repo, meta\)/);
   assert.match(workerSource, /if \(publisher\.processed === 0\)/);
+  assert.match(workerSource, /maintenanceSlot/);
+  assert.match(workerSource, /maintenanceSlot === 0/);
+  assert.match(workerSource, /maintenanceSlot === 2/);
+  assert.match(workerSource, /maintenanceSlot === 4/);
+  assert.doesNotMatch(workerSource, /const tasks = \[\s*syncLinkedScheduleSheets/);
   assert.doesNotMatch(workerSource, /const tasks = \[\s*processScheduledPosts\(repo, meta\)/);
+});
+
+test('both API runtimes validate platform media before persisting post mutations', () => {
+  for (const source of [workerSource, serverSource]) {
+    assert.match(source, /assertPostMediaForPlatform/);
+    assert.match(source, /getFanpage\(mutation\.fanpageId\)/);
+  }
 });
 
 test('worker exposes a post-specific retry endpoint and never auto-publishes from generic post updates', () => {

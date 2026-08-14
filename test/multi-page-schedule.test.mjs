@@ -52,6 +52,17 @@ test('validateSelection requires at least one page and applies Instagram media c
     ['Vui lòng chọn ít nhất một fanpage hoặc tài khoản']
   );
 
+  const emptyInstagram = ScheduleBatch.validateSelection({
+    fanpages: [facebook, instagram],
+    mediaItems: [],
+    publishMode: 'live',
+    remoteAvailable: true
+  });
+  assert.ok(
+    emptyInstagram.some(error => error.includes('Instagram One') && error.includes('ít nhất một ảnh hoặc video')),
+    'Facebook may publish text-only, but every selected Instagram destination must require media'
+  );
+
   const errors = ScheduleBatch.validateSelection({
     fanpages: [facebook, instagram],
     mediaItems: [{ type: 'image', url: 'data:image/png;base64,abc' }, { type: 'video', url: 'https://example.com/reel.mp4' }],

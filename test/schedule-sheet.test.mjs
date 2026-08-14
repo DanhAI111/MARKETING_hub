@@ -59,6 +59,18 @@ test('uses default fanpage when the sheet omits a fanpage column value', () => {
   assert.equal(item.scheduledAt, '2026-06-22T02:00:00.000Z');
 });
 
+test('marks an Instagram schedule without media invalid before it enters the queue', () => {
+  const csv = [
+    'fanpage,content,scheduledAt,media',
+    'ABC Instagram,Bài không ảnh,2026-06-22 09:00,'
+  ].join('\n');
+
+  const [item] = parseScheduleSheet(csv, { fanpages, timezoneOffset: '+07:00' });
+
+  assert.equal(item.valid, false);
+  assert.ok(item.errors.some(error => error.includes('ít nhất một ảnh hoặc video')));
+});
+
 test('marks unknown fanpages and Instagram video rows invalid', () => {
   const csv = [
     'fanpage,content,scheduledAt,media',
