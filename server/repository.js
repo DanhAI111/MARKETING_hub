@@ -734,24 +734,6 @@ const getFanpage = async (fanpageId) => {
   return fanpageFromRow(getSqlite().prepare('SELECT * FROM fanpages WHERE id = ?').get(fanpageId), { includeToken: true });
 };
 
-// Instagram fanpage sharing this Facebook page (same metaPageId), for cross-posting.
-const getInstagramSiblingFanpage = async (metaPageId) => {
-  if (!metaPageId) return null;
-  if (usePostgres) {
-    const rows = await pgQuery(
-      'SELECT * FROM fanpages WHERE "metaPageId" = $1 AND platform = $2 AND ("deletedAt" IS NULL OR "deletedAt" = \'\') ORDER BY connected DESC, "updatedAt" DESC LIMIT 1',
-      [metaPageId, 'instagram']
-    );
-    return fanpageFromRow(rows[0], { includeToken: true });
-  }
-  return fanpageFromRow(
-    getSqlite()
-      .prepare('SELECT * FROM fanpages WHERE metaPageId = ? AND platform = ? AND (deletedAt IS NULL OR deletedAt = \'\') ORDER BY connected DESC, updatedAt DESC LIMIT 1')
-      .get(metaPageId, 'instagram'),
-    { includeToken: true }
-  );
-};
-
 const getConnectedFanpages = async () => {
   if (usePostgres) {
     const rows = await pgQuery('SELECT * FROM fanpages WHERE connected = TRUE AND ("deletedAt" IS NULL OR "deletedAt" = \'\')');
@@ -1706,7 +1688,6 @@ module.exports = {
   failStalePublishingPosts,
   claimSafeTestPost,
   getFanpage,
-  getInstagramSiblingFanpage,
   getConnectedFanpages,
   getBootstrapData,
   listAppItems,

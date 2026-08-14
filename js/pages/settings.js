@@ -182,10 +182,10 @@ const SettingsPage = (() => {
         if (!name) { Toast.error('Vui lòng nhập tên Fanpage'); return; }
 
         if (fp) {
-          Store.fanpages.update(editId, { name, platform, link, imageUrl, crossPostInstagram: false });
+          Store.fanpages.update(editId, { name, platform, link, imageUrl });
           Toast.success('Đã cập nhật fanpage');
         } else {
-          Store.fanpages.create({ name, platform, link, imageUrl, crossPostInstagram: false });
+          Store.fanpages.create({ name, platform, link, imageUrl });
           Toast.success('Đã thêm fanpage mới');
         }
         Modal.close();
